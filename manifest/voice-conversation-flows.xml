@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>Conversation_Outbound_Call_Trigger</members>
+        <members>Conversation_Record_updates_Service_Appointment</members>
+        <members>Service_Appointment_1_PM_Voice_Anything_Conversation_Record_Process_Screen_Flow</members>
+        <name>Flow</name>
+    </types>
+    <types>
+        <members>CALLEXTERNALSERVICE</members>
+        <name>ExternalServiceRegistration</name>
+    </types>
+    <types>
+        <members>CALL_API</members>
+        <name>NamedCredential</name>
+    </types>
+    <types>
+        <members>CALL_API_KEY</members>
+        <name>ExternalCredential</name>
+    </types>
+    <version>62.0</version>
+</Package>
