@@ -139,4 +139,3 @@ export default class BillingControlCenterBilling extends LightningElement {
         return 'Unknown error';
     }
 }
-

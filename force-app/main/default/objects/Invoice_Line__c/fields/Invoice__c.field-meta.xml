@@ -5,8 +5,10 @@
     <referenceTo>Invoice__c</referenceTo>
     <relationshipLabel>Invoice Lines</relationshipLabel>
     <relationshipName>Invoice_Lines</relationshipName>
+    <relationshipOrder>0</relationshipOrder>
     <reparentableMasterDetail>true</reparentableMasterDetail>
     <trackHistory>true</trackHistory>
+    <trackTrending>false</trackTrending>
     <type>MasterDetail</type>
     <writeRequiresMasterRead>false</writeRequiresMasterRead>
 </CustomField>

@@ -7,5 +7,6 @@
     <relationshipLabel>Payments</relationshipLabel>
     <relationshipName>Payments</relationshipName>
     <required>false</required>
+    <trackTrending>false</trackTrending>
     <type>Lookup</type>
 </CustomField>
