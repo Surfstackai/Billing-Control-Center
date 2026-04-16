@@ -1,0 +1,228 @@
+<template>
+    <div class="control-center-card">
+        <div class="hero">
+            <div class="hero__intro">
+                <h1 class="hero__title">{headerTitle}</h1>
+                <p class="hero__subtitle">{headerSubtitle}</p>
+            </div>
+            <lightning-button-icon
+                icon-name="utility:refresh"
+                variant="border-filled"
+                alternative-text="Refresh opportunities"
+                title="Refresh opportunities"
+                onclick={handleRefresh}
+                disabled={isLoading}>
+            </lightning-button-icon>
+        </div>
+
+        <template if:true={errorMessage}>
+            <div class="slds-p-horizontal_large slds-p-bottom_medium">
+                <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error" role="alert">
+                    <span class="slds-assistive-text">error</span>
+                    <h2>{errorMessage}</h2>
+                </div>
+            </div>
+        </template>
+
+        <template if:true={isLoading}>
+            <lightning-spinner alternative-text="Refreshing data" size="small"></lightning-spinner>
+        </template>
+
+        <section class="kpi-grid">
+            <template for:each={kpiTiles} for:item="tile">
+                <article key={tile.key} class="kpi-tile">
+                    <div class="kpi-tile__header">
+                        <span class="kpi-tile__title">{tile.title}</span>
+                        <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
+                    </div>
+                    <div class="kpi-tile__metric">
+                        <template if:true={tile.isCurrency}>
+                            <lightning-formatted-number
+                                value={tile.value}
+                                format-style="currency"
+                                currency-code="USD"
+                                maximum-fraction-digits="0">
+                            </lightning-formatted-number>
+                        </template>
+                        <template if:false={tile.isCurrency}>
+                            <lightning-formatted-number value={tile.value}></lightning-formatted-number>
+                        </template>
+                    </div>
+                    <p class="kpi-tile__hint">{tile.hint}</p>
+                </article>
+            </template>
+        </section>
+
+        <section class="table-shell">
+            <div class="table-meta">
+                <span><lightning-formatted-number value={displayedRows.length}></lightning-formatted-number> Opportunities</span>
+                <span><lightning-formatted-number value={selectedCount}></lightning-formatted-number> Selected</span>
+            </div>
+
+            <div class="slds-scrollable_x">
+                <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout" aria-label="Ready for billing opportunities">
+                    <thead>
+                        <tr class="slds-line-height_reset">
+                            <th scope="col" style="width:3.5rem;">
+                                <lightning-input
+                                    type="checkbox"
+                                    variant="label-hidden"
+                                    label="Select all opportunities"
+                                    checked={allRowsSelected}
+                                    onchange={handleSelectAll}>
+                                </lightning-input>
+                            </th>
+                            <template for:each={columns} for:item="column">
+                                <th
+                                    key={column.fieldName}
+                                    scope="col"
+                                    aria-sort={column.ariaSort}>
+                                    <button
+                                        class="slds-button slds-button_reset slds-grid slds-grid_align-spread slds-truncate slds-p-vertical_xx-small"
+                                        type="button"
+                                        data-field={column.fieldName}
+                                        onclick={handleSort}>
+                                        <span class="slds-truncate" title={column.label}>{column.label}</span>
+                                        <template if:true={column.isSorted}>
+                                            <lightning-icon
+                                                icon-name={column.sortIcon}
+                                                size="xx-small"
+                                                alternative-text={column.sortAltText}>
+                                            </lightning-icon>
+                                        </template>
+                                    </button>
+                                </th>
+                            </template>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template if:true={hasRows}>
+                            <template for:each={displayedRows} for:item="row">
+                                <tr key={row.opportunityId} class="slds-hint-parent">
+                                    <td>
+                                        <div class="slds-grid slds-gutters_x-small slds-grid_vertical-align-center slds-align_absolute-center">
+                                            <div>
+                                                <lightning-input
+                                                    type="checkbox"
+                                                    variant="label-hidden"
+                                                    label={row.selectLabel}
+                                                    data-id={row.opportunityId}
+                                                    checked={row.isSelected}
+                                                    onchange={handleRowSelection}>
+                                                </lightning-input>
+                                            </div>
+                                            <div>
+                                                <lightning-button-icon
+                                                    icon-name={row.expandIcon}
+                                                    variant="bare"
+                                                    alternative-text={row.expandAltText}
+                                                    title={row.expandAltText}
+                                                    data-id={row.opportunityId}
+                                                    onclick={handleToggleRow}>
+                                                </lightning-button-icon>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td data-label="Name">
+                                        <button
+                                            class="slds-button slds-button_reset slds-text-link"
+                                            type="button"
+                                            data-id={row.opportunityId}
+                                            onclick={handleNavigateToOpportunity}>
+                                            {row.name}
+                                        </button>
+                                    </td>
+                                    <td data-label="Account">{row.accountName}</td>
+                                    <td data-label="Stage">{row.stage}</td>
+                                    <td data-label="Amount">
+                                        <lightning-formatted-number
+                                            value={row.amount}
+                                            format-style="currency"
+                                            currency-code="USD"
+                                            maximum-fraction-digits="2">
+                                        </lightning-formatted-number>
+                                    </td>
+                                    <td data-label="Close Date">
+                                        <lightning-formatted-date-time
+                                            value={row.closeDate}
+                                            year="numeric"
+                                            month="2-digit"
+                                            day="2-digit">
+                                        </lightning-formatted-date-time>
+                                    </td>
+                                    <td data-label="Owner">{row.ownerName}</td>
+                                </tr>
+
+                                <template if:true={row.isExpanded}>
+                                    <template if:true={row.hasWorkOrders}>
+                                        <tr key={row.workOrderHeaderKey} class="slds-theme_shade">
+                                            <th scope="col"></th>
+                                            <th scope="col">
+                                                <div class="slds-p-left_x-large slds-truncate slds-text-title_caps slds-text-color_weak"><strong>Work Order Number</strong></div>
+                                            </th>
+                                            <th scope="col">
+                                                <div class="slds-truncate slds-text-title_caps slds-text-color_weak"><strong>Work Type</strong></div>
+                                            </th>
+                                            <th scope="col">
+                                                <div class="slds-truncate slds-text-title_caps slds-text-color_weak"><strong>Subject</strong></div>
+                                            </th>
+                                            <th scope="col">
+                                                <div class="slds-truncate slds-text-title_caps slds-text-color_weak"><strong>Priority</strong></div>
+                                            </th>
+                                            <th scope="col"></th>
+                                            <th scope="col"></th>
+                                        </tr>
+                                        <template for:each={row.workOrders} for:item="workOrder">
+                                            <tr key={workOrder.key} class="slds-theme_shade">
+                                                <td></td>
+                                                <td data-label="Work Order Number">
+                                                    <div class="slds-p-left_x-large slds-truncate" title={workOrder.workOrderNumber}>
+                                                        <a
+                                                            href="javascript:void(0);"
+                                                            class="slds-text-link"
+                                                            data-id={workOrder.id}
+                                                            onclick={openWorkOrder}>
+                                                            {workOrder.workOrderNumber}
+                                                        </a>
+                                                    </div>
+                                                </td>
+                                                <td data-label="Work Type">
+                                                    <div class="slds-truncate" title={workOrder.workTypeName}>{workOrder.workTypeName}</div>
+                                                </td>
+                                                <td data-label="Subject">
+                                                    <div class="slds-truncate" title={workOrder.subject}>{workOrder.subject}</div>
+                                                </td>
+                                                <td data-label="Priority">
+                                                    <div class="slds-truncate" title={workOrder.priority}>{workOrder.priority}</div>
+                                                </td>
+                                                <td></td>
+                                                <td></td>
+                                            </tr>
+                                        </template>
+                                    </template>
+
+                                    <template if:false={row.hasWorkOrders}>
+                                        <tr key={row.opportunityId} class="slds-theme_shade">
+                                            <td></td>
+                                            <td colspan="6">
+                                                <div class="slds-p-left_x-large slds-text-color_weak">No related Work Orders found.</div>
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </template>
+                            </template>
+                        </template>
+
+                        <template if:false={hasRows}>
+                            <tr>
+                                <td colspan="7" class="slds-text-align_center slds-text-color_weak slds-p-vertical_large">
+                                    No Opportunities match the Ready for Billing criteria.
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</template>

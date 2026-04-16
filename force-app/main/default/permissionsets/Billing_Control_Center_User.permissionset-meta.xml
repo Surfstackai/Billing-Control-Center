@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PermissionSet xmlns="http://soap.sforce.com/2006/04/metadata">
+    <classAccesses>
+        <apexClass>BillingControl_Invoicing</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <classAccesses>
+        <apexClass>BillingControl_Orders</apexClass>
+        <enabled>true</enabled>
+    </classAccesses>
+    <description>Grants Apex class access for the Billing Control Center Lightning experience (Orders, Invoicing, Receivables LWCs). Assign to users who need these tabs without changing their profile.</description>
+    <hasActivationRequired>false</hasActivationRequired>
+    <label>Billing Control Center User</label>
+</PermissionSet>

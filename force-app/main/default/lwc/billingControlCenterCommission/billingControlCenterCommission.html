@@ -1,0 +1,441 @@
+<template>
+    <div class="control-center-card">
+        <div class="hero">
+            <div class="hero__intro">
+                <p class="hero__eyebrow">Billing Control Center</p>
+                <h1 class="hero__title">Receivables</h1>
+                <p class="hero__subtitle">Track open invoices, posted receipts, and commission payouts.</p>
+            </div>
+            <lightning-button
+                icon-name="utility:refresh"
+                label="Refresh"
+                variant="brand"
+                title="Refresh receivables"
+                onclick={handleRefresh}
+                disabled={isLoading}>
+            </lightning-button>
+        </div>
+
+        <template if:true={errorMessage}>
+            <div class="slds-p-horizontal_large slds-p-bottom_medium">
+                <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error" role="alert">
+                    <span class="slds-assistive-text">error</span>
+                    <h2>{errorMessage}</h2>
+                </div>
+            </div>
+        </template>
+
+        <template if:true={isLoading}>
+            <lightning-spinner alternative-text="Refreshing commission data" size="small"></lightning-spinner>
+        </template>
+
+        <div class="billing-kpi-container">
+            <section class="kpi-grid">
+                <template for:each={kpiTiles} for:item="tile">
+                    <article key={tile.key} class="kpi-tile">
+                        <div class="kpi-tile__header">
+                            <span class="kpi-tile__title">{tile.title}</span>
+                            <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
+                        </div>
+                        <div class="kpi-tile__metric">
+                            <lightning-formatted-number
+                                value={tile.value}
+                                format-style="currency"
+                                currency-code="USD"
+                                maximum-fraction-digits="0">
+                            </lightning-formatted-number>
+                        </div>
+                        <div class="kpi-tile__count">{tile.countText}</div>
+                        <p class="kpi-tile__hint">{tile.hint}</p>
+                    </article>
+                </template>
+            </section>
+        </div>
+
+        <section class="table-shell billing-console-shell">
+            <lightning-tabset active-tab-value={activeTabValue}>
+                <lightning-tab label="Invoices" value="invoices" onactive={handleTabActivated}>
+                    <div class="billing-tab-panel">
+                        <div class="table-toolbar">
+                            <div class="table-toolbar__copy">
+                                <p class="table-toolbar__eyebrow">Receivables</p>
+                                <h2 class="table-toolbar__title">{activePanelTitle}</h2>
+                            </div>
+                            <div class="table-toolbar__actions">
+                                <lightning-button
+                                    label="Post Receipt"
+                                    variant="brand"
+                                    onclick={handleOpenPostReceipt}
+                                    disabled={isPostReceiptDisabled}>
+                                </lightning-button>
+                            </div>
+                        </div>
+
+                        <div class="table-meta">
+                            <span><lightning-formatted-number value={displayedSalespeople.length}></lightning-formatted-number> Salespeople</span>
+                            <span><lightning-formatted-number value={opportunityCount}></lightning-formatted-number> Opportunities</span>
+                            <span><lightning-formatted-number value={selectedCount}></lightning-formatted-number> Selected</span>
+                        </div>
+
+                        <div class="slds-scrollable_x">
+                            <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout" aria-label="Receivable invoices by salesperson">
+                                <thead>
+                                    <tr class="slds-line-height_reset">
+                                        <th scope="col" style="width:4.5rem;">
+                                            <span class="slds-assistive-text">Selection and expansion</span>
+                                        </th>
+                                        <th scope="col"><strong>Sales Person / Opportunity</strong></th>
+                                        <th scope="col"><strong>Account Name</strong></th>
+                                        <th scope="col"><strong>Opportunities</strong></th>
+                                        <th scope="col"><strong>Invoice Amount</strong></th>
+                                        <th scope="col"><strong>Commission Amount</strong></th>
+                                        <th scope="col"><strong>Commission Paid</strong></th>
+                                        <th scope="col"><strong>Outstanding Commission</strong></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template if:true={hasRows}>
+                                        <template for:each={displayedSalespeople} for:item="salesperson">
+                                            <tr key={salesperson.key} class="slds-hint-parent">
+                                                <td>
+                                                    <div class="slds-grid slds-gutters_x-small slds-grid_vertical-align-center slds-align_absolute-center">
+                                                        <div>
+                                                            <lightning-input
+                                                                type="checkbox"
+                                                                variant="label-hidden"
+                                                                label={salesperson.salespersonName}
+                                                                data-key={salesperson.key}
+                                                                checked={salesperson.isSelected}
+                                                                onchange={handleParentSelection}>
+                                                            </lightning-input>
+                                                        </div>
+                                                        <div>
+                                                            <lightning-button-icon
+                                                                icon-name={salesperson.expandIcon}
+                                                                variant="bare"
+                                                                alternative-text={salesperson.expandAltText}
+                                                                title={salesperson.expandAltText}
+                                                                data-key={salesperson.key}
+                                                                onclick={handleToggleRow}>
+                                                            </lightning-button-icon>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <th scope="row" data-label="Sales Person / Opportunity">{salesperson.salespersonName}</th>
+                                                <td data-label="Account Name"></td>
+                                                <td data-label="Opportunities">
+                                                    <lightning-formatted-number value={salesperson.opportunityCount}></lightning-formatted-number>
+                                                </td>
+                                                <td data-label="Invoice Amount">
+                                                    <lightning-formatted-number
+                                                        value={salesperson.totalAmount}
+                                                        format-style="currency"
+                                                        currency-code="USD"
+                                                        maximum-fraction-digits="2">
+                                                    </lightning-formatted-number>
+                                                </td>
+                                                <td data-label="Commission Amount">
+                                                    <lightning-formatted-number
+                                                        value={salesperson.totalCommission}
+                                                        format-style="currency"
+                                                        currency-code="USD"
+                                                        maximum-fraction-digits="2">
+                                                    </lightning-formatted-number>
+                                                </td>
+                                                <td data-label="Commission Paid">
+                                                    <lightning-formatted-number
+                                                        value={salesperson.totalPaid}
+                                                        format-style="currency"
+                                                        currency-code="USD"
+                                                        maximum-fraction-digits="2">
+                                                    </lightning-formatted-number>
+                                                </td>
+                                                <td data-label="Outstanding Commission">
+                                                    <lightning-formatted-number
+                                                        value={salesperson.outstandingCommission}
+                                                        format-style="currency"
+                                                        currency-code="USD"
+                                                        maximum-fraction-digits="2">
+                                                    </lightning-formatted-number>
+                                                </td>
+                                            </tr>
+
+                                            <template if:true={salesperson.isExpanded}>
+                                                <template for:each={salesperson.opportunities} for:item="opportunity">
+                                                    <tr key={opportunity.key} class="slds-theme_shade">
+                                                        <td>
+                                                            <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
+                                                                <div class="slds-p-left_large">
+                                                                    <lightning-input
+                                                                        type="checkbox"
+                                                                        variant="label-hidden"
+                                                                        label={opportunity.opportunityName}
+                                                                        data-key={opportunity.key}
+                                                                        checked={opportunity.isSelected}
+                                                                        onchange={handleChildSelection}>
+                                                                    </lightning-input>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td data-label="Sales Person / Opportunity">
+                                                            <div class="slds-p-left_x-large">
+                                                                <button
+                                                                    class="slds-button slds-button_reset slds-text-link"
+                                                                    type="button"
+                                                                    data-id={opportunity.opportunityId}
+                                                                    onclick={handleOpenOpportunity}>
+                                                                    {opportunity.opportunityName}
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                        <td data-label="Account Name">{opportunity.accountName}</td>
+                                                        <td data-label="Opportunities"></td>
+                                                        <td data-label="Invoice Amount">
+                                                            <lightning-formatted-number
+                                                                value={opportunity.amount}
+                                                                format-style="currency"
+                                                                currency-code="USD"
+                                                                maximum-fraction-digits="2">
+                                                            </lightning-formatted-number>
+                                                        </td>
+                                                        <td data-label="Commission Amount">
+                                                            <lightning-formatted-number
+                                                                value={opportunity.commissionAmount}
+                                                                format-style="currency"
+                                                                currency-code="USD"
+                                                                maximum-fraction-digits="2">
+                                                            </lightning-formatted-number>
+                                                        </td>
+                                                        <td data-label="Commission Paid">
+                                                            <lightning-formatted-number
+                                                                value={opportunity.commissionPaid}
+                                                                format-style="currency"
+                                                                currency-code="USD"
+                                                                maximum-fraction-digits="2">
+                                                            </lightning-formatted-number>
+                                                        </td>
+                                                        <td data-label="Outstanding Commission">
+                                                            <lightning-formatted-number
+                                                                value={opportunity.outstandingCommission}
+                                                                format-style="currency"
+                                                                currency-code="USD"
+                                                                maximum-fraction-digits="2">
+                                                            </lightning-formatted-number>
+                                                        </td>
+                                                    </tr>
+                                                </template>
+                                            </template>
+                                        </template>
+                                    </template>
+
+                                    <template if:false={hasRows}>
+                                        <tr>
+                                            <td colspan="8" class="slds-text-align_center slds-text-color_weak slds-p-vertical_large">
+                                                {emptyMessage}
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </lightning-tab>
+
+                <lightning-tab label="Commissions" value="commissions" onactive={handleTabActivated}>
+                    <div class="billing-tab-panel">
+                        <div class="table-toolbar">
+                            <div class="table-toolbar__copy">
+                                <p class="table-toolbar__eyebrow">Receivables</p>
+                                <h2 class="table-toolbar__title">{activePanelTitle}</h2>
+                            </div>
+                            <div class="table-toolbar__actions">
+                                <lightning-button
+                                    label="Pay Commission"
+                                    variant="brand"
+                                    onclick={handlePayCommission}
+                                    disabled={isPayCommissionDisabled}>
+                                </lightning-button>
+                            </div>
+                        </div>
+
+                        <div class="table-meta">
+                            <span><lightning-formatted-number value={displayedSalespeople.length}></lightning-formatted-number> Salespeople</span>
+                            <span><lightning-formatted-number value={opportunityCount}></lightning-formatted-number> Opportunities</span>
+                            <span><lightning-formatted-number value={selectedCount}></lightning-formatted-number> Selected</span>
+                        </div>
+
+                        <div class="slds-scrollable_x">
+                            <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout" aria-label="Commissions payable by salesperson">
+                                <thead>
+                                    <tr class="slds-line-height_reset">
+                                        <th scope="col" style="width:4.5rem;">
+                                            <span class="slds-assistive-text">Selection and expansion</span>
+                                        </th>
+                                        <th scope="col"><strong>Sales Person / Opportunity</strong></th>
+                                        <th scope="col"><strong>Account Name</strong></th>
+                                        <th scope="col"><strong>Opportunities</strong></th>
+                                        <th scope="col"><strong>Invoice Amount</strong></th>
+                                        <th scope="col"><strong>Commission Amount</strong></th>
+                                        <th scope="col"><strong>Commission Paid</strong></th>
+                                        <th scope="col"><strong>Outstanding Commission</strong></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <template if:true={hasRows}>
+                                        <template for:each={displayedSalespeople} for:item="salesperson">
+                                            <tr key={salesperson.key} class="slds-hint-parent">
+                                                <td>
+                                                    <div class="slds-grid slds-gutters_x-small slds-grid_vertical-align-center slds-align_absolute-center">
+                                                        <div>
+                                                            <lightning-input
+                                                                type="checkbox"
+                                                                variant="label-hidden"
+                                                                label={salesperson.salespersonName}
+                                                                data-key={salesperson.key}
+                                                                checked={salesperson.isSelected}
+                                                                onchange={handleParentSelection}>
+                                                            </lightning-input>
+                                                        </div>
+                                                        <div>
+                                                            <lightning-button-icon
+                                                                icon-name={salesperson.expandIcon}
+                                                                variant="bare"
+                                                                alternative-text={salesperson.expandAltText}
+                                                                title={salesperson.expandAltText}
+                                                                data-key={salesperson.key}
+                                                                onclick={handleToggleRow}>
+                                                            </lightning-button-icon>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                                <th scope="row" data-label="Sales Person / Opportunity">{salesperson.salespersonName}</th>
+                                                <td data-label="Account Name"></td>
+                                                <td data-label="Opportunities">
+                                                    <lightning-formatted-number value={salesperson.opportunityCount}></lightning-formatted-number>
+                                                </td>
+                                                <td data-label="Invoice Amount">
+                                                    <lightning-formatted-number
+                                                        value={salesperson.totalAmount}
+                                                        format-style="currency"
+                                                        currency-code="USD"
+                                                        maximum-fraction-digits="2">
+                                                    </lightning-formatted-number>
+                                                </td>
+                                                <td data-label="Commission Amount">
+                                                    <lightning-formatted-number
+                                                        value={salesperson.totalCommission}
+                                                        format-style="currency"
+                                                        currency-code="USD"
+                                                        maximum-fraction-digits="2">
+                                                    </lightning-formatted-number>
+                                                </td>
+                                                <td data-label="Commission Paid">
+                                                    <lightning-formatted-number
+                                                        value={salesperson.totalPaid}
+                                                        format-style="currency"
+                                                        currency-code="USD"
+                                                        maximum-fraction-digits="2">
+                                                    </lightning-formatted-number>
+                                                </td>
+                                                <td data-label="Outstanding Commission">
+                                                    <lightning-formatted-number
+                                                        value={salesperson.outstandingCommission}
+                                                        format-style="currency"
+                                                        currency-code="USD"
+                                                        maximum-fraction-digits="2">
+                                                    </lightning-formatted-number>
+                                                </td>
+                                            </tr>
+
+                                            <template if:true={salesperson.isExpanded}>
+                                                <template for:each={salesperson.opportunities} for:item="opportunity">
+                                                    <tr key={opportunity.key} class="slds-theme_shade">
+                                                        <td>
+                                                            <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
+                                                                <div class="slds-p-left_large">
+                                                                    <lightning-input
+                                                                        type="checkbox"
+                                                                        variant="label-hidden"
+                                                                        label={opportunity.opportunityName}
+                                                                        data-key={opportunity.key}
+                                                                        checked={opportunity.isSelected}
+                                                                        onchange={handleChildSelection}>
+                                                                    </lightning-input>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td data-label="Sales Person / Opportunity">
+                                                            <div class="slds-p-left_x-large">
+                                                                <button
+                                                                    class="slds-button slds-button_reset slds-text-link"
+                                                                    type="button"
+                                                                    data-id={opportunity.opportunityId}
+                                                                    onclick={handleOpenOpportunity}>
+                                                                    {opportunity.opportunityName}
+                                                                </button>
+                                                            </div>
+                                                        </td>
+                                                        <td data-label="Account Name">{opportunity.accountName}</td>
+                                                        <td data-label="Opportunities"></td>
+                                                        <td data-label="Invoice Amount">
+                                                            <lightning-formatted-number
+                                                                value={opportunity.amount}
+                                                                format-style="currency"
+                                                                currency-code="USD"
+                                                                maximum-fraction-digits="2">
+                                                            </lightning-formatted-number>
+                                                        </td>
+                                                        <td data-label="Commission Amount">
+                                                            <lightning-formatted-number
+                                                                value={opportunity.commissionAmount}
+                                                                format-style="currency"
+                                                                currency-code="USD"
+                                                                maximum-fraction-digits="2">
+                                                            </lightning-formatted-number>
+                                                        </td>
+                                                        <td data-label="Commission Paid">
+                                                            <lightning-formatted-number
+                                                                value={opportunity.commissionPaid}
+                                                                format-style="currency"
+                                                                currency-code="USD"
+                                                                maximum-fraction-digits="2">
+                                                            </lightning-formatted-number>
+                                                        </td>
+                                                        <td data-label="Outstanding Commission">
+                                                            <lightning-formatted-number
+                                                                value={opportunity.outstandingCommission}
+                                                                format-style="currency"
+                                                                currency-code="USD"
+                                                                maximum-fraction-digits="2">
+                                                            </lightning-formatted-number>
+                                                        </td>
+                                                    </tr>
+                                                </template>
+                                            </template>
+                                        </template>
+                                    </template>
+
+                                    <template if:false={hasRows}>
+                                        <tr>
+                                            <td colspan="8" class="slds-text-align_center slds-text-color_weak slds-p-vertical_large">
+                                                {emptyMessage}
+                                            </td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </lightning-tab>
+            </lightning-tabset>
+        </section>
+    </div>
+
+    <template if:true={isPostReceiptModalOpen}>
+        <c-billing-control-center-post-receipt-modal
+            opportunity={selectedOpportunityForReceipt}
+            onclose={handlePostReceiptClose}
+            onrefresh={handlePostReceiptRefresh}>
+        </c-billing-control-center-post-receipt-modal>
+    </template>
+</template>

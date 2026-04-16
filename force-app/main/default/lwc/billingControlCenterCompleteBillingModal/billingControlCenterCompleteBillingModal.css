@@ -1,0 +1,83 @@
+@import 'c/billingControlCenterStyles';
+
+.complete-billing-modal {
+    max-width: 56rem;
+}
+
+.modal-header {
+    padding-bottom: 1rem;
+}
+
+.modal-divider {
+    width: 100%;
+    border-top: 1px solid var(--bcc-border);
+    margin-top: 1rem;
+}
+
+.modal-copy {
+    color: var(--bcc-text-soft);
+}
+
+.selected-opportunities-box {
+    background: #f3f4f6;
+    border: 1px solid var(--bcc-border);
+    border-radius: 0.5rem;
+}
+
+.selected-opportunities-header {
+    border-bottom: 1px solid var(--bcc-border);
+    color: var(--bcc-text-soft);
+}
+
+.selected-opportunity-row + .selected-opportunity-row {
+    border-top: 1px solid rgba(135, 151, 148, 0.35);
+}
+
+.modal-note {
+    color: var(--bcc-text-soft);
+}
+
+.selection-summary {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.summary-chip {
+    background: #f3f7f6;
+    border: 1px solid var(--bcc-border);
+    border-radius: 0.5rem;
+    padding: 0.45rem 0.75rem;
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+}
+
+.summary-chip__label {
+    color: var(--bcc-text-soft);
+    font-size: 0.8rem;
+}
+
+.multi-sa-warning {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: #fff8e6;
+    color: #8a5b00;
+    border: 1px solid #f0d48a;
+    border-radius: 0.35rem;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8rem;
+    margin-left: 0.75rem;
+}
+
+.grouped-ack-box {
+    border: 1px solid var(--bcc-border);
+    border-radius: 0.5rem;
+    background: #f9fafb;
+    padding: 0.75rem;
+}
+
+.invoice-number-field {
+    max-width: 28rem;
+}

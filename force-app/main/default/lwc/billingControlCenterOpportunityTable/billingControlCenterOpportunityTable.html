@@ -1,0 +1,111 @@
+<template>
+    <div class="slds-scrollable_x">
+        <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout" aria-label={tableLabel}>
+            <thead>
+                <tr class="slds-line-height_reset">
+                    <th scope="col" style="width:3.5rem;">
+                        <lightning-input
+                            type="checkbox"
+                            variant="label-hidden"
+                            label="Select all service appointments"
+                            checked={allRowsSelected}
+                            onchange={handleSelectAll}>
+                        </lightning-input>
+                    </th>
+                    <template for:each={columns} for:item="column">
+                        <th
+                            key={column.fieldName}
+                            scope="col"
+                            aria-sort={column.ariaSort}>
+                            <button
+                                class="slds-button slds-button_reset slds-grid slds-grid_align-spread slds-truncate slds-p-vertical_xx-small"
+                                type="button"
+                                data-field={column.fieldName}
+                                onclick={handleSort}>
+                                <span class="slds-truncate" title={column.label}>{column.label}</span>
+                                <template if:true={column.isSorted}>
+                                    <lightning-icon
+                                        icon-name={column.sortIcon}
+                                        size="xx-small"
+                                        alternative-text={column.sortAltText}>
+                                    </lightning-icon>
+                                </template>
+                            </button>
+                        </th>
+                    </template>
+                </tr>
+            </thead>
+            <tbody>
+                <template if:true={hasRows}>
+                    <template for:each={displayedRows} for:item="row">
+                        <tr key={row.key} class="slds-hint-parent">
+                            <td>
+                                <lightning-input
+                                    type="checkbox"
+                                    variant="label-hidden"
+                                    label={row.selectLabel}
+                                    data-id={row.serviceAppointmentId}
+                                    checked={row.isSelected}
+                                    onchange={handleRowSelection}>
+                                </lightning-input>
+                            </td>
+                            <td data-label="Service Appointment #">
+                                <button
+                                    class="slds-button slds-button_reset slds-text-link"
+                                    type="button"
+                                    data-id={row.serviceAppointmentId}
+                                    onclick={handleNavigateToServiceAppointment}>
+                                    {row.serviceAppointmentNumber}
+                                </button>
+                            </td>
+                            <td data-label="Opportunity Name">{row.opportunityName}</td>
+                            <td data-label="Account">{row.accountName}</td>
+                            <td data-label="Work Order Number">
+                                <template if:true={row.hasWorkOrder}>
+                                    <button
+                                        class="slds-button slds-button_reset slds-text-link"
+                                        type="button"
+                                        data-id={row.workOrderId}
+                                        onclick={handleNavigateToWorkOrder}>
+                                        {row.workOrderNumber}
+                                    </button>
+                                </template>
+                                <template if:false={row.hasWorkOrder}>
+                                    {row.workOrderNumber}
+                                </template>
+                            </td>
+                            <td data-label="Completion Date">
+                                <lightning-formatted-date-time
+                                    value={row.completionDateTime}
+                                    year="numeric"
+                                    month="2-digit"
+                                    day="2-digit"
+                                    hour="2-digit"
+                                    minute="2-digit">
+                                </lightning-formatted-date-time>
+                            </td>
+                            <td data-label="Technician">{row.technicianName}</td>
+                            <td data-label="Billable Amount">
+                                <lightning-formatted-number
+                                    value={row.billableAmount}
+                                    format-style="currency"
+                                    currency-code="USD"
+                                    maximum-fraction-digits="2">
+                                </lightning-formatted-number>
+                            </td>
+                            <td data-label="Billing Status">{row.billingStatus}</td>
+                        </tr>
+                    </template>
+                </template>
+
+                <template if:false={hasRows}>
+                    <tr>
+                        <td colspan="9" class="slds-text-align_center slds-text-color_weak slds-p-vertical_large">
+                            {emptyMessage}
+                        </td>
+                    </tr>
+                </template>
+            </tbody>
+        </table>
+    </div>
+</template>

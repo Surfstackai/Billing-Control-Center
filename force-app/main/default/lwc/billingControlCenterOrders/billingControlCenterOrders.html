@@ -1,0 +1,98 @@
+<template>
+    <div class="control-center-card">
+        <div class="hero">
+            <div class="hero__intro">
+                <p class="hero__eyebrow">Billing Control Center</p>
+                <h1 class="hero__title">Work Orders Pending Scheduling or Completion</h1>
+                <p class="hero__subtitle">Closed Won pipeline: unscheduled, scheduled, and in-progress revenue (opportunity amount) with counts. Expand each bucket to see matching work orders.</p>
+            </div>
+            <lightning-button
+                class="hero__refresh"
+                icon-name="utility:refresh"
+                label="Refresh"
+                onclick={handleRefresh}
+                variant="brand"
+                disabled={isLoading}>
+            </lightning-button>
+        </div>
+
+        <template if:true={errorMessage}>
+            <div class="slds-p-horizontal_large slds-p-bottom_medium">
+                <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error" role="alert">
+                    <span class="slds-assistive-text">error</span>
+                    <h2>{errorMessage}</h2>
+                </div>
+            </div>
+        </template>
+
+        <template if:true={isLoading}>
+            <lightning-spinner alternative-text="Loading billing control center"></lightning-spinner>
+        </template>
+
+        <section class="kpi-grid">
+            <template for:each={kpiTiles} for:item="tile">
+                <article key={tile.key} class="kpi-tile">
+                    <div class="kpi-tile__header">
+                        <span class="kpi-tile__title">{tile.title}</span>
+                        <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
+                    </div>
+                    <div class="kpi-tile__metric">{tile.formattedRevenue}</div>
+                    <div class="kpi-tile__count">{tile.formattedCount}</div>
+                    <p class="kpi-tile__hint">{tile.hint}</p>
+                </article>
+            </template>
+        </section>
+
+        <section class="table-shell">
+            <div class="table-toolbar">
+                <div class="table-toolbar__copy">
+                    <p class="table-toolbar__eyebrow">Work orders</p>
+                    <h2 class="table-toolbar__title">Pipeline work orders by bucket</h2>
+                </div>
+                <div class="table-toolbar__actions">
+                    <lightning-input
+                        class="toolbar-search"
+                        type="search"
+                        label="Search"
+                        variant="label-hidden"
+                        placeholder="Search work order, account, opportunity, owner"
+                        value={searchKey}
+                        onchange={handleSearchChange}>
+                    </lightning-input>
+                </div>
+            </div>
+
+            <div class="table-meta">
+                <span>{searchSummary}</span>
+            </div>
+
+            <lightning-accordion class="bucket-accordion" allow-multiple-sections-open>
+                <template for:each={accordionSections} for:item="section">
+                    <lightning-accordion-section
+                        key={section.bucketKey}
+                        name={section.bucketKey}
+                        label={section.titleWithCount}>
+                        <div class="bucket-section-body">
+                            <template if:true={section.isEmpty}>
+                                <p class="bucket-empty">No work orders in this bucket for the current filters.</p>
+                            </template>
+                            <template if:false={section.isEmpty}>
+                                <div class="bucket-table-host" data-bucket={section.bucketKey}>
+                                    <lightning-datatable
+                                        key-field="workOrderId"
+                                        data={section.filteredRows}
+                                        columns={workOrderColumns}
+                                        sorted-by={section.sortedBy}
+                                        sorted-direction={section.sortDirection}
+                                        hide-checkbox-column
+                                        onsort={handleWorkOrderSort}>
+                                    </lightning-datatable>
+                                </div>
+                            </template>
+                        </div>
+                    </lightning-accordion-section>
+                </template>
+            </lightning-accordion>
+        </section>
+    </div>
+</template>

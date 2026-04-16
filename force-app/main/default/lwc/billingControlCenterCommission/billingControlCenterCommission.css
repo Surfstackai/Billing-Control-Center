@@ -1,0 +1,20 @@
+@import 'c/billingControlCenterStyles';
+
+.control-center-card {
+    background:
+        radial-gradient(circle at top left, rgba(13, 111, 79, 0.12), transparent 34%),
+        linear-gradient(180deg, #f8fbf9 0%, var(--bcc-surface) 100%);
+}
+
+.kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.billing-console-shell {
+    padding-top: 0;
+    background: #f8fbf9;
+}
+
+.billing-tab-panel {
+    padding-top: 1.25rem;
+}

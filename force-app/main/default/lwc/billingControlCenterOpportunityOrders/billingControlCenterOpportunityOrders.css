@@ -1,0 +1,10 @@
+@import 'c/billingControlCenterStyles';
+
+:host {
+    display: block;
+    background: #ffffff;
+}
+
+.control-center-card {
+    background: #ffffff;
+}

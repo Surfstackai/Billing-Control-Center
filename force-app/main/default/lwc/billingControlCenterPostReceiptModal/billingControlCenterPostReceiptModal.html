@@ -1,0 +1,123 @@
+<template>
+    <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="post-receipt-modal-heading" class="slds-modal slds-fade-in-open">
+        <div class="slds-modal__container receipt-modal">
+            <header class="slds-modal__header modal-header">
+                <h2 id="post-receipt-modal-heading" class="slds-text-heading_medium">Post Receipt</h2>
+                <div class="modal-divider"></div>
+                <p class="slds-m-top_medium slds-text-body_regular modal-copy">
+                    Record a payment received for this invoice. This will update the commission tracking automatically.
+                </p>
+            </header>
+
+            <div class="slds-modal__content slds-p-around_large">
+                <template if:true={errorMessage}>
+                    <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error slds-m-bottom_medium" role="alert">
+                        <span class="slds-assistive-text">error</span>
+                        <h2>{errorMessage}</h2>
+                    </div>
+                </template>
+
+                <div class="slds-text-title_bold slds-m-bottom_small">Select Opportunity</div>
+                <div class="selected-opportunities-box slds-m-bottom_large">
+                    <div class="slds-grid slds-gutters_small selected-opportunities-header slds-p-horizontal_small slds-p-vertical_x-small slds-text-title_caps">
+                        <div class="slds-col slds-size_5-of-12">Opportunity Name</div>
+                        <div class="slds-col slds-size_4-of-12">Account Name</div>
+                        <div class="slds-col slds-size_3-of-12">Salesperson</div>
+                    </div>
+                    <div class="slds-grid slds-gutters_small slds-p-horizontal_small slds-p-vertical_small selected-opportunity-row">
+                        <div class="slds-col slds-size_5-of-12 slds-truncate" title={opportunity.name}>{opportunity.name}</div>
+                        <div class="slds-col slds-size_4-of-12 slds-truncate" title={opportunity.accountName}>{opportunity.accountName}</div>
+                        <div class="slds-col slds-size_3-of-12 slds-truncate" title={opportunity.ownerName}>{opportunity.ownerName}</div>
+                    </div>
+                </div>
+
+                <div class="receipt-details slds-m-bottom_large">
+                    <div class="receipt-detail-row">
+                        <span class="receipt-detail-label">Invoice Amount</span>
+                        <lightning-formatted-number
+                            value={invoiceAmount}
+                            format-style="currency"
+                            currency-code="USD"
+                            minimum-fraction-digits="2"
+                            maximum-fraction-digits="2">
+                        </lightning-formatted-number>
+                    </div>
+                    <div class="receipt-detail-row">
+                        <span class="receipt-detail-label">Previously Paid</span>
+                        <lightning-formatted-number
+                            value={previouslyPaid}
+                            format-style="currency"
+                            currency-code="USD"
+                            minimum-fraction-digits="2"
+                            maximum-fraction-digits="2">
+                        </lightning-formatted-number>
+                    </div>
+                    <div class="receipt-detail-row receipt-detail-row_bold">
+                        <span class="receipt-detail-label">Balance Due</span>
+                        <lightning-formatted-number
+                            value={balanceDue}
+                            format-style="currency"
+                            currency-code="USD"
+                            minimum-fraction-digits="2"
+                            maximum-fraction-digits="2">
+                        </lightning-formatted-number>
+                    </div>
+                </div>
+
+                <div class="modal-divider slds-m-bottom_large"></div>
+
+                <div class="receipt-form">
+                    <lightning-input
+                        type="number"
+                        label="Payment Amount Received"
+                        data-field="paymentAmount"
+                        value={paymentAmount}
+                        step="0.01"
+                        required
+                        onchange={handleInputChange}>
+                    </lightning-input>
+
+                    <lightning-input
+                        class="slds-m-top_medium"
+                        type="date"
+                        label="Payment Date"
+                        data-field="paymentDate"
+                        value={paymentDate}
+                        required
+                        onchange={handleInputChange}>
+                    </lightning-input>
+
+                    <lightning-combobox
+                        class="slds-m-top_medium"
+                        label="Payment Method"
+                        data-field="paymentMethod"
+                        value={paymentMethod}
+                        options={paymentMethodOptions}
+                        required
+                        onchange={handleInputChange}>
+                    </lightning-combobox>
+
+                    <lightning-input
+                        class="slds-m-top_medium"
+                        type="text"
+                        label="Reference Number"
+                        data-field="referenceNumber"
+                        value={referenceNumber}
+                        required
+                        onchange={handleInputChange}>
+                    </lightning-input>
+                </div>
+
+                <template if:true={showValidationMessage}>
+                    <div class="slds-text-color_error slds-m-top_medium">{validationMessage}</div>
+                </template>
+            </div>
+
+            <footer class="slds-modal__footer">
+                <lightning-button label="Cancel" onclick={handleCancel} disabled={isSaving}></lightning-button>
+                <lightning-button class="slds-m-left_small" label="Post Receipt" variant="brand" onclick={handlePostReceipt} disabled={isPostDisabled}></lightning-button>
+            </footer>
+        </div>
+    </section>
+    <div class="slds-backdrop slds-backdrop_open"></div>
+</template>

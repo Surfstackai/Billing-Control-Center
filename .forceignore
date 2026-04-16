@@ -1,0 +1,5 @@
+# Local Salesforce CLI / IDE artifacts (not deployable source)
+.sfdx/
+**/.sfdx/
+**/jsconfig.json
+**/.eslintrc.json

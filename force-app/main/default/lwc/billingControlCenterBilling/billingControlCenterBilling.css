@@ -1,0 +1,37 @@
+@import 'c/billingControlCenterStyles';
+
+.control-center-card {
+    background:
+        radial-gradient(circle at top left, rgba(13, 111, 79, 0.12), transparent 34%),
+        linear-gradient(180deg, #f8fbf9 0%, var(--bcc-surface) 100%);
+}
+
+.kpi-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.billing-console-shell {
+    padding-top: 0;
+    background: #f8fbf9;
+}
+
+.billing-tab-panel {
+    padding-top: 1.25rem;
+}
+
+.table-scroll-container {
+    max-height: 650px;
+    overflow-y: auto;
+}
+
+@media (max-width: 980px) {
+    .kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .kpi-grid {
+        grid-template-columns: 1fr;
+    }
+}

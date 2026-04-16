@@ -1,0 +1,115 @@
+<template>
+    <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="complete-billing-modal-heading" class="slds-modal slds-fade-in-open">
+        <div class="slds-modal__container complete-billing-modal">
+            <header class="slds-modal__header modal-header">
+                <h2 id="complete-billing-modal-heading" class="slds-text-heading_medium">Complete Billing</h2>
+                <div class="modal-divider"></div>
+                <p class="slds-m-top_medium slds-text-body_regular modal-copy">
+                    Selected completed service appointments are grouped by opportunity into one invoice per opportunity. Enter the invoice number you are issuing for each opportunity (for example from QuickBooks or your accounting system).
+                </p>
+            </header>
+
+            <div class="slds-modal__content slds-p-around_large">
+                <template if:true={errorMessage}>
+                    <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error slds-m-bottom_medium" role="alert">
+                        <span class="slds-assistive-text">error</span>
+                        <div>{errorMessage}</div>
+                    </div>
+                </template>
+
+                <div class="selection-summary slds-m-bottom_medium">
+                    <div class="summary-chip">
+                        <span class="summary-chip__label">Service Appointments</span>
+                        <strong>{selectedCount}</strong>
+                    </div>
+                    <div class="summary-chip">
+                        <span class="summary-chip__label">Opportunities</span>
+                        <strong>{selectedOpportunityCount}</strong>
+                    </div>
+                    <div class="summary-chip">
+                        <span class="summary-chip__label">Invoices To Create</span>
+                        <strong>{invoiceGroupCount}</strong>
+                    </div>
+                </div>
+
+                <div class="slds-text-title_bold slds-m-bottom_small">Selected Service Appointments by Opportunity</div>
+                <div class="selected-opportunities-box slds-m-bottom_large">
+                    <template for:each={opportunityGroups} for:item="group">
+                        <div key={group.rowKey} class="slds-p-horizontal_small slds-p-vertical_small selected-opportunity-row" data-multi={group.hasMultipleAppointments}>
+                            <div class="slds-grid slds-wrap slds-grid_vertical-align-center slds-m-bottom_x-small">
+                                <div class="slds-col slds-size_5-of-12 slds-truncate" title={group.opportunityName}>
+                                    <strong>{group.opportunityName}</strong>
+                                </div>
+                                <div class="slds-col slds-size_3-of-12 slds-truncate" title={group.accountName}>{group.accountName}</div>
+                                <div class="slds-col slds-size_2-of-12 slds-text-align_right">{group.count} SAs</div>
+                                <div class="slds-col slds-size_2-of-12 slds-text-align_right">
+                                    <lightning-formatted-number
+                                        value={group.totalBillableAmount}
+                                        format-style="currency"
+                                        currency-code="USD"
+                                        minimum-fraction-digits="2"
+                                        maximum-fraction-digits="2">
+                                    </lightning-formatted-number>
+                                </div>
+                            </div>
+                            <template if:true={group.opportunityId}>
+                                <div class="invoice-number-field slds-m-bottom_x-small slds-m-left_small slds-m-right_small">
+                                    <lightning-input
+                                        type="text"
+                                        label="Invoice number"
+                                        value={group.invoiceNumber}
+                                        data-opportunity-id={group.opportunityId}
+                                        onchange={handleInvoiceNumberChange}
+                                        required
+                                        max-length="80"
+                                        disabled={isSaving}
+                                        message-when-value-missing="Enter an invoice number for this opportunity.">
+                                    </lightning-input>
+                                </div>
+                            </template>
+                            <template if:true={group.hasMultipleAppointments}>
+                                <div class="multi-sa-warning slds-m-bottom_x-small">
+                                    <lightning-icon icon-name="utility:warning" size="xx-small" alternative-text="Warning"></lightning-icon>
+                                    <span>{group.invoiceSummary}</span>
+                                </div>
+                            </template>
+                            <template for:each={group.appointments} for:item="appointment">
+                                <div key={appointment.serviceAppointmentId} class="slds-text-body_small slds-m-left_small">
+                                    {appointment.serviceAppointmentNumber} - {appointment.workOrderNumber}
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+
+                <div class="slds-text-title_bold slds-m-bottom_large">
+                    Total Billable Amount:
+                    <lightning-formatted-number
+                        value={totalBillableAmount}
+                        format-style="currency"
+                        currency-code="USD"
+                        minimum-fraction-digits="2"
+                        maximum-fraction-digits="2">
+                    </lightning-formatted-number>
+                </div>
+
+                <template if:true={hasMultiAppointmentGroups}>
+                    <div class="grouped-ack-box slds-m-bottom_large">
+                        <lightning-input
+                            type="checkbox"
+                            label="I understand opportunities with multiple service appointments will be consolidated into one invoice."
+                            checked={hasReviewedGroupedBilling}
+                            onchange={handleGroupedBillingReviewChange}>
+                        </lightning-input>
+                    </div>
+                </template>
+            </div>
+
+            <footer class="slds-modal__footer">
+                <lightning-button label="Cancel" onclick={handleCancel} disabled={isSaving}></lightning-button>
+                <lightning-button class="slds-m-left_small" label="Complete Billing" variant="brand" onclick={handleCompleteBilling} disabled={isCompleteDisabled}></lightning-button>
+            </footer>
+        </div>
+    </section>
+    <div class="slds-backdrop slds-backdrop_open"></div>
+</template>

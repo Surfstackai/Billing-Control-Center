@@ -1,0 +1,59 @@
+@import 'c/billingControlCenterStyles';
+
+.receipt-modal {
+    max-width: 46rem;
+}
+
+.modal-header {
+    padding-bottom: 1rem;
+}
+
+.modal-divider {
+    width: 100%;
+    border-top: 1px solid var(--bcc-border);
+    margin-top: 1rem;
+}
+
+.modal-copy {
+    color: var(--bcc-muted);
+}
+
+.selected-opportunities-box {
+    background: #f3f4f6;
+    border: 1px solid var(--bcc-border);
+    border-radius: 0.5rem;
+}
+
+.selected-opportunities-header {
+    border-bottom: 1px solid var(--bcc-border);
+    color: var(--bcc-muted);
+}
+
+.selected-opportunity-row + .selected-opportunity-row {
+    border-top: 1px solid rgba(135, 151, 148, 0.35);
+}
+
+.receipt-details {
+    background: #ffffff;
+}
+
+.receipt-detail-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.35rem 0;
+    color: var(--bcc-text);
+}
+
+.receipt-detail-label {
+    color: var(--bcc-text);
+}
+
+.receipt-detail-row_bold,
+.receipt-detail-row_bold .receipt-detail-label {
+    font-weight: 700;
+}
+
+.receipt-form {
+    display: block;
+}

@@ -1,0 +1,101 @@
+<template>
+    <div class="control-center-card">
+        <div class="hero">
+            <div class="hero__intro">
+                <p class="hero__eyebrow">Billing Control Center</p>
+                <h1 class="hero__title">Service Appointments Ready to Bill</h1>
+                <p class="hero__subtitle">Monitor completed unbilled appointments and complete billing in grouped invoice batches.</p>
+            </div>
+            <lightning-button
+                icon-name="utility:refresh"
+                label="Refresh"
+                variant="brand"
+                title="Refresh billing control center"
+                onclick={handleRefresh}
+                disabled={isLoading}>
+            </lightning-button>
+        </div>
+
+        <template if:true={errorMessage}>
+            <div class="slds-p-horizontal_large slds-p-bottom_medium">
+                <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error" role="alert">
+                    <span class="slds-assistive-text">error</span>
+                    <h2>{errorMessage}</h2>
+                </div>
+            </div>
+        </template>
+
+        <template if:true={isLoading}>
+            <lightning-spinner alternative-text="Refreshing data" size="small"></lightning-spinner>
+        </template>
+
+        <div class="billing-kpi-container">
+            <section class="kpi-grid">
+                <template for:each={kpiTiles} for:item="tile">
+                    <article key={tile.key} class="kpi-tile">
+                        <div class="kpi-tile__header">
+                            <span class="kpi-tile__title">{tile.title}</span>
+                            <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
+                        </div>
+                        <div class="kpi-tile__metric">
+                            <template if:true={tile.isCurrency}>
+                                <lightning-formatted-number
+                                    value={tile.value}
+                                    format-style="currency"
+                                    currency-code="USD"
+                                    maximum-fraction-digits="2">
+                                </lightning-formatted-number>
+                            </template>
+                            <template if:false={tile.isCurrency}>
+                                <lightning-formatted-number value={tile.value}></lightning-formatted-number>
+                            </template>
+                        </div>
+                        <div class="kpi-tile__count">{tile.countText}</div>
+                        <p class="kpi-tile__hint">{tile.hint}</p>
+                    </article>
+                </template>
+            </section>
+        </div>
+
+        <section class="table-shell billing-console-shell">
+            <div class="billing-tab-panel">
+                <div class="table-toolbar">
+                    <div class="table-toolbar__copy">
+                        <p class="table-toolbar__eyebrow">Billing</p>
+                        <h2 class="table-toolbar__title">Service Appointments Ready to Bill</h2>
+                    </div>
+                    <div class="table-toolbar__actions">
+                        <lightning-button
+                            label="Complete Billing"
+                            variant="brand"
+                            onclick={handleOpenCompleteBillingModal}
+                            disabled={isCompleteBillingDisabled}>
+                        </lightning-button>
+                    </div>
+                </div>
+
+                <div class="table-meta">
+                    <span><lightning-formatted-number value={billableCount}></lightning-formatted-number> Service Appointments</span>
+                    <span><lightning-formatted-number value={selectedCount}></lightning-formatted-number> Selected</span>
+                </div>
+
+                <div class="table-scroll-container">
+                    <c-billing-control-center-opportunity-table
+                        opportunity-groups={appointmentGroups}
+                        empty-message="No completed unbilled Service Appointments are currently available."
+                        table-label="Service appointments ready for billing"
+                        onselectionchange={handleSelectionChange}>
+                    </c-billing-control-center-opportunity-table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <template if:true={isCompleteBillingModalOpen}>
+        <c-billing-control-center-complete-billing-modal
+            service-appointments={completeBillingModalSelections}
+            onclose={handleCompleteBillingClose}
+            onsuccess={handleCompleteBillingSuccess}>
+        </c-billing-control-center-complete-billing-modal>
+    </template>
+</template>
