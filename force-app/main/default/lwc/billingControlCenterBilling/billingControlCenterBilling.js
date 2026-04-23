@@ -31,10 +31,13 @@ export default class BillingControlCenterBilling extends LightningElement {
     metrics = {};
     appointmentGroups = [];
     selectedServiceAppointments = [];
+    modalServiceAppointmentRows = [];
     selectedCount = 0;
     isLoading = true;
     isCompleteBillingModalOpen = false;
     errorMessage;
+    /** @type {Promise<void> | null} */
+    _loadInFlight = null;
 
     connectedCallback() {
         this.loadData();
@@ -52,8 +55,8 @@ export default class BillingControlCenterBilling extends LightningElement {
         return this.selectedCount === 0;
     }
 
-    get completeBillingModalSelections() {
-        return this.selectedServiceAppointments.map(row => ({
+    buildModalSelection(rows) {
+        return (rows || []).map(row => ({
             serviceAppointmentId: row.serviceAppointmentId,
             serviceAppointmentNumber: row.serviceAppointmentNumber,
             opportunityId: row.opportunityId,
@@ -82,15 +85,36 @@ export default class BillingControlCenterBilling extends LightningElement {
         if (this.isCompleteBillingDisabled) {
             return;
         }
+        this.modalServiceAppointmentRows = this.buildModalSelection(this.selectedServiceAppointments);
         this.isCompleteBillingModalOpen = true;
     }
 
     handleCompleteBillingClose() {
         this.isCompleteBillingModalOpen = false;
+        this.modalServiceAppointmentRows = [];
+    }
+
+    handleModalSelectionUpdate(event) {
+        const remainingRows = (event.detail && event.detail.serviceAppointments) || [];
+        const remainingIds = new Set(
+            ((event.detail && event.detail.serviceAppointmentIds) || []).filter(Boolean)
+        );
+
+        this.modalServiceAppointmentRows = this.buildModalSelection(remainingRows);
+        this.selectedServiceAppointments = this.selectedServiceAppointments.filter(row =>
+            remainingIds.has(row.serviceAppointmentId)
+        );
+        this.selectedCount = this.selectedServiceAppointments.length;
+
+        const table = this.template.querySelector('c-billing-control-center-opportunity-table');
+        if (table) {
+            table.setSelectedServiceAppointmentIds([...remainingIds]);
+        }
     }
 
     async handleCompleteBillingSuccess() {
         this.isCompleteBillingModalOpen = false;
+        this.modalServiceAppointmentRows = [];
         this.selectedCount = 0;
         this.selectedServiceAppointments = [];
         await this.loadData();
@@ -100,7 +124,15 @@ export default class BillingControlCenterBilling extends LightningElement {
         await this.loadData();
     }
 
-    async loadData() {
+    loadData() {
+        if (this._loadInFlight) {
+            return this._loadInFlight;
+        }
+        this._loadInFlight = this.runLoad();
+        return this._loadInFlight;
+    }
+
+    async runLoad() {
         this.isLoading = true;
         this.errorMessage = undefined;
 
@@ -120,6 +152,7 @@ export default class BillingControlCenterBilling extends LightningElement {
             this.errorMessage = this.reduceError(error);
         } finally {
             this.isLoading = false;
+            this._loadInFlight = null;
         }
     }
 

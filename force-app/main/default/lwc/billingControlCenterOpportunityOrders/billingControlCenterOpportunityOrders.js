@@ -35,8 +35,8 @@ const KPI_CONFIG = [
 ];
 
 const COLUMN_CONFIG = [
-    { label: 'Name', fieldName: 'name' },
     { label: 'Account', fieldName: 'accountName' },
+    { label: 'Opportunity', fieldName: 'name' },
     { label: 'Stage', fieldName: 'stage' },
     { label: 'Amount', fieldName: 'amount' },
     { label: 'Close Date', fieldName: 'closeDate' },
@@ -86,7 +86,7 @@ export default class BillingControlCenterOpportunityOrders extends LightningElem
     }
 
     get headerSubtitle() {
-        return `${this.displayedOpportunityCount} items � Sorted by Status`;
+        return `${this.displayedOpportunityCount} items · Sorted by Status`;
     }
 
     get columns() {

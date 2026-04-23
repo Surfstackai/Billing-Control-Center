@@ -7,6 +7,7 @@
                 <p class="hero__subtitle">Monitor completed unbilled appointments and complete billing in grouped invoice batches.</p>
             </div>
             <lightning-button
+                type="button"
                 icon-name="utility:refresh"
                 label="Refresh"
                 variant="brand"
@@ -93,8 +94,9 @@
 
     <template if:true={isCompleteBillingModalOpen}>
         <c-billing-control-center-complete-billing-modal
-            service-appointments={completeBillingModalSelections}
+            service-appointments={modalServiceAppointmentRows}
             onclose={handleCompleteBillingClose}
+            onselectionupdate={handleModalSelectionUpdate}
             onsuccess={handleCompleteBillingSuccess}>
         </c-billing-control-center-complete-billing-modal>
     </template>

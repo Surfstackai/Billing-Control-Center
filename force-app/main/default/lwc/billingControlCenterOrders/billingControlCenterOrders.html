@@ -4,10 +4,11 @@
             <div class="hero__intro">
                 <p class="hero__eyebrow">Billing Control Center</p>
                 <h1 class="hero__title">Work Orders Pending Scheduling or Completion</h1>
-                <p class="hero__subtitle">Closed Won pipeline: unscheduled, scheduled, and in-progress revenue (opportunity amount) with counts. Expand each bucket to see matching work orders.</p>
+                <p class="hero__subtitle">Backlog (Closed Won opportunity dollars) on the left, today's service appointment activity on the right. Expand a section to see its work orders.</p>
             </div>
             <lightning-button
                 class="hero__refresh"
+                type="button"
                 icon-name="utility:refresh"
                 label="Refresh"
                 onclick={handleRefresh}
@@ -36,8 +37,8 @@
                         <span class="kpi-tile__title">{tile.title}</span>
                         <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
                     </div>
-                    <div class="kpi-tile__metric">{tile.formattedRevenue}</div>
-                    <div class="kpi-tile__count">{tile.formattedCount}</div>
+                    <div class="kpi-tile__metric">{tile.primaryValue}</div>
+                    <div class="kpi-tile__count">{tile.secondaryValue}</div>
                     <p class="kpi-tile__hint">{tile.hint}</p>
                 </article>
             </template>
@@ -55,7 +56,7 @@
                         type="search"
                         label="Search"
                         variant="label-hidden"
-                        placeholder="Search work order, account, opportunity, owner"
+                        placeholder="Search account, opportunity, work order, service appointments, owner"
                         value={searchKey}
                         onchange={handleSearchChange}>
                     </lightning-input>

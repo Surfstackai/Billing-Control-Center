@@ -1,6 +1,5 @@
-import { LightningElement, wire } from 'lwc';
+import { LightningElement } from 'lwc';
 import { NavigationMixin } from 'lightning/navigation';
-import { refreshApex } from '@salesforce/apex';
 import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 
 import getCommissionData from '@salesforce/apex/BillingControl_Invoicing.getCommissionData';
@@ -48,53 +47,60 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         invoices: [],
         commissions: []
     };
-    wiredMetricsResult;
-    wiredCommissionDataResult;
+    /** @type {Promise<void> | null} */
+    _loadInFlight = null;
     isMetricsLoading = true;
     isDataLoading = true;
-    isRefreshing = false;
     isActionLoading = false;
     isPostReceiptModalOpen = false;
     selectedOpportunityForReceipt = null;
     errorMessage;
 
-    @wire(getCommissionMetrics)
-    wiredMetrics(value) {
-        this.wiredMetricsResult = value;
-        const { data, error } = value;
-
-        if (data) {
-            this.metrics = data;
-            this.isMetricsLoading = false;
-            this.errorMessage = undefined;
-        } else if (error) {
-            this.metrics = {};
-            this.isMetricsLoading = false;
-            this.errorMessage = this.reduceError(error);
-        }
+    connectedCallback() {
+        this.loadData();
     }
 
-    @wire(getCommissionData, { subtabType: '$activeServiceSubtab' })
-    wiredCommissionData(value) {
-        this.wiredCommissionDataResult = value;
-        const { data, error } = value;
+    /**
+     * Imperative load (same pattern as Work Orders / Invoicing) so Refresh always hits the server
+     * and is not dependent on @wire/refreshApex.
+     */
+    loadData() {
+        if (this._loadInFlight) {
+            return this._loadInFlight;
+        }
+        this._loadInFlight = this.runLoad();
+        return this._loadInFlight;
+    }
 
-        if (data) {
+    async runLoad() {
+        this.isMetricsLoading = true;
+        this.isDataLoading = true;
+        this.errorMessage = undefined;
+
+        try {
+            const [metrics, data] = await Promise.all([
+                getCommissionMetrics(),
+                getCommissionData({ subtabType: this.activeServiceSubtab })
+            ]);
+
+            this.metrics = metrics || {};
             this.salespeople = this.normalizeSalespeople(data);
-            this.isDataLoading = false;
-            this.errorMessage = undefined;
             this.reconcileActiveState();
-        } else if (error) {
+        } catch (error) {
+            this.metrics = {};
             this.salespeople = [];
-            this.isDataLoading = false;
             this.errorMessage = this.reduceError(error);
             this.setSelectedRows([]);
             this.setExpandedRows([]);
+        } finally {
+            this.isMetricsLoading = false;
+            this.isDataLoading = false;
+            this._loadInFlight = null;
         }
     }
 
     get isLoading() {
-        return this.isMetricsLoading || this.isDataLoading || this.isRefreshing || this.isActionLoading;
+        return this.isMetricsLoading || this.isDataLoading || this.isActionLoading;
     }
 
     get activeServiceSubtab() {
@@ -221,8 +227,8 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         }
 
         this.activeTabValue = nextValue;
-        this.isDataLoading = true;
         this.errorMessage = undefined;
+        this.loadData();
     }
 
     handleParentSelection(event) {
@@ -296,20 +302,8 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     async handleRefresh() {
-        if (this.isRefreshing) {
-            return;
-        }
-
         this.errorMessage = undefined;
-        this.isRefreshing = true;
-
-        try {
-            await Promise.all(this.getRefreshPromises());
-        } catch (error) {
-            this.errorMessage = this.reduceError(error);
-        } finally {
-            this.isRefreshing = false;
-        }
+        await this.loadData();
     }
 
     async handlePayCommission() {
@@ -335,12 +329,10 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                 })
             );
 
-            this.isRefreshing = true;
-            await Promise.all(this.getRefreshPromises());
+            await this.loadData();
         } catch (error) {
             this.errorMessage = this.reduceError(error);
         } finally {
-            this.isRefreshing = false;
             this.isActionLoading = false;
         }
     }
@@ -372,12 +364,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     async handlePostReceiptRefresh() {
         this.isPostReceiptModalOpen = false;
         this.selectedOpportunityForReceipt = null;
-        this.isRefreshing = true;
-        try {
-            await Promise.all(this.getRefreshPromises());
-        } finally {
-            this.isRefreshing = false;
-        }
+        await this.loadData();
     }
 
     normalizeSalespeople(data) {
@@ -439,19 +426,6 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             ...this.expandedRowsByTab,
             [this.activeTabValue]: nextRows
         };
-    }
-
-    getRefreshPromises() {
-        const refreshes = [];
-
-        if (this.wiredMetricsResult) {
-            refreshes.push(refreshApex(this.wiredMetricsResult));
-        }
-        if (this.wiredCommissionDataResult) {
-            refreshes.push(refreshApex(this.wiredCommissionDataResult));
-        }
-
-        return refreshes;
     }
 
     reduceError(error) {

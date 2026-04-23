@@ -35,6 +35,18 @@ export default class BillingControlCenterOpportunityTable extends LightningEleme
         return this._opportunityGroups;
     }
 
+    @api
+    setSelectedServiceAppointmentIds(ids) {
+        const availableRowIds = new Set();
+        for (const group of this._opportunityGroups) {
+            for (const row of group.rows || []) {
+                availableRowIds.add(row.serviceAppointmentId);
+            }
+        }
+        this.selectedRowIds = (ids || []).filter(id => availableRowIds.has(id));
+        this.rebuildRows();
+    }
+
     get hasRows() {
         return this.totalRowCount > 0;
     }

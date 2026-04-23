@@ -37,11 +37,11 @@
                     <template for:each={opportunityGroups} for:item="group">
                         <div key={group.rowKey} class="slds-p-horizontal_small slds-p-vertical_small selected-opportunity-row" data-multi={group.hasMultipleAppointments}>
                             <div class="slds-grid slds-wrap slds-grid_vertical-align-center slds-m-bottom_x-small">
-                                <div class="slds-col slds-size_5-of-12 slds-truncate" title={group.opportunityName}>
+                                <div class="slds-col slds-size_4-of-12 slds-truncate" title={group.accountName}>{group.accountName}</div>
+                                <div class="slds-col slds-size_4-of-12 slds-truncate" title={group.opportunityName}>
                                     <strong>{group.opportunityName}</strong>
                                 </div>
-                                <div class="slds-col slds-size_3-of-12 slds-truncate" title={group.accountName}>{group.accountName}</div>
-                                <div class="slds-col slds-size_2-of-12 slds-text-align_right">{group.count} SAs</div>
+                                <div class="slds-col slds-size_1-of-12 slds-text-align_right">{group.count} SAs</div>
                                 <div class="slds-col slds-size_2-of-12 slds-text-align_right">
                                     <lightning-formatted-number
                                         value={group.totalBillableAmount}
@@ -50,6 +50,20 @@
                                         minimum-fraction-digits="2"
                                         maximum-fraction-digits="2">
                                     </lightning-formatted-number>
+                                </div>
+                                <div class="slds-col slds-size_1-of-12 slds-text-align_right">
+                                    <template if:true={group.opportunityId}>
+                                        <lightning-button-icon
+                                            icon-name="utility:close"
+                                            variant="bare"
+                                            size="small"
+                                            alternative-text="Remove this opportunity from billing"
+                                            title="Remove this opportunity from billing"
+                                            data-opportunity-id={group.opportunityId}
+                                            disabled={isSaving}
+                                            onclick={handleRemoveOpportunityGroup}>
+                                        </lightning-button-icon>
+                                    </template>
                                 </div>
                             </div>
                             <template if:true={group.opportunityId}>
@@ -74,8 +88,20 @@
                                 </div>
                             </template>
                             <template for:each={group.appointments} for:item="appointment">
-                                <div key={appointment.serviceAppointmentId} class="slds-text-body_small slds-m-left_small">
-                                    {appointment.serviceAppointmentNumber} - {appointment.workOrderNumber}
+                                <div key={appointment.serviceAppointmentId} class="slds-text-body_small slds-m-left_small slds-grid slds-grid_vertical-align-center">
+                                    <div class="slds-col slds-grow">{appointment.serviceAppointmentNumber} - {appointment.workOrderNumber}</div>
+                                    <div class="slds-col slds-no-flex">
+                                        <lightning-button-icon
+                                            icon-name="utility:close"
+                                            variant="bare"
+                                            size="x-small"
+                                            alternative-text="Remove this service appointment"
+                                            title="Remove this service appointment"
+                                            data-service-appointment-id={appointment.serviceAppointmentId}
+                                            disabled={isSaving}
+                                            onclick={handleRemoveServiceAppointment}>
+                                        </lightning-button-icon>
+                                    </div>
                                 </div>
                             </template>
                         </div>

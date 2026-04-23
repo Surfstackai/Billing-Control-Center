@@ -123,7 +123,8 @@
                                             </div>
                                         </div>
                                     </td>
-                                    <td data-label="Name">
+                                    <td data-label="Account">{row.accountName}</td>
+                                    <td data-label="Opportunity">
                                         <button
                                             class="slds-button slds-button_reset slds-text-link"
                                             type="button"
@@ -132,7 +133,6 @@
                                             {row.name}
                                         </button>
                                     </td>
-                                    <td data-label="Account">{row.accountName}</td>
                                     <td data-label="Stage">{row.stage}</td>
                                     <td data-label="Amount">
                                         <lightning-formatted-number
@@ -157,6 +157,7 @@
                                     <template if:true={row.hasWorkOrders}>
                                         <tr key={row.workOrderHeaderKey} class="slds-theme_shade">
                                             <th scope="col"></th>
+                                            <th scope="col"></th>
                                             <th scope="col">
                                                 <div class="slds-p-left_x-large slds-truncate slds-text-title_caps slds-text-color_weak"><strong>Work Order Number</strong></div>
                                             </th>
@@ -170,10 +171,10 @@
                                                 <div class="slds-truncate slds-text-title_caps slds-text-color_weak"><strong>Priority</strong></div>
                                             </th>
                                             <th scope="col"></th>
-                                            <th scope="col"></th>
                                         </tr>
                                         <template for:each={row.workOrders} for:item="workOrder">
                                             <tr key={workOrder.key} class="slds-theme_shade">
+                                                <td></td>
                                                 <td></td>
                                                 <td data-label="Work Order Number">
                                                     <div class="slds-p-left_x-large slds-truncate" title={workOrder.workOrderNumber}>
@@ -195,7 +196,6 @@
                                                 <td data-label="Priority">
                                                     <div class="slds-truncate" title={workOrder.priority}>{workOrder.priority}</div>
                                                 </td>
-                                                <td></td>
                                                 <td></td>
                                             </tr>
                                         </template>

@@ -179,7 +179,7 @@ public with sharing class BillingControl_Invoicing {
         return metrics;
     }
 
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled
     public static BillingControlMetricsWrapper getServiceAppointmentBillingMetrics() {
         List<ServiceAppointmentRowWrapper> rows = buildBillableServiceAppointmentRows();
 
@@ -200,7 +200,7 @@ public with sharing class BillingControl_Invoicing {
         return metrics;
     }
 
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled
     public static List<ServiceAppointmentOpportunityGroupWrapper> getBillableServiceAppointmentGroups() {
         List<ServiceAppointmentRowWrapper> rows = buildBillableServiceAppointmentRows();
         if (rows.isEmpty()) {
@@ -611,7 +611,7 @@ public with sharing class BillingControl_Invoicing {
         return result;
     }
 
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled
     public static CommissionMetricsWrapper getCommissionMetrics() {
         CommissionMetricsWrapper metrics = new CommissionMetricsWrapper();
 
@@ -664,7 +664,7 @@ public with sharing class BillingControl_Invoicing {
         return metrics;
     }
 
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled
     public static List<SalespersonWrapper> getCommissionData(String subtabType) {
         String normalizedSubtabType = String.isBlank(subtabType)
             ? COMMISSION_EARNED

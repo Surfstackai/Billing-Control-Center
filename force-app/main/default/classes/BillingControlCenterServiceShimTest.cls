@@ -9,7 +9,10 @@ private class BillingControlCenterServiceShimTest {
         BillingControl_Invoicing.OpportunityBillingMetricsWrapper opportunityMetrics = BillingControlCenterService.getOpportunityBillingMetrics();
         BillingControl_Invoicing.BillingControlMetricsWrapper saMetrics = BillingControlCenterService.getServiceAppointmentBillingMetrics();
         List<BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper> groups = BillingControlCenterService.getBillableServiceAppointmentGroups();
-        BillingControl_Invoicing.CompleteBillingResultWrapper completeResult = BillingControlCenterService.completeServiceAppointmentBilling(new List<Id>());
+        BillingControl_Invoicing.CompleteBillingResultWrapper completeResult = BillingControlCenterService.completeServiceAppointmentBilling(
+            new List<Id>(),
+            null
+        );
         BillingControl_Invoicing.BillingControlMetricsWrapper billingMetrics = BillingControlCenterService.getBillingControlMetrics();
         BillingControl_Invoicing.CommissionMetricsWrapper commissionMetrics = BillingControlCenterService.getCommissionMetrics();
         List<BillingControl_Invoicing.SalespersonWrapper> commissionData = BillingControlCenterService.getCommissionData('earned');

@@ -1,6 +1,16 @@
 /**
- * Billing Control Center: pipeline KPIs use Closed Won opportunities with CloseDate in the last 3 years
- * (LAST_N_YEARS:3). Adjust that literal in getKpis() if your org needs a different window.
+ * Billing Control Center Orders tab KPIs and drilldown. Two pairs of tiles are exposed:
+ * <ul>
+ *   <li>Pair 1 (backlog, opportunity count and Amount): Unscheduled vs Scheduled backlog on Closed Won
+ *       opportunities with CloseDate in the last 3 years (LAST_N_YEARS:3). Scheduled backlog is inclusive
+ *       of opportunities whose service appointments are scheduled or in progress for today.</li>
+ *   <li>Pair 2 (today, service appointment counts): SAs scheduled for today and SAs completed today,
+ *       scoped to work orders linked to in-scope Closed Won opportunities.</li>
+ * </ul>
+ * Scheduled for today (KPIs and drilldown): work order must be Appointments Booked, then at least one
+ * service appointment with Status = Scheduled or In Progress, with SchedStartTime on the user's today
+ * (Date.today() in the running user context). "Completed today" uses SA Status = Completed and
+ * ActualEndTime on today.
  */
 public with sharing class BillingControl_Orders {
     private static final String OPPORTUNITY_STAGE_CLOSED_WON = 'Closed Won';
@@ -11,28 +21,106 @@ public with sharing class BillingControl_Orders {
 
     private static final String SERVICE_APPOINTMENT_STATUS_SCHEDULED = 'Scheduled';
     private static final String SERVICE_APPOINTMENT_STATUS_IN_PROGRESS = 'In Progress';
+    private static final String SERVICE_APPOINTMENT_STATUS_COMPLETED = 'Completed';
 
     private static final Set<String> WORK_ORDER_UNSCHEDULED_STATUSES = new Set<String>{
         WORK_ORDER_FOR_CLEARANCE,
         WORK_ORDER_FOR_APPOINTMENT_BOOKING
     };
 
-    private static final String BUCKET_IN_PROGRESS = 'IN_PROGRESS';
     private static final String BUCKET_SCHEDULED = 'SCHEDULED';
     private static final String BUCKET_UNSCHEDULED = 'UNSCHEDULED';
+    private static final String BUCKET_SCHEDULED_TODAY = 'SCHEDULED_TODAY';
+    private static final String BUCKET_COMPLETED_TODAY = 'COMPLETED_TODAY';
+    private static final String BUCKET_SCHEDULED_BACKLOG = 'SCHEDULED_BACKLOG';
+
+    /** Service appointment is Completed and ActualEndTime falls on today (per running user's date). */
+    private static Boolean isServiceAppointmentCompletedToday(ServiceAppointment appointmentRecord) {
+        if (appointmentRecord == null || !SERVICE_APPOINTMENT_STATUS_COMPLETED.equals(appointmentRecord.Status)) {
+            return false;
+        }
+        return appointmentRecord.ActualEndTime != null
+            && appointmentRecord.ActualEndTime.date() == Date.today();
+    }
+
+    /** One line per SA; used in drilldown. Sorted by scheduled start. */
+    private static String buildServiceAppointmentsDisplay(List<ServiceAppointment> appointmentRecords) {
+        if (appointmentRecords == null || appointmentRecords.isEmpty()) {
+            return '';
+        }
+        List<ServiceAppointment> ordered = new List<ServiceAppointment>(appointmentRecords);
+        ordered.sort(new ServiceAppointmentSchedStartComparator());
+        List<String> lines = new List<String>();
+        for (ServiceAppointment sa : ordered) {
+            String label = String.isNotBlank(sa.AppointmentNumber)
+                ? sa.AppointmentNumber
+                : (String.isNotBlank(sa.Subject) ? sa.Subject : String.valueOf(sa.Id).left(8));
+            String statusText = String.isNotBlank(sa.Status) ? sa.Status : '';
+            if (SERVICE_APPOINTMENT_STATUS_COMPLETED.equals(sa.Status) && sa.ActualEndTime != null) {
+                statusText = statusText + ' · ' + sa.ActualEndTime.format('M/d/yyyy h:mm a');
+            } else if (sa.SchedStartTime != null) {
+                statusText = statusText + ' · ' + sa.SchedStartTime.format('M/d/yyyy h:mm a');
+            }
+            lines.add(String.isNotBlank(statusText) ? (label + ': ' + statusText) : label);
+        }
+        return String.join(lines, '\n');
+    }
+
+    private class ServiceAppointmentSchedStartComparator implements Comparator<ServiceAppointment> {
+        public Integer compare(ServiceAppointment left, ServiceAppointment right) {
+            if (left.SchedStartTime == null && right.SchedStartTime == null) {
+                return 0;
+            }
+            if (left.SchedStartTime == null) {
+                return 1;
+            }
+            if (right.SchedStartTime == null) {
+                return -1;
+            }
+            if (left.SchedStartTime == right.SchedStartTime) {
+                return 0;
+            }
+            return left.SchedStartTime < right.SchedStartTime ? -1 : 1;
+        }
+    }
 
     /**
-     * Sums Opportunity.Amount into unscheduled / scheduled / in-progress buckets for recent Closed Won wins.
+     * "Scheduled for today" on an Appointments Booked work order: Status is Scheduled or In Progress,
+     * and scheduled start date (SchedStartTime) equals today in the running user context.
      */
-    @AuraEnabled(cacheable=true)
+    private static Boolean isServiceAppointmentScheduledForToday(ServiceAppointment appointmentRecord) {
+        if (appointmentRecord == null || appointmentRecord.SchedStartTime == null) {
+            return false;
+        }
+        if (appointmentRecord.SchedStartTime.date() != Date.today()) {
+            return false;
+        }
+        return SERVICE_APPOINTMENT_STATUS_SCHEDULED.equals(appointmentRecord.Status)
+            || SERVICE_APPOINTMENT_STATUS_IN_PROGRESS.equals(appointmentRecord.Status);
+    }
+
+    /**
+     * Pair 1 (backlog, opportunity-level): unscheduled and scheduled-backlog counts and Amount totals on
+     * recent Closed Won wins. Scheduled backlog is inclusive of opportunities that also qualify as "today".
+     * Pair 2 (today, SA-level): count of service appointments scheduled for today and completed today.
+     * The mutually exclusive classifier outputs (`scheduledRevenue`, `scheduledToday*`, etc.) are retained
+     * for internal use and tests; the Orders LWC renders the pair 1/2 fields described above.
+     */
+    @AuraEnabled
     public static KpiWrapper getKpis() {
         KpiWrapper result = new KpiWrapper();
         result.unscheduledRevenue = 0;
         result.unscheduledCount = 0;
         result.scheduledRevenue = 0;
         result.scheduledCount = 0;
-        result.inProgressRevenue = 0;
-        result.inProgressCount = 0;
+        result.scheduledTodayRevenue = 0;
+        result.scheduledTodayCount = 0;
+        result.completedTodayRevenue = 0;
+        result.completedTodayCount = 0;
+        result.scheduledBacklogRevenue = 0;
+        result.scheduledBacklogCount = 0;
+        result.serviceAppointmentsScheduledTodayCount = 0;
+        result.serviceAppointmentsCompletedTodayCount = 0;
 
         List<Opportunity> closedWonOpportunities = [
             SELECT Id, Amount
@@ -70,7 +158,7 @@ public with sharing class BillingControl_Orders {
         Map<Id, List<ServiceAppointment>> serviceAppointmentsByWorkOrderId = new Map<Id, List<ServiceAppointment>>();
         if (!workOrderIds.isEmpty()) {
             for (ServiceAppointment appointmentRecord : [
-                SELECT Id, ParentRecordId, Status
+                SELECT Id, ParentRecordId, Status, SchedStartTime, ActualEndTime
                 FROM ServiceAppointment
                 WHERE ParentRecordId IN :workOrderIds
             ]) {
@@ -83,10 +171,14 @@ public with sharing class BillingControl_Orders {
 
         Decimal unscheduledRevenue = 0;
         Decimal scheduledRevenue = 0;
-        Decimal inProgressRevenue = 0;
+        Decimal scheduledTodayRevenue = 0;
+        Decimal completedTodayRevenue = 0;
         Integer unscheduledCount = 0;
         Integer scheduledCount = 0;
-        Integer inProgressCount = 0;
+        Integer scheduledTodayCount = 0;
+        Integer completedTodayCount = 0;
+        Decimal scheduledBacklogRevenue = 0;
+        Integer scheduledBacklogCount = 0;
 
         for (Opportunity opportunityRecord : closedWonOpportunities) {
             Decimal opportunityAmount = opportunityRecord.Amount != null ? opportunityRecord.Amount : 0;
@@ -95,15 +187,34 @@ public with sharing class BillingControl_Orders {
                 serviceAppointmentsByWorkOrderId
             );
 
-            if (bucket == BUCKET_IN_PROGRESS) {
-                inProgressRevenue += opportunityAmount;
-                inProgressCount++;
+            if (bucket == BUCKET_COMPLETED_TODAY) {
+                completedTodayRevenue += opportunityAmount;
+                completedTodayCount++;
+            } else if (bucket == BUCKET_SCHEDULED_TODAY) {
+                scheduledTodayRevenue += opportunityAmount;
+                scheduledTodayCount++;
+                scheduledBacklogRevenue += opportunityAmount;
+                scheduledBacklogCount++;
             } else if (bucket == BUCKET_SCHEDULED) {
                 scheduledRevenue += opportunityAmount;
                 scheduledCount++;
+                scheduledBacklogRevenue += opportunityAmount;
+                scheduledBacklogCount++;
             } else if (bucket == BUCKET_UNSCHEDULED) {
                 unscheduledRevenue += opportunityAmount;
                 unscheduledCount++;
+            }
+        }
+
+        Integer serviceAppointmentsScheduledTodayCount = 0;
+        Integer serviceAppointmentsCompletedTodayCount = 0;
+        for (List<ServiceAppointment> appointmentsForWorkOrder : serviceAppointmentsByWorkOrderId.values()) {
+            for (ServiceAppointment appointmentRecord : appointmentsForWorkOrder) {
+                if (isServiceAppointmentCompletedToday(appointmentRecord)) {
+                    serviceAppointmentsCompletedTodayCount++;
+                } else if (isServiceAppointmentScheduledForToday(appointmentRecord)) {
+                    serviceAppointmentsScheduledTodayCount++;
+                }
             }
         }
 
@@ -111,62 +222,73 @@ public with sharing class BillingControl_Orders {
         result.unscheduledCount = unscheduledCount;
         result.scheduledRevenue = scheduledRevenue;
         result.scheduledCount = scheduledCount;
-        result.inProgressRevenue = inProgressRevenue;
-        result.inProgressCount = inProgressCount;
+        result.scheduledTodayRevenue = scheduledTodayRevenue;
+        result.scheduledTodayCount = scheduledTodayCount;
+        result.completedTodayRevenue = completedTodayRevenue;
+        result.completedTodayCount = completedTodayCount;
+        result.scheduledBacklogRevenue = scheduledBacklogRevenue;
+        result.scheduledBacklogCount = scheduledBacklogCount;
+        result.serviceAppointmentsScheduledTodayCount = serviceAppointmentsScheduledTodayCount;
+        result.serviceAppointmentsCompletedTodayCount = serviceAppointmentsCompletedTodayCount;
 
         return result;
     }
 
     /**
-     * Classifies a Closed Won opportunity into a single pipeline bucket.
-     * Precedence: In Progress > Scheduled > Unscheduled.
-     * Opportunities with no junction rows are excluded (legacy pre–Field Service noise).
-     * "Unscheduled" requires at least one linked work order in For Clearance or For Appointment Booking.
+     * Classifies a Closed Won opportunity into one pipeline bucket (mutually exclusive).
+     * Precedence: Completed today (SA) > Scheduled for today (Appointments Booked + SA Scheduled or In Progress + start today) >
+     * General scheduled (Appointments Booked: In Progress or Scheduled with start not today) > Unscheduled WO.
+     * Opportunities with no junction rows are excluded.
      */
     private static String classifyOpportunityBucket(
         List<Opportunity_WorkOrder__c> junctionRecords,
         Map<Id, List<ServiceAppointment>> serviceAppointmentsByWorkOrderId
     ) {
-        Boolean hasInProgress = false;
-        Boolean hasScheduled = false;
         Boolean hasUnscheduled = false;
+        Boolean hasCompletedToday = false;
+        Boolean hasScheduledToday = false;
+        Boolean hasGeneralScheduled = false;
 
         if (junctionRecords == null || junctionRecords.isEmpty()) {
             return null;
-        } else {
-            for (Opportunity_WorkOrder__c junctionRecord : junctionRecords) {
-                String workOrderStatus = junctionRecord.Work_Order__r != null
-                    ? junctionRecord.Work_Order__r.Status
-                    : null;
-                Id workOrderId = junctionRecord.Work_Order__c;
+        }
 
-                if (String.isNotBlank(workOrderStatus) && WORK_ORDER_UNSCHEDULED_STATUSES.contains(workOrderStatus)) {
-                    hasUnscheduled = true;
-                }
+        for (Opportunity_WorkOrder__c junctionRecord : junctionRecords) {
+            String workOrderStatus = junctionRecord.Work_Order__r != null
+                ? junctionRecord.Work_Order__r.Status
+                : null;
+            Id workOrderId = junctionRecord.Work_Order__c;
 
-                if (
-                    workOrderId != null
-                    && WORK_ORDER_APPOINTMENTS_BOOKED.equals(workOrderStatus)
-                    && serviceAppointmentsByWorkOrderId.containsKey(workOrderId)
-                ) {
-                    for (
-                        ServiceAppointment appointmentRecord : serviceAppointmentsByWorkOrderId.get(workOrderId)
-                    ) {
-                        if (SERVICE_APPOINTMENT_STATUS_IN_PROGRESS.equals(appointmentRecord.Status)) {
-                            hasInProgress = true;
-                        }
-                        if (SERVICE_APPOINTMENT_STATUS_SCHEDULED.equals(appointmentRecord.Status)) {
-                            hasScheduled = true;
-                        }
+            if (String.isNotBlank(workOrderStatus) && WORK_ORDER_UNSCHEDULED_STATUSES.contains(workOrderStatus)) {
+                hasUnscheduled = true;
+            }
+
+            if (
+                workOrderId != null
+                && WORK_ORDER_APPOINTMENTS_BOOKED.equals(workOrderStatus)
+                && serviceAppointmentsByWorkOrderId.containsKey(workOrderId)
+            ) {
+                for (ServiceAppointment appointmentRecord : serviceAppointmentsByWorkOrderId.get(workOrderId)) {
+                    if (isServiceAppointmentCompletedToday(appointmentRecord)) {
+                        hasCompletedToday = true;
+                    } else if (isServiceAppointmentScheduledForToday(appointmentRecord)) {
+                        hasScheduledToday = true;
+                    } else if (SERVICE_APPOINTMENT_STATUS_IN_PROGRESS.equals(appointmentRecord.Status)) {
+                        hasGeneralScheduled = true;
+                    } else if (SERVICE_APPOINTMENT_STATUS_SCHEDULED.equals(appointmentRecord.Status)) {
+                        hasGeneralScheduled = true;
                     }
                 }
             }
         }
 
-        if (hasInProgress) {
-            return BUCKET_IN_PROGRESS;
+        if (hasCompletedToday) {
+            return BUCKET_COMPLETED_TODAY;
         }
-        if (hasScheduled) {
+        if (hasScheduledToday) {
+            return BUCKET_SCHEDULED_TODAY;
+        }
+        if (hasGeneralScheduled) {
             return BUCKET_SCHEDULED;
         }
         if (hasUnscheduled) {
@@ -176,24 +298,30 @@ public with sharing class BillingControl_Orders {
     }
 
     /**
-     * Work Order rows grouped into the same three KPI buckets (direct WO + SA classification).
+     * Work Order rows grouped into the same four KPI buckets (direct WO + SA classification).
      * Scope: junction rows for Closed Won opportunities with CloseDate in the last 3 years (same as getKpis).
      */
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled
     public static List<BucketSectionWrapper> getBucketWorkOrders() {
-        List<BucketSectionWrapper> sections = new List<BucketSectionWrapper>();
-        sections.add(
-            new BucketSectionWrapper(BUCKET_UNSCHEDULED, 'Unscheduled Work Value', new List<WorkOrderRowWrapper>())
+        BucketSectionWrapper unscheduledSection = new BucketSectionWrapper(
+            BUCKET_UNSCHEDULED, 'Unscheduled Backlog', new List<WorkOrderRowWrapper>()
         );
-        sections.add(new BucketSectionWrapper(BUCKET_SCHEDULED, 'Scheduled Work Value', new List<WorkOrderRowWrapper>()));
-        sections.add(
-            new BucketSectionWrapper(BUCKET_IN_PROGRESS, 'In Progress Work Value', new List<WorkOrderRowWrapper>())
+        BucketSectionWrapper backlogSection = new BucketSectionWrapper(
+            BUCKET_SCHEDULED_BACKLOG, 'Scheduled Backlog', new List<WorkOrderRowWrapper>()
+        );
+        BucketSectionWrapper scheduledTodaySection = new BucketSectionWrapper(
+            BUCKET_SCHEDULED_TODAY, 'Scheduled for Today', new List<WorkOrderRowWrapper>()
+        );
+        BucketSectionWrapper completedTodaySection = new BucketSectionWrapper(
+            BUCKET_COMPLETED_TODAY, 'Completed Today', new List<WorkOrderRowWrapper>()
         );
 
-        Map<String, List<WorkOrderRowWrapper>> rowsByBucketKey = new Map<String, List<WorkOrderRowWrapper>>();
-        for (BucketSectionWrapper sectionRecord : sections) {
-            rowsByBucketKey.put(sectionRecord.bucketKey, sectionRecord.rows);
-        }
+        List<BucketSectionWrapper> sections = new List<BucketSectionWrapper>{
+            unscheduledSection,
+            backlogSection,
+            scheduledTodaySection,
+            completedTodaySection
+        };
 
         List<Opportunity_WorkOrder__c> junctionRecords = [
             SELECT Opportunity__c,
@@ -222,24 +350,26 @@ public with sharing class BillingControl_Orders {
             return sections;
         }
 
-        Set<Id> appointmentsBookedWorkOrderIds = new Set<Id>();
+        Set<Id> allJunctionWorkOrderIds = new Set<Id>();
         for (Opportunity_WorkOrder__c junctionRecord : junctionRecords) {
-            if (
-                junctionRecord.Work_Order__c != null
-                && WORK_ORDER_APPOINTMENTS_BOOKED.equals(
-                    junctionRecord.Work_Order__r != null ? junctionRecord.Work_Order__r.Status : null
-                )
-            ) {
-                appointmentsBookedWorkOrderIds.add(junctionRecord.Work_Order__c);
+            if (junctionRecord.Work_Order__c != null) {
+                allJunctionWorkOrderIds.add(junctionRecord.Work_Order__c);
             }
         }
 
         Map<Id, List<ServiceAppointment>> serviceAppointmentsByWorkOrderId = new Map<Id, List<ServiceAppointment>>();
-        if (!appointmentsBookedWorkOrderIds.isEmpty()) {
+        if (!allJunctionWorkOrderIds.isEmpty()) {
             for (ServiceAppointment appointmentRecord : [
-                SELECT Id, ParentRecordId, Status
+                SELECT
+                    Id,
+                    ParentRecordId,
+                    Status,
+                    SchedStartTime,
+                    ActualEndTime,
+                    AppointmentNumber,
+                    Subject
                 FROM ServiceAppointment
-                WHERE ParentRecordId IN :appointmentsBookedWorkOrderIds
+                WHERE ParentRecordId IN :allJunctionWorkOrderIds
             ]) {
                 if (!serviceAppointmentsByWorkOrderId.containsKey(appointmentRecord.ParentRecordId)) {
                     serviceAppointmentsByWorkOrderId.put(
@@ -287,8 +417,21 @@ public with sharing class BillingControl_Orders {
                 ? junctionRecord.Work_Order__r.Owner.Name
                 : null;
             row.createdDate = junctionRecord.Work_Order__r != null ? junctionRecord.Work_Order__r.CreatedDate : null;
+            List<ServiceAppointment> saForRow = serviceAppointmentsByWorkOrderId.containsKey(workOrderId)
+                ? serviceAppointmentsByWorkOrderId.get(workOrderId)
+                : new List<ServiceAppointment>();
+            row.serviceAppointmentsSummary = buildServiceAppointmentsDisplay(saForRow);
 
-            rowsByBucketKey.get(bucket).add(row);
+            if (bucket == BUCKET_UNSCHEDULED) {
+                unscheduledSection.rows.add(row);
+            } else if (bucket == BUCKET_SCHEDULED) {
+                backlogSection.rows.add(row);
+            } else if (bucket == BUCKET_SCHEDULED_TODAY) {
+                backlogSection.rows.add(row);
+                scheduledTodaySection.rows.add(row);
+            } else if (bucket == BUCKET_COMPLETED_TODAY) {
+                completedTodaySection.rows.add(row);
+            }
         }
 
         for (BucketSectionWrapper sectionRecord : sections) {
@@ -309,8 +452,9 @@ public with sharing class BillingControl_Orders {
     }
 
     /**
-     * Direct work-order bucket: In Progress SA > Scheduled SA > Unscheduled WO statuses.
-     * Appointments Booked without qualifying service appointments is excluded.
+     * Direct work-order bucket. Precedence when WO is Appointments Booked: Completed today (SA) >
+     * Scheduled for today (SA Scheduled or In Progress, SchedStart on today) > General scheduled
+     * (In Progress or Scheduled with start not today). Unscheduled: For Clearance / For Appointment Booking.
      */
     private static String classifyWorkOrderBucket(
         String workOrderStatus,
@@ -326,20 +470,28 @@ public with sharing class BillingControl_Orders {
             && workOrderId != null
             && serviceAppointmentsByWorkOrderId.containsKey(workOrderId)
         ) {
-            Boolean hasInProgress = false;
-            Boolean hasScheduled = false;
+            Boolean hasCompletedToday = false;
+            Boolean hasScheduledToday = false;
+            Boolean hasGeneralScheduled = false;
+
             for (ServiceAppointment appointmentRecord : serviceAppointmentsByWorkOrderId.get(workOrderId)) {
-                if (SERVICE_APPOINTMENT_STATUS_IN_PROGRESS.equals(appointmentRecord.Status)) {
-                    hasInProgress = true;
-                }
-                if (SERVICE_APPOINTMENT_STATUS_SCHEDULED.equals(appointmentRecord.Status)) {
-                    hasScheduled = true;
+                if (isServiceAppointmentCompletedToday(appointmentRecord)) {
+                    hasCompletedToday = true;
+                } else if (isServiceAppointmentScheduledForToday(appointmentRecord)) {
+                    hasScheduledToday = true;
+                } else if (SERVICE_APPOINTMENT_STATUS_IN_PROGRESS.equals(appointmentRecord.Status)) {
+                    hasGeneralScheduled = true;
+                } else if (SERVICE_APPOINTMENT_STATUS_SCHEDULED.equals(appointmentRecord.Status)) {
+                    hasGeneralScheduled = true;
                 }
             }
-            if (hasInProgress) {
-                return BUCKET_IN_PROGRESS;
+            if (hasCompletedToday) {
+                return BUCKET_COMPLETED_TODAY;
             }
-            if (hasScheduled) {
+            if (hasScheduledToday) {
+                return BUCKET_SCHEDULED_TODAY;
+            }
+            if (hasGeneralScheduled) {
                 return BUCKET_SCHEDULED;
             }
         }
@@ -366,8 +518,14 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Integer unscheduledCount;
         @AuraEnabled public Decimal scheduledRevenue;
         @AuraEnabled public Integer scheduledCount;
-        @AuraEnabled public Decimal inProgressRevenue;
-        @AuraEnabled public Integer inProgressCount;
+        @AuraEnabled public Decimal scheduledTodayRevenue;
+        @AuraEnabled public Integer scheduledTodayCount;
+        @AuraEnabled public Decimal completedTodayRevenue;
+        @AuraEnabled public Integer completedTodayCount;
+        @AuraEnabled public Decimal scheduledBacklogRevenue;
+        @AuraEnabled public Integer scheduledBacklogCount;
+        @AuraEnabled public Integer serviceAppointmentsScheduledTodayCount;
+        @AuraEnabled public Integer serviceAppointmentsCompletedTodayCount;
     }
 
     public class BucketSectionWrapper {
@@ -395,6 +553,7 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Id ownerId;
         @AuraEnabled public String ownerName;
         @AuraEnabled public Datetime createdDate;
+        @AuraEnabled public String serviceAppointmentsSummary;
     }
 
     /** Shape retained for legacy getOrders() consumers only. */

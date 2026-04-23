@@ -34,8 +34,14 @@ public with sharing class BillingControlCenterService {
     }
 
     @AuraEnabled
-    public static BillingControl_Invoicing.CompleteBillingResultWrapper completeServiceAppointmentBilling(List<Id> serviceAppointmentIds) {
-        return BillingControl_Invoicing.completeServiceAppointmentBilling(serviceAppointmentIds);
+    public static BillingControl_Invoicing.CompleteBillingResultWrapper completeServiceAppointmentBilling(
+        List<Id> serviceAppointmentIds,
+        Map<String, String> invoiceNumberByOpportunityId
+    ) {
+        return BillingControl_Invoicing.completeServiceAppointmentBilling(
+            serviceAppointmentIds,
+            invoiceNumberByOpportunityId
+        );
     }
 
     @AuraEnabled
