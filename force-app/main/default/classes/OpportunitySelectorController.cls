@@ -125,11 +125,17 @@ public with sharing class OpportunitySelectorController {
             SELECT Id, Name, StageName, Amount, CloseDate
             FROM Opportunity
             WHERE Id IN :opportunityIds
-            AND IsClosed = false
+            AND StageName = 'Closed Won'
+            AND (
+                Billing_Status__c = null
+                OR Billing_Status__c NOT IN (
+                    'Billed (Outstanding Receivable)',
+                    'Paid',
+                    'Partially Paid'
+                )
+            )
             ORDER BY CloseDate ASC NULLS LAST, Name ASC
         ];
-
-        Map<Id, Opportunity> openOpportunitiesById = new Map<Id, Opportunity>(openOpportunities);
 
         for (Id workOrderId : opportunityIdsByWorkOrderId.keySet()) {
             List<Opportunity> opportunities = new List<Opportunity>();

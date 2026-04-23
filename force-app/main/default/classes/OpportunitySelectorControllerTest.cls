@@ -18,27 +18,69 @@ private class OpportunitySelectorControllerTest {
 
         List<Opportunity> opportunities = new List<Opportunity>{
             new Opportunity(
-                Name = 'Alpha Open Opportunity',
+                Name = 'Alpha Eligible Opportunity',
                 AccountId = accountRecord.Id,
-                StageName = 'Prospecting',
+                StageName = 'Closed Won',
                 Amount = 100,
                 CloseDate = Date.today().addDays(10),
+                Work_Type__c = workTypeRecord.Id,
                 Do_not_create_Work_Order__c = true
             ),
             new Opportunity(
-                Name = 'Beta Open Opportunity',
+                Name = 'Beta Eligible Opportunity',
                 AccountId = accountRecord.Id,
-                StageName = 'Qualification',
+                StageName = 'Closed Won',
                 Amount = 250,
                 CloseDate = Date.today().addDays(15),
+                Billing_Status__c = 'Ready for Billing',
+                Work_Type__c = workTypeRecord.Id,
                 Do_not_create_Work_Order__c = true
             ),
             new Opportunity(
-                Name = 'Gamma Closed Opportunity',
+                Name = 'Gamma Billed Opportunity',
                 AccountId = accountRecord.Id,
                 StageName = 'Closed Won',
                 Amount = 500,
                 CloseDate = Date.today().addDays(-1),
+                Billing_Status__c = 'Billed (Outstanding Receivable)',
+                Work_Type__c = workTypeRecord.Id,
+                Do_not_create_Work_Order__c = true
+            ),
+            new Opportunity(
+                Name = 'Delta Paid Opportunity',
+                AccountId = accountRecord.Id,
+                StageName = 'Closed Won',
+                Amount = 600,
+                CloseDate = Date.today().addDays(-2),
+                Billing_Status__c = 'Paid',
+                Work_Type__c = workTypeRecord.Id,
+                Do_not_create_Work_Order__c = true
+            ),
+            new Opportunity(
+                Name = 'Epsilon Partially Paid Opportunity',
+                AccountId = accountRecord.Id,
+                StageName = 'Closed Won',
+                Amount = 700,
+                CloseDate = Date.today().addDays(-3),
+                Billing_Status__c = 'Partially Paid',
+                Work_Type__c = workTypeRecord.Id,
+                Do_not_create_Work_Order__c = true
+            ),
+            new Opportunity(
+                Name = 'Zeta Open Opportunity',
+                AccountId = accountRecord.Id,
+                StageName = 'Prospecting',
+                Amount = 800,
+                CloseDate = Date.today().addDays(20),
+                Work_Type__c = workTypeRecord.Id,
+                Do_not_create_Work_Order__c = true
+            ),
+            new Opportunity(
+                Name = 'Eta Open Opportunity',
+                AccountId = accountRecord.Id,
+                StageName = 'Qualification',
+                Amount = 900,
+                CloseDate = Date.today().addDays(25),
                 Work_Type__c = workTypeRecord.Id,
                 Do_not_create_Work_Order__c = true
             )
@@ -83,12 +125,24 @@ private class OpportunitySelectorControllerTest {
             new Opportunity_WorkOrder__c(
                 Work_Order__c = workOrders[2].Id,
                 Opportunity__c = opportunities[2].Id
+            ),
+            new Opportunity_WorkOrder__c(
+                Work_Order__c = workOrders[2].Id,
+                Opportunity__c = opportunities[3].Id
+            ),
+            new Opportunity_WorkOrder__c(
+                Work_Order__c = workOrders[2].Id,
+                Opportunity__c = opportunities[4].Id
+            ),
+            new Opportunity_WorkOrder__c(
+                Work_Order__c = workOrders[2].Id,
+                Opportunity__c = opportunities[5].Id
             )
         };
     }
 
     @isTest
-    static void testGetOpenOpportunitiesReturnsOnlyOpenRecords() {
+    static void testGetOpenOpportunitiesReturnsOnlyEligibleRecords() {
         WorkOrder singleWorkOrder = [
             SELECT Id
             FROM WorkOrder
@@ -101,9 +155,9 @@ private class OpportunitySelectorControllerTest {
             OpportunitySelectorController.getOpenOpportunities(singleWorkOrder.Id);
         Test.stopTest();
 
-        System.assertEquals(1, results.size(), 'Only one open opportunity should be returned.');
-        System.assertEquals('Alpha Open Opportunity', results[0].name, 'The open opportunity should match the junction.');
-        System.assertEquals('Prospecting', results[0].stageName, 'Stage should be exposed to the UI.');
+        System.assertEquals(1, results.size(), 'Only one eligible opportunity should be returned.');
+        System.assertEquals('Alpha Eligible Opportunity', results[0].name, 'The eligible opportunity should match the junction.');
+        System.assertEquals('Closed Won', results[0].stageName, 'Stage should be exposed to the UI.');
     }
 
     @isTest
@@ -153,7 +207,7 @@ private class OpportunitySelectorControllerTest {
         OpportunitySelectorController.FlowResponse multipleResponse =
             responsesByWorkOrderId.get(workOrderIdsBySubject.get('Multiple Opportunity Work Order'));
         System.assertEquals(true, multipleResponse.hasMultipleOpportunities, 'Multiple work order should require selection.');
-        System.assertEquals(2, multipleResponse.opportunityCount, 'Two open opportunities should be returned.');
+        System.assertEquals(2, multipleResponse.opportunityCount, 'Two eligible opportunities should be returned.');
         System.assertEquals(null, multipleResponse.selectedOpportunityId, 'No auto-selection should happen for multiple matches.');
         System.assert(
             multipleResponse.allowedOpportunityIdsCsv.contains(','),
@@ -162,20 +216,20 @@ private class OpportunitySelectorControllerTest {
 
         OpportunitySelectorController.FlowResponse noneResponse =
             responsesByWorkOrderId.get(workOrderIdsBySubject.get('Closed Only Work Order'));
-        System.assertEquals(true, noneResponse.hasNoOpportunities, 'Closed-only work order should produce no matches.');
-        System.assertEquals(0, noneResponse.opportunityCount, 'Closed opportunities must be filtered out.');
+        System.assertEquals(true, noneResponse.hasNoOpportunities, 'Work order with only billed or open opportunities should produce no matches.');
+        System.assertEquals(0, noneResponse.opportunityCount, 'Billed and non-Closed Won opportunities must be filtered out.');
     }
 
     @isTest
     static void testLookupSearchControllerFiltersByAllowedIdsAndSearchText() {
-        List<Opportunity> openOpportunities = [
+        List<Opportunity> eligibleOpportunities = [
             SELECT Id, Name
             FROM Opportunity
-            WHERE Name IN ('Alpha Open Opportunity', 'Beta Open Opportunity')
+            WHERE Name IN ('Alpha Eligible Opportunity', 'Beta Eligible Opportunity')
             ORDER BY Name ASC
         ];
 
-        List<Id> allowedIds = new List<Id>{ openOpportunities[0].Id, openOpportunities[1].Id };
+        List<Id> allowedIds = new List<Id>{ eligibleOpportunities[0].Id, eligibleOpportunities[1].Id };
 
         Test.startTest();
         List<LookupSearchController.OpportunitySearchResult> blankSearchResults =
@@ -186,9 +240,9 @@ private class OpportunitySelectorControllerTest {
             LookupSearchController.searchOpportunities(new List<Id>(), 'Alpha');
         Test.stopTest();
 
-        System.assertEquals(2, blankSearchResults.size(), 'Blank search should return all allowed open opportunities.');
+        System.assertEquals(2, blankSearchResults.size(), 'Blank search should return all allowed eligible opportunities.');
         System.assertEquals(1, nameSearchResults.size(), 'Search text should narrow the results.');
-        System.assertEquals('Beta Open Opportunity', nameSearchResults[0].name, 'Lookup search should return the matching opportunity.');
+        System.assertEquals('Beta Eligible Opportunity', nameSearchResults[0].name, 'Lookup search should return the matching opportunity.');
         System.assertEquals(0, emptyAllowedResults.size(), 'No allowed ids means no lookup results.');
     }
 }

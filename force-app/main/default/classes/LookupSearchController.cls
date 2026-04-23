@@ -26,7 +26,15 @@ public with sharing class LookupSearchController {
                 SELECT Id, Name, StageName, Amount, CloseDate
                 FROM Opportunity
                 WHERE Id IN :filteredIds
-                AND IsClosed = false
+                AND StageName = 'Closed Won'
+                AND (
+                    Billing_Status__c = null
+                    OR Billing_Status__c NOT IN (
+                        'Billed (Outstanding Receivable)',
+                        'Paid',
+                        'Partially Paid'
+                    )
+                )
                 ORDER BY Name ASC
                 LIMIT 25
             ];
@@ -36,7 +44,15 @@ public with sharing class LookupSearchController {
                 SELECT Id, Name, StageName, Amount, CloseDate
                 FROM Opportunity
                 WHERE Id IN :filteredIds
-                AND IsClosed = false
+                AND StageName = 'Closed Won'
+                AND (
+                    Billing_Status__c = null
+                    OR Billing_Status__c NOT IN (
+                        'Billed (Outstanding Receivable)',
+                        'Paid',
+                        'Partially Paid'
+                    )
+                )
                 AND (
                     Name LIKE :normalizedSearch
                     OR StageName LIKE :normalizedSearch
