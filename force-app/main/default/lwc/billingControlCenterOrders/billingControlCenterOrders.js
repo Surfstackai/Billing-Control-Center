@@ -11,7 +11,7 @@ const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US');
 
-const BUCKET_KEYS = ['UNSCHEDULED', 'SCHEDULED', 'SCHEDULED_TODAY', 'COMPLETED_TODAY'];
+const BUCKET_KEYS = ['UNSCHEDULED', 'SCHEDULED', 'SCHEDULED_TODAY', 'COMPLETED_TODAY', 'COMPLETED_THIS_WEEK'];
 
 const DEFAULT_SORT_FIELD = 'workOrderUrl';
 
@@ -47,6 +47,14 @@ const KPI_CONFIG = [
         title: 'Completed Today',
         icon: 'utility:check',
         hint: 'Service appointments completed today.'
+    },
+    {
+        key: 'completedThisWeek',
+        revenueKey: 'completedThisWeekRevenue',
+        countKey: 'completedThisWeekCount',
+        title: 'Completed This Week',
+        icon: 'utility:success',
+        hint: 'Service appointments completed this week.'
     }
 ];
 

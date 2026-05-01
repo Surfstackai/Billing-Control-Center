@@ -155,6 +155,27 @@ private class BillingControlCenterControllerTest {
         update new List<Order>{ orders[0], orders[1], orders[2], orders[3] };
     }
 
+    private static Date getSundayWeekStart(Date targetDate) {
+        Integer daysSinceAnchorSunday = Date.newInstance(1900, 1, 7).daysBetween(targetDate);
+        Integer daysAfterSunday = Math.mod(daysSinceAnchorSunday, 7);
+        if (daysAfterSunday < 0) {
+            daysAfterSunday += 7;
+        }
+        return targetDate.addDays(-daysAfterSunday);
+    }
+
+    private static Date getEarlierDateInCurrentSundayWeek() {
+        Date todayDate = Date.today();
+        Date weekStart = getSundayWeekStart(todayDate);
+        return weekStart < todayDate ? weekStart : null;
+    }
+
+    private static Date getFutureDateInCurrentSundayWeek() {
+        Date todayDate = Date.today();
+        Date weekEnd = getSundayWeekStart(todayDate).addDays(6);
+        return todayDate < weekEnd ? todayDate.addDays(1) : null;
+    }
+
     @isTest
     static void testGetKpisPipelineBucketsClosedWon() {
         Account accountRecord = [SELECT Id FROM Account WHERE Name = 'Billing Controller Test Account' LIMIT 1];
@@ -205,6 +226,33 @@ private class BillingControlCenterControllerTest {
                 CloseDate = Date.today(),
                 Work_Type__c = workTypeRecord.Id,
                 Do_not_create_Work_Order__c = true
+            ),
+            new Opportunity(
+                Name = 'KPI Completed This Week',
+                AccountId = accountRecord.Id,
+                StageName = 'Closed Won',
+                Amount = 600,
+                CloseDate = Date.today(),
+                Work_Type__c = workTypeRecord.Id,
+                Do_not_create_Work_Order__c = true
+            ),
+            new Opportunity(
+                Name = 'KPI Completed Outside This Week',
+                AccountId = accountRecord.Id,
+                StageName = 'Closed Won',
+                Amount = 700,
+                CloseDate = Date.today(),
+                Work_Type__c = workTypeRecord.Id,
+                Do_not_create_Work_Order__c = true
+            ),
+            new Opportunity(
+                Name = 'KPI Completed Future This Week',
+                AccountId = accountRecord.Id,
+                StageName = 'Closed Won',
+                Amount = 800,
+                CloseDate = Date.today(),
+                Work_Type__c = workTypeRecord.Id,
+                Do_not_create_Work_Order__c = true
             )
         };
         insert pipelineOpportunities;
@@ -239,6 +287,24 @@ private class BillingControlCenterControllerTest {
                 Status = 'Appointments Booked',
                 AccountId = accountRecord.Id,
                 WorkTypeId = workTypeRecord.Id
+            ),
+            new WorkOrder(
+                Subject = 'KPI WO Completed This Week',
+                Status = 'Completed',
+                AccountId = accountRecord.Id,
+                WorkTypeId = workTypeRecord.Id
+            ),
+            new WorkOrder(
+                Subject = 'KPI WO Completed Outside This Week',
+                Status = 'Completed',
+                AccountId = accountRecord.Id,
+                WorkTypeId = workTypeRecord.Id
+            ),
+            new WorkOrder(
+                Subject = 'KPI WO Completed Future This Week',
+                Status = 'Completed',
+                AccountId = accountRecord.Id,
+                WorkTypeId = workTypeRecord.Id
             )
         };
         insert pipelineWorkOrders;
@@ -263,12 +329,27 @@ private class BillingControlCenterControllerTest {
             new Opportunity_WorkOrder__c(
                 Opportunity__c = pipelineOpportunities[4].Id,
                 Work_Order__c = pipelineWorkOrders[4].Id
+            ),
+            new Opportunity_WorkOrder__c(
+                Opportunity__c = pipelineOpportunities[5].Id,
+                Work_Order__c = pipelineWorkOrders[5].Id
+            ),
+            new Opportunity_WorkOrder__c(
+                Opportunity__c = pipelineOpportunities[6].Id,
+                Work_Order__c = pipelineWorkOrders[6].Id
+            ),
+            new Opportunity_WorkOrder__c(
+                Opportunity__c = pipelineOpportunities[7].Id,
+                Work_Order__c = pipelineWorkOrders[7].Id
             )
         };
 
         Datetime scheduleStart = Datetime.newInstance(Date.today(), Time.newInstance(10, 0, 0, 0));
         Datetime scheduleEnd = Datetime.newInstance(Date.today(), Time.newInstance(11, 0, 0, 0));
-        insert new List<ServiceAppointment>{
+        Date earlierThisWeek = getEarlierDateInCurrentSundayWeek();
+        Date futureThisWeek = getFutureDateInCurrentSundayWeek();
+        Date outsideThisWeek = getSundayWeekStart(Date.today()).addDays(-1);
+        List<ServiceAppointment> appointments = new List<ServiceAppointment>{
             new ServiceAppointment(
                 ParentRecordId = pipelineWorkOrders[1].Id,
                 Status = 'Scheduled',
@@ -297,8 +378,37 @@ private class BillingControlCenterControllerTest {
                 SchedEndTime = scheduleEnd.addDays(-1),
                 ActualEndTime = Datetime.newInstance(Date.today(), Time.newInstance(12, 0, 0, 0)),
                 Subject = 'KPI SA Completed Today'
+            ),
+            new ServiceAppointment(
+                ParentRecordId = pipelineWorkOrders[6].Id,
+                Status = 'Completed',
+                SchedStartTime = Datetime.newInstance(outsideThisWeek, Time.newInstance(9, 0, 0, 0)),
+                SchedEndTime = Datetime.newInstance(outsideThisWeek, Time.newInstance(10, 0, 0, 0)),
+                ActualEndTime = Datetime.newInstance(outsideThisWeek, Time.newInstance(12, 0, 0, 0)),
+                Subject = 'KPI SA Completed Outside This Week'
             )
         };
+        if (earlierThisWeek != null) {
+            appointments.add(new ServiceAppointment(
+                ParentRecordId = pipelineWorkOrders[5].Id,
+                Status = 'Completed',
+                SchedStartTime = Datetime.newInstance(earlierThisWeek, Time.newInstance(9, 0, 0, 0)),
+                SchedEndTime = Datetime.newInstance(earlierThisWeek, Time.newInstance(10, 0, 0, 0)),
+                ActualEndTime = Datetime.newInstance(earlierThisWeek, Time.newInstance(12, 0, 0, 0)),
+                Subject = 'KPI SA Completed Earlier This Week'
+            ));
+        }
+        if (futureThisWeek != null) {
+            appointments.add(new ServiceAppointment(
+                ParentRecordId = pipelineWorkOrders[7].Id,
+                Status = 'Completed',
+                SchedStartTime = Datetime.newInstance(futureThisWeek, Time.newInstance(9, 0, 0, 0)),
+                SchedEndTime = Datetime.newInstance(futureThisWeek, Time.newInstance(10, 0, 0, 0)),
+                ActualEndTime = Datetime.newInstance(futureThisWeek, Time.newInstance(12, 0, 0, 0)),
+                Subject = 'KPI SA Completed Future This Week'
+            ));
+        }
+        insert appointments;
 
         Test.startTest();
         BillingControl_Orders.KpiWrapper result = BillingControl_Orders.getKpis();
@@ -323,6 +433,15 @@ private class BillingControlCenterControllerTest {
 
         System.assertEquals(1, result.completedTodayCount, 'Completed Today should include completed service appointments with ActualEndTime today.');
         System.assertEquals(300, result.completedTodayRevenue);
+
+        Integer expectedCompletedThisWeekCount = earlierThisWeek != null ? 2 : 1;
+        Decimal expectedCompletedThisWeekRevenue = earlierThisWeek != null ? 900 : 300;
+        System.assertEquals(
+            expectedCompletedThisWeekCount,
+            result.completedThisWeekCount,
+            'Completed This Week should include completed service appointments from Sunday through today.'
+        );
+        System.assertEquals(expectedCompletedThisWeekRevenue, result.completedThisWeekRevenue);
     }
 
     @isTest
@@ -331,20 +450,28 @@ private class BillingControlCenterControllerTest {
 
         System.assertEquals(
             0,
-            result.unscheduledCount + result.scheduledCount + result.scheduledTodayCount + result.completedTodayCount,
+            result.unscheduledCount
+                + result.scheduledCount
+                + result.scheduledTodayCount
+                + result.completedTodayCount
+                + result.completedThisWeekCount,
             'Closed Won tied only to non-matching statuses/dates should not appear in any Orders KPI bucket.'
         );
         System.assertEquals(
             0,
-            result.unscheduledRevenue + result.scheduledRevenue + result.scheduledTodayRevenue + result.completedTodayRevenue,
-            'Pipeline revenue should be zero when no Closed Won matches unscheduled, scheduled, scheduled today, or completed today rules.'
+            result.unscheduledRevenue
+                + result.scheduledRevenue
+                + result.scheduledTodayRevenue
+                + result.completedTodayRevenue
+                + result.completedThisWeekRevenue,
+            'Pipeline revenue should be zero when no Closed Won matches unscheduled, scheduled, scheduled today, completed today, or completed this week rules.'
         );
     }
 
     @isTest
-    static void testGetBucketWorkOrdersAlwaysReturnsFourSectionsWhenEmpty() {
+    static void testGetBucketWorkOrdersAlwaysReturnsFiveSectionsWhenEmpty() {
         List<BillingControl_Orders.BucketSectionWrapper> sections = BillingControl_Orders.getBucketWorkOrders();
-        System.assertEquals(4, sections.size(), 'Orders bucket response must always include the four fixed KPI sections.');
+        System.assertEquals(5, sections.size(), 'Orders bucket response must always include the five fixed KPI sections.');
 
         Map<String, Integer> countsByBucket = new Map<String, Integer>();
         for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
@@ -355,6 +482,7 @@ private class BillingControlCenterControllerTest {
         System.assertEquals(0, countsByBucket.get('SCHEDULED'));
         System.assertEquals(0, countsByBucket.get('SCHEDULED_TODAY'));
         System.assertEquals(0, countsByBucket.get('COMPLETED_TODAY'));
+        System.assertEquals(0, countsByBucket.get('COMPLETED_THIS_WEEK'));
     }
 
     @isTest
@@ -403,6 +531,12 @@ private class BillingControlCenterControllerTest {
                 Status = 'Completed',
                 AccountId = accountRecord.Id,
                 WorkTypeId = workTypeRecord.Id
+            ),
+            new WorkOrder(
+                Subject = 'Drill Completed This Week',
+                Status = 'Completed',
+                AccountId = accountRecord.Id,
+                WorkTypeId = workTypeRecord.Id
             )
         };
         insert drillWorkOrders;
@@ -412,12 +546,14 @@ private class BillingControlCenterControllerTest {
             new Opportunity_WorkOrder__c(Opportunity__c = drillOpp.Id, Work_Order__c = drillWorkOrders[1].Id),
             new Opportunity_WorkOrder__c(Opportunity__c = drillOpp.Id, Work_Order__c = drillWorkOrders[2].Id),
             new Opportunity_WorkOrder__c(Opportunity__c = drillOpp.Id, Work_Order__c = drillWorkOrders[3].Id),
-            new Opportunity_WorkOrder__c(Opportunity__c = drillOpp.Id, Work_Order__c = drillWorkOrders[4].Id)
+            new Opportunity_WorkOrder__c(Opportunity__c = drillOpp.Id, Work_Order__c = drillWorkOrders[4].Id),
+            new Opportunity_WorkOrder__c(Opportunity__c = drillOpp.Id, Work_Order__c = drillWorkOrders[5].Id)
         };
 
         Datetime scheduleStart = Datetime.newInstance(Date.today(), Time.newInstance(13, 0, 0, 0));
         Datetime scheduleEnd = Datetime.newInstance(Date.today(), Time.newInstance(14, 0, 0, 0));
-        insert new List<ServiceAppointment>{
+        Date earlierThisWeek = getEarlierDateInCurrentSundayWeek();
+        List<ServiceAppointment> appointments = new List<ServiceAppointment>{
             new ServiceAppointment(
                 ParentRecordId = drillWorkOrders[1].Id,
                 Status = 'Scheduled',
@@ -455,12 +591,23 @@ private class BillingControlCenterControllerTest {
                 Subject = 'Drill SA Completed Today'
             )
         };
+        if (earlierThisWeek != null) {
+            appointments.add(new ServiceAppointment(
+                ParentRecordId = drillWorkOrders[5].Id,
+                Status = 'Completed',
+                SchedStartTime = Datetime.newInstance(earlierThisWeek, Time.newInstance(8, 0, 0, 0)),
+                SchedEndTime = Datetime.newInstance(earlierThisWeek, Time.newInstance(9, 0, 0, 0)),
+                ActualEndTime = Datetime.newInstance(earlierThisWeek, Time.newInstance(10, 0, 0, 0)),
+                Subject = 'Drill SA Completed Earlier This Week'
+            ));
+        }
+        insert appointments;
 
         Test.startTest();
         List<BillingControl_Orders.BucketSectionWrapper> sections = BillingControl_Orders.getBucketWorkOrders();
         Test.stopTest();
 
-        System.assertEquals(4, sections.size(), 'Four bucket sections should always be returned.');
+        System.assertEquals(5, sections.size(), 'Five bucket sections should always be returned.');
 
         Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>> rowsByBucket = new Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>>();
         for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
@@ -499,6 +646,17 @@ private class BillingControlCenterControllerTest {
         System.assertNotEquals(null, rowsByBucket.get('COMPLETED_TODAY')[0].serviceAppointmentId);
         System.assertEquals('Completed', rowsByBucket.get('COMPLETED_TODAY')[0].status);
 
+        Integer expectedCompletedThisWeekRows = earlierThisWeek != null ? 2 : 1;
+        System.assertEquals(
+            expectedCompletedThisWeekRows,
+            rowsByBucket.get('COMPLETED_THIS_WEEK').size(),
+            'Completed This Week should include completed rows from Sunday through today.'
+        );
+        for (BillingControl_Orders.WorkOrderRowWrapper row : rowsByBucket.get('COMPLETED_THIS_WEEK')) {
+            System.assertNotEquals(null, row.serviceAppointmentId, 'Completed This Week rows must be service-appointment driven.');
+            System.assertEquals('Completed', row.status);
+        }
+
         Set<Id> allReturnedWorkOrderIds = new Set<Id>();
         for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
             for (BillingControl_Orders.WorkOrderRowWrapper row : sectionRecord.rows) {
@@ -510,6 +668,13 @@ private class BillingControlCenterControllerTest {
             allReturnedWorkOrderIds.contains(drillWorkOrders[4].Id),
             'Completed-today service appointments should surface their parent work order in the completed-today bucket.'
         );
+        if (earlierThisWeek != null) {
+            System.assertEquals(
+                true,
+                allReturnedWorkOrderIds.contains(drillWorkOrders[5].Id),
+                'Completed-this-week service appointments should surface their parent work order in the completed-this-week bucket.'
+            );
+        }
     }
 
     @isTest
@@ -622,5 +787,6 @@ private class BillingControlCenterControllerTest {
         System.assertEquals(2, countsByBucket.get('SCHEDULED'));
         System.assertEquals(2, countsByBucket.get('SCHEDULED_TODAY'));
         System.assertEquals(1, countsByBucket.get('COMPLETED_TODAY'));
+        System.assertEquals(1, countsByBucket.get('COMPLETED_THIS_WEEK'));
     }
 }

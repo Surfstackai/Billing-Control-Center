@@ -4,7 +4,7 @@
             <div class="hero__intro">
                 <p class="hero__eyebrow">Billing Control Center</p>
                 <h1 class="hero__title">Work Orders Pending Scheduling or Completion</h1>
-                <p class="hero__subtitle">Closed Won pipeline: unscheduled work, scheduled work, scheduled for today, and completed today.</p>
+                <p class="hero__subtitle">Closed Won pipeline: unscheduled work, scheduled work, scheduled for today, completed today, and completed this week.</p>
             </div>
             <lightning-button
                 class="hero__refresh"
@@ -32,7 +32,7 @@
         <div class="billing-kpi-container">
             <section class="slds-grid slds-wrap slds-gutters kpi-grid">
                 <template for:each={kpiTiles} for:item="tile">
-                    <div key={tile.key} class="slds-col slds-size_1-of-4 kpi-grid__col">
+                    <div key={tile.key} class="kpi-grid__col">
                         <article class="kpi-tile">
                             <div class="kpi-tile__header">
                                 <span class="kpi-tile__title">{tile.title}</span>

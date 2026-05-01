@@ -48,13 +48,15 @@
 }
 
 .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 1rem;
     padding: 0 1.5rem 1.5rem;
 }
 
 .kpi-grid__col {
-    flex: 1 1 25%;
-    max-width: 25%;
     min-width: 0;
+    display: flex;
 }
 
 .kpi-tile {
@@ -63,6 +65,10 @@
     border-radius: 1rem;
     padding: 1rem;
     box-shadow: 0 12px 30px rgba(14, 35, 29, 0.06);
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
 }
 
 .kpi-tile__header {
@@ -157,6 +163,10 @@
 }
 
 @media (max-width: 980px) {
+    .kpi-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     .table-toolbar {
         flex-direction: column;
         align-items: stretch;
@@ -178,10 +188,8 @@
         flex-direction: column;
     }
 
-    .kpi-grid__col {
-        flex: 1 1 50%;
-        max-width: 50%;
-        min-width: 0;
+    .kpi-grid {
+        grid-template-columns: 1fr;
     }
 
     .hero,
@@ -189,13 +197,5 @@
     .table-shell {
         padding-left: 1rem;
         padding-right: 1rem;
-    }
-}
-
-@media (max-width: 420px) {
-    .kpi-grid__col {
-        flex: 1 1 100%;
-        max-width: 100%;
-        min-width: 0;
     }
 }

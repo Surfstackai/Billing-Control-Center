@@ -6,6 +6,7 @@
  *   2) Scheduled Work (WorkOrder has at least one Scheduled/In Progress ServiceAppointment)
  *   3) Scheduled for Today (ServiceAppointment status/date driven)
  *   4) Completed Today (ServiceAppointment status/date driven)
+ *   5) Completed This Week (ServiceAppointment status/date driven, Sunday-Saturday)
  */
 public with sharing class BillingControl_Orders {
     private static final String OPPORTUNITY_STAGE_CLOSED_WON = 'Closed Won';
@@ -31,21 +32,23 @@ public with sharing class BillingControl_Orders {
     private static final String BUCKET_SCHEDULED = 'SCHEDULED';
     private static final String BUCKET_SCHEDULED_TODAY = 'SCHEDULED_TODAY';
     private static final String BUCKET_COMPLETED_TODAY = 'COMPLETED_TODAY';
+    private static final String BUCKET_COMPLETED_THIS_WEEK = 'COMPLETED_THIS_WEEK';
 
     private static final String BUCKET_LABEL_UNSCHEDULED = 'Unscheduled Work';
     private static final String BUCKET_LABEL_SCHEDULED = 'Scheduled Work';
     private static final String BUCKET_LABEL_SCHEDULED_TODAY = 'Scheduled for Today';
     private static final String BUCKET_LABEL_COMPLETED_TODAY = 'Completed Today';
+    private static final String BUCKET_LABEL_COMPLETED_THIS_WEEK = 'Completed This Week';
 
     /**
-     * Returns KPI totals/counts for the four Orders tab buckets.
+     * Returns KPI totals/counts for the five Orders tab buckets.
      */
     public static KpiWrapper getKpis() {
         return getKpis(null);
     }
 
     /**
-     * Returns KPI totals/counts for the four Orders tab buckets.
+     * Returns KPI totals/counts for the five Orders tab buckets.
      * refreshToken is intentionally ignored and exists only to bypass client cache when needed.
      */
     @AuraEnabled(cacheable=true)
@@ -57,6 +60,7 @@ public with sharing class BillingControl_Orders {
         BucketSectionWrapper scheduled = findSectionByKey(sections, BUCKET_SCHEDULED);
         BucketSectionWrapper scheduledToday = findSectionByKey(sections, BUCKET_SCHEDULED_TODAY);
         BucketSectionWrapper completedToday = findSectionByKey(sections, BUCKET_COMPLETED_TODAY);
+        BucketSectionWrapper completedThisWeek = findSectionByKey(sections, BUCKET_COMPLETED_THIS_WEEK);
 
         result.unscheduledCount = unscheduled != null ? unscheduled.rows.size() : 0;
         result.unscheduledRevenue = sumOpportunityAmount(unscheduled != null ? unscheduled.rows : null);
@@ -69,6 +73,9 @@ public with sharing class BillingControl_Orders {
 
         result.completedTodayCount = completedToday != null ? completedToday.rows.size() : 0;
         result.completedTodayRevenue = sumOpportunityAmount(completedToday != null ? completedToday.rows : null);
+
+        result.completedThisWeekCount = completedThisWeek != null ? completedThisWeek.rows.size() : 0;
+        result.completedThisWeekRevenue = sumOpportunityAmount(completedThisWeek != null ? completedThisWeek.rows : null);
 
         // Legacy compatibility fields.
         result.inProgressCount = 0;
@@ -86,18 +93,18 @@ public with sharing class BillingControl_Orders {
     }
 
     /**
-     * Returns the four fixed bucket sections for Orders tab accordion.
+     * Returns the five fixed bucket sections for Orders tab accordion.
      * Sections are always returned in this order:
-     * UNSCHEDULED, SCHEDULED, SCHEDULED_TODAY, COMPLETED_TODAY.
+     * UNSCHEDULED, SCHEDULED, SCHEDULED_TODAY, COMPLETED_TODAY, COMPLETED_THIS_WEEK.
      */
     public static List<BucketSectionWrapper> getBucketWorkOrders() {
         return getBucketWorkOrders(null);
     }
 
     /**
-     * Returns the four fixed bucket sections for Orders tab accordion.
+     * Returns the five fixed bucket sections for Orders tab accordion.
      * Sections are always returned in this order:
-     * UNSCHEDULED, SCHEDULED, SCHEDULED_TODAY, COMPLETED_TODAY.
+     * UNSCHEDULED, SCHEDULED, SCHEDULED_TODAY, COMPLETED_TODAY, COMPLETED_THIS_WEEK.
      * refreshToken is intentionally ignored and exists only to bypass client cache when needed.
      */
     @AuraEnabled(cacheable=true)
@@ -193,7 +200,8 @@ public with sharing class BillingControl_Orders {
         Set<Id> seenUnscheduledWorkOrderIds = new Set<Id>();
         Set<Id> seenScheduledWorkOrderIds = new Set<Id>();
         Set<Id> seenScheduledTodayAppointmentIds = new Set<Id>();
-        Set<Id> processedWorkOrderIds = new Set<Id>();
+        Set<Id> seenCompletedTodayWorkOrderIds = new Set<Id>();
+        Set<Id> seenCompletedThisWeekWorkOrderIds = new Set<Id>();
 
         for (Id workOrderId : primaryJunctionByWorkOrderId.keySet()) {
             Opportunity_WorkOrder__c workOrderContext = primaryJunctionByWorkOrderId.get(workOrderId);
@@ -247,9 +255,24 @@ public with sharing class BillingControl_Orders {
                 if (
                     SERVICE_APPOINTMENT_STATUS_COMPLETED.equals(appointmentRecord.Status)
                     && isSameDay(appointmentRecord.ActualEndTime, todayDate)
-                    && processedWorkOrderIds.add(workOrderId)
+                    && seenCompletedTodayWorkOrderIds.add(workOrderId)
                 ) {
                     rowsByBucketKey.get(BUCKET_COMPLETED_TODAY).add(
+                        buildServiceAppointmentBucketRow(
+                            appointmentRecord,
+                            opportunityContext,
+                            workOrderContext,
+                            serviceAppointmentDisplay
+                        )
+                    );
+                }
+
+                if (
+                    SERVICE_APPOINTMENT_STATUS_COMPLETED.equals(appointmentRecord.Status)
+                    && isInSundayThroughTodayWeek(appointmentRecord.ActualEndTime, todayDate)
+                    && seenCompletedThisWeekWorkOrderIds.add(workOrderId)
+                ) {
+                    rowsByBucketKey.get(BUCKET_COMPLETED_THIS_WEEK).add(
                         buildServiceAppointmentBucketRow(
                             appointmentRecord,
                             opportunityContext,
@@ -291,6 +314,11 @@ public with sharing class BillingControl_Orders {
                 BUCKET_COMPLETED_TODAY,
                 BUCKET_LABEL_COMPLETED_TODAY,
                 new List<WorkOrderRowWrapper>()
+            ),
+            new BucketSectionWrapper(
+                BUCKET_COMPLETED_THIS_WEEK,
+                BUCKET_LABEL_COMPLETED_THIS_WEEK,
+                new List<WorkOrderRowWrapper>()
             )
         };
     }
@@ -325,6 +353,24 @@ public with sharing class BillingControl_Orders {
 
     private static Boolean isSameDay(Datetime value, Date targetDate) {
         return value != null && targetDate != null && value.date() == targetDate;
+    }
+
+    private static Boolean isInSundayThroughTodayWeek(Datetime value, Date targetDate) {
+        if (value == null || targetDate == null) {
+            return false;
+        }
+        Date weekStart = getSundayWeekStart(targetDate);
+        Date valueDate = value.date();
+        return valueDate >= weekStart && valueDate <= targetDate;
+    }
+
+    private static Date getSundayWeekStart(Date targetDate) {
+        Integer daysSinceAnchorSunday = Date.newInstance(1900, 1, 7).daysBetween(targetDate);
+        Integer daysAfterSunday = Math.mod(daysSinceAnchorSunday, 7);
+        if (daysAfterSunday < 0) {
+            daysAfterSunday += 7;
+        }
+        return targetDate.addDays(-daysAfterSunday);
     }
 
     private static Decimal sumOpportunityAmount(List<WorkOrderRowWrapper> rows) {
@@ -485,6 +531,8 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Integer scheduledTodayCount;
         @AuraEnabled public Decimal completedTodayRevenue;
         @AuraEnabled public Integer completedTodayCount;
+        @AuraEnabled public Decimal completedThisWeekRevenue;
+        @AuraEnabled public Integer completedThisWeekCount;
         // Legacy compatibility fields retained to avoid breaking stale clients.
         @AuraEnabled public Decimal inProgressRevenue;
         @AuraEnabled public Integer inProgressCount;
