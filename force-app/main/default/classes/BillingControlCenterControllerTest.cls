@@ -266,32 +266,37 @@ private class BillingControlCenterControllerTest {
             )
         };
 
-        Date futureDay = Date.today().addDays(1);
-        Datetime futureSchedStart = Datetime.newInstance(futureDay, Time.newInstance(9, 0, 0, 0));
-        Datetime futureSchedEnd = Datetime.newInstance(futureDay, Time.newInstance(10, 0, 0, 0));
-        Datetime inProgStart = System.now().addHours(1);
-        Datetime inProgEnd = System.now().addHours(2);
+        Datetime scheduleStart = Datetime.newInstance(Date.today(), Time.newInstance(10, 0, 0, 0));
+        Datetime scheduleEnd = Datetime.newInstance(Date.today(), Time.newInstance(11, 0, 0, 0));
         insert new List<ServiceAppointment>{
             new ServiceAppointment(
                 ParentRecordId = pipelineWorkOrders[1].Id,
                 Status = 'Scheduled',
-                SchedStartTime = futureSchedStart,
-                SchedEndTime = futureSchedEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'KPI SA Scheduled'
             ),
             new ServiceAppointment(
                 ParentRecordId = pipelineWorkOrders[2].Id,
                 Status = 'In Progress',
-                SchedStartTime = inProgStart,
-                SchedEndTime = inProgEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'KPI SA In Progress'
             ),
             new ServiceAppointment(
                 ParentRecordId = pipelineWorkOrders[4].Id,
                 Status = 'In Progress',
-                SchedStartTime = inProgStart,
-                SchedEndTime = inProgEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'KPI SA Precedence In Progress'
+            ),
+            new ServiceAppointment(
+                ParentRecordId = pipelineWorkOrders[1].Id,
+                Status = 'Completed',
+                SchedStartTime = scheduleStart.addDays(-1),
+                SchedEndTime = scheduleEnd.addDays(-1),
+                ActualEndTime = Datetime.newInstance(Date.today(), Time.newInstance(12, 0, 0, 0)),
+                Subject = 'KPI SA Completed Today'
             )
         };
 
@@ -299,33 +304,25 @@ private class BillingControlCenterControllerTest {
         BillingControl_Orders.KpiWrapper result = BillingControl_Orders.getKpis();
         Test.stopTest();
 
-        System.assertEquals(
-            1,
-            result.unscheduledCount,
-            'Unscheduled counts only Closed Won with a linked work order in For Clearance or For Appointment Booking.'
-        );
-        System.assertEquals(200, result.unscheduledRevenue, 'Unscheduled revenue sums matching Closed Won amounts.');
-
-        System.assertEquals(1, result.scheduledCount, 'General scheduled: future Scheduled SAs not starting today.');
-        System.assertEquals(300, result.scheduledRevenue);
-
-        System.assertEquals(2, result.scheduledTodayCount, 'In Progress or Scheduled with start today count as scheduled for today.');
-        System.assertEquals(900, result.scheduledTodayRevenue);
-        System.assertEquals(0, result.completedTodayCount, 'No appointments completed today in this data set.');
-        System.assertEquals(0, result.completedTodayRevenue);
+        System.assertEquals(2, result.unscheduledCount, 'Unscheduled should include each work order in unscheduled statuses.');
+        System.assertEquals(700, result.unscheduledRevenue, 'Unscheduled revenue should use opportunity amount for each unscheduled work order row.');
 
         System.assertEquals(
             3,
-            result.scheduledBacklogCount,
-            'Scheduled backlog includes both general scheduled and scheduled-for-today opportunities.'
+            result.scheduledCount,
+            'Scheduled Work should include work orders with at least one Scheduled/In Progress service appointment.'
         );
-        System.assertEquals(1200, result.scheduledBacklogRevenue);
+        System.assertEquals(1200, result.scheduledRevenue, 'Scheduled Work revenue should sum opportunity amount for each matching work order.');
+
         System.assertEquals(
-            2,
-            result.serviceAppointmentsScheduledTodayCount,
-            'Two SAs start today (two In Progress) should be counted.'
+            3,
+            result.scheduledTodayCount,
+            'Scheduled for Today should include Scheduled/In Progress service appointments with schedule date today.'
         );
-        System.assertEquals(0, result.serviceAppointmentsCompletedTodayCount);
+        System.assertEquals(1200, result.scheduledTodayRevenue);
+
+        System.assertEquals(1, result.completedTodayCount, 'Completed Today should include completed service appointments with ActualEndTime today.');
+        System.assertEquals(300, result.completedTodayRevenue);
     }
 
     @isTest
@@ -334,24 +331,30 @@ private class BillingControlCenterControllerTest {
 
         System.assertEquals(
             0,
-            result.unscheduledCount
-                + result.scheduledCount
-                + result.scheduledTodayCount
-                + result.completedTodayCount,
-            'Closed Won tied only to non-pipeline work order statuses should not appear in any KPI bucket.'
+            result.unscheduledCount + result.scheduledCount + result.scheduledTodayCount + result.completedTodayCount,
+            'Closed Won tied only to non-matching statuses/dates should not appear in any Orders KPI bucket.'
         );
         System.assertEquals(
             0,
-            result.unscheduledRevenue
-                + result.scheduledRevenue
-                + result.scheduledTodayRevenue
-                + result.completedTodayRevenue,
-            'Pipeline revenue should be zero when no Closed Won matches the pipeline rules.'
+            result.unscheduledRevenue + result.scheduledRevenue + result.scheduledTodayRevenue + result.completedTodayRevenue,
+            'Pipeline revenue should be zero when no Closed Won matches unscheduled, scheduled, scheduled today, or completed today rules.'
         );
-        System.assertEquals(0, result.scheduledBacklogCount);
-        System.assertEquals(0, result.scheduledBacklogRevenue);
-        System.assertEquals(0, result.serviceAppointmentsScheduledTodayCount);
-        System.assertEquals(0, result.serviceAppointmentsCompletedTodayCount);
+    }
+
+    @isTest
+    static void testGetBucketWorkOrdersAlwaysReturnsFourSectionsWhenEmpty() {
+        List<BillingControl_Orders.BucketSectionWrapper> sections = BillingControl_Orders.getBucketWorkOrders();
+        System.assertEquals(4, sections.size(), 'Orders bucket response must always include the four fixed KPI sections.');
+
+        Map<String, Integer> countsByBucket = new Map<String, Integer>();
+        for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
+            countsByBucket.put(sectionRecord.bucketKey, sectionRecord.rows.size());
+        }
+
+        System.assertEquals(0, countsByBucket.get('UNSCHEDULED'));
+        System.assertEquals(0, countsByBucket.get('SCHEDULED'));
+        System.assertEquals(0, countsByBucket.get('SCHEDULED_TODAY'));
+        System.assertEquals(0, countsByBucket.get('COMPLETED_TODAY'));
     }
 
     @isTest
@@ -412,39 +415,44 @@ private class BillingControlCenterControllerTest {
             new Opportunity_WorkOrder__c(Opportunity__c = drillOpp.Id, Work_Order__c = drillWorkOrders[4].Id)
         };
 
-        Date futureDay = Date.today().addDays(1);
-        Datetime futureSchedStart = Datetime.newInstance(futureDay, Time.newInstance(11, 0, 0, 0));
-        Datetime futureSchedEnd = Datetime.newInstance(futureDay, Time.newInstance(12, 0, 0, 0));
-        Datetime inProgTimeStart = System.now().addHours(3);
-        Datetime inProgTimeEnd = System.now().addHours(4);
+        Datetime scheduleStart = Datetime.newInstance(Date.today(), Time.newInstance(13, 0, 0, 0));
+        Datetime scheduleEnd = Datetime.newInstance(Date.today(), Time.newInstance(14, 0, 0, 0));
         insert new List<ServiceAppointment>{
             new ServiceAppointment(
                 ParentRecordId = drillWorkOrders[1].Id,
                 Status = 'Scheduled',
-                SchedStartTime = futureSchedStart,
-                SchedEndTime = futureSchedEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'Drill SA Scheduled'
             ),
             new ServiceAppointment(
                 ParentRecordId = drillWorkOrders[2].Id,
                 Status = 'In Progress',
-                SchedStartTime = inProgTimeStart,
-                SchedEndTime = inProgTimeEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'Drill SA In Progress'
             ),
             new ServiceAppointment(
                 ParentRecordId = drillWorkOrders[3].Id,
                 Status = 'Scheduled',
-                SchedStartTime = futureSchedStart,
-                SchedEndTime = futureSchedEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'Drill SA Both Scheduled'
             ),
             new ServiceAppointment(
                 ParentRecordId = drillWorkOrders[3].Id,
                 Status = 'In Progress',
-                SchedStartTime = inProgTimeStart,
-                SchedEndTime = inProgTimeEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'Drill SA Both In Progress'
+            ),
+            new ServiceAppointment(
+                ParentRecordId = drillWorkOrders[4].Id,
+                Status = 'Completed',
+                SchedStartTime = scheduleStart.addDays(-1),
+                SchedEndTime = scheduleEnd.addDays(-1),
+                ActualEndTime = Datetime.newInstance(Date.today(), Time.newInstance(15, 0, 0, 0)),
+                Subject = 'Drill SA Completed Today'
             )
         };
 
@@ -452,7 +460,7 @@ private class BillingControlCenterControllerTest {
         List<BillingControl_Orders.BucketSectionWrapper> sections = BillingControl_Orders.getBucketWorkOrders();
         Test.stopTest();
 
-        System.assertEquals(4, sections.size(), 'Four bucket sections should be returned.');
+        System.assertEquals(4, sections.size(), 'Four bucket sections should always be returned.');
 
         Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>> rowsByBucket = new Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>>();
         for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
@@ -471,36 +479,25 @@ private class BillingControlCenterControllerTest {
             'Create date should be populated from the work order.'
         );
 
-        System.assertEquals(
-            3,
-            rowsByBucket.get('SCHEDULED_BACKLOG').size(),
-            'Scheduled backlog lists all Appointments Booked work orders with scheduled or today SAs.'
-        );
-        Set<String> backlogSubjects = new Set<String>();
-        for (BillingControl_Orders.WorkOrderRowWrapper row : rowsByBucket.get('SCHEDULED_BACKLOG')) {
-            backlogSubjects.add(row.subject);
+        System.assertEquals(3, rowsByBucket.get('SCHEDULED').size(), 'Scheduled Work should include work orders having any Scheduled/In Progress service appointment.');
+        Set<String> scheduledSubjects = new Set<String>();
+        for (BillingControl_Orders.WorkOrderRowWrapper row : rowsByBucket.get('SCHEDULED')) {
+            scheduledSubjects.add(row.subject);
         }
-        System.assertEquals(true, backlogSubjects.contains('Drill Scheduled'));
-        System.assertEquals(true, backlogSubjects.contains('Drill In Progress'));
-        System.assertEquals(true, backlogSubjects.contains('Drill Precedence IP Over Scheduled'));
+        System.assertEquals(true, scheduledSubjects.contains('Drill Scheduled'));
+        System.assertEquals(true, scheduledSubjects.contains('Drill In Progress'));
+        System.assertEquals(true, scheduledSubjects.contains('Drill Precedence IP Over Scheduled'));
 
-        System.assertEquals(2, rowsByBucket.get('SCHEDULED_TODAY').size());
-        Set<String> todaySubjects = new Set<String>();
+        System.assertEquals(4, rowsByBucket.get('SCHEDULED_TODAY').size(), 'Scheduled for Today should return one row per matching service appointment.');
         for (BillingControl_Orders.WorkOrderRowWrapper row : rowsByBucket.get('SCHEDULED_TODAY')) {
-            todaySubjects.add(row.subject);
+            System.assertNotEquals(null, row.serviceAppointmentId, 'Scheduled for Today rows must be service-appointment driven.');
+            System.assertEquals('Appointments Booked', row.status, 'Scheduled for Today rows should display Work Order status.');
+            System.assertNotEquals(null, row.serviceAppointmentDisplay);
         }
-        System.assertEquals(true, todaySubjects.contains('Drill In Progress'));
-        System.assertEquals(
-            true,
-            todaySubjects.contains('Drill Precedence IP Over Scheduled'),
-            'In Progress with start today on the same work order as a future Scheduled SA still maps to scheduled for today.'
-        );
-        System.assertEquals(
-            true,
-            backlogSubjects.containsAll(todaySubjects),
-            'Scheduled backlog is a superset of scheduled for today.'
-        );
-        System.assertEquals(0, rowsByBucket.get('COMPLETED_TODAY').size());
+
+        System.assertEquals(1, rowsByBucket.get('COMPLETED_TODAY').size(), 'Completed Today should return one row per completed-today service appointment.');
+        System.assertNotEquals(null, rowsByBucket.get('COMPLETED_TODAY')[0].serviceAppointmentId);
+        System.assertEquals('Completed', rowsByBucket.get('COMPLETED_TODAY')[0].status);
 
         Set<Id> allReturnedWorkOrderIds = new Set<Id>();
         for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
@@ -509,9 +506,9 @@ private class BillingControlCenterControllerTest {
             }
         }
         System.assertEquals(
-            false,
+            true,
             allReturnedWorkOrderIds.contains(drillWorkOrders[4].Id),
-            'Completed work orders should not appear in any drilldown bucket.'
+            'Completed-today service appointments should surface their parent work order in the completed-today bucket.'
         );
     }
 
@@ -588,25 +585,30 @@ private class BillingControlCenterControllerTest {
             )
         };
 
-        Date futureDay = Date.today().addDays(1);
-        Datetime futureSchedStart = Datetime.newInstance(futureDay, Time.newInstance(13, 0, 0, 0));
-        Datetime futureSchedEnd = Datetime.newInstance(futureDay, Time.newInstance(14, 0, 0, 0));
-        Datetime inProgStart = System.now().addHours(5);
-        Datetime inProgEnd = System.now().addHours(6);
+        Datetime scheduleStart = Datetime.newInstance(Date.today(), Time.newInstance(16, 0, 0, 0));
+        Datetime scheduleEnd = Datetime.newInstance(Date.today(), Time.newInstance(17, 0, 0, 0));
         insert new List<ServiceAppointment>{
             new ServiceAppointment(
                 ParentRecordId = pipelineWorkOrders[1].Id,
                 Status = 'Scheduled',
-                SchedStartTime = futureSchedStart,
-                SchedEndTime = futureSchedEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'Drill KPI SA Scheduled'
             ),
             new ServiceAppointment(
                 ParentRecordId = pipelineWorkOrders[2].Id,
                 Status = 'In Progress',
-                SchedStartTime = inProgStart,
-                SchedEndTime = inProgEnd,
+                SchedStartTime = scheduleStart,
+                SchedEndTime = scheduleEnd,
                 Subject = 'Drill KPI SA In Progress'
+            ),
+            new ServiceAppointment(
+                ParentRecordId = pipelineWorkOrders[2].Id,
+                Status = 'Completed',
+                SchedStartTime = scheduleStart.addDays(-1),
+                SchedEndTime = scheduleEnd.addDays(-1),
+                ActualEndTime = Datetime.newInstance(Date.today(), Time.newInstance(18, 0, 0, 0)),
+                Subject = 'Drill KPI SA Completed Today'
             )
         };
 
@@ -617,8 +619,8 @@ private class BillingControlCenterControllerTest {
         }
 
         System.assertEquals(1, countsByBucket.get('UNSCHEDULED'));
-        System.assertEquals(2, countsByBucket.get('SCHEDULED_BACKLOG'));
-        System.assertEquals(1, countsByBucket.get('SCHEDULED_TODAY'));
-        System.assertEquals(0, countsByBucket.get('COMPLETED_TODAY'));
+        System.assertEquals(2, countsByBucket.get('SCHEDULED'));
+        System.assertEquals(2, countsByBucket.get('SCHEDULED_TODAY'));
+        System.assertEquals(1, countsByBucket.get('COMPLETED_TODAY'));
     }
 }

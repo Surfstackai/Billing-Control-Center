@@ -1,22 +1,9 @@
 import { LightningElement, api } from 'lwc';
 
-const COLUMN_CONFIG = [
-    { label: 'Service Appointment #', fieldName: 'serviceAppointmentNumber' },
-    { label: 'Opportunity Name', fieldName: 'opportunityName' },
-    { label: 'Account', fieldName: 'accountName' },
-    { label: 'Work Order Number', fieldName: 'workOrderNumber' },
-    { label: 'Completion Date', fieldName: 'completionDateTime' },
-    { label: 'Technician', fieldName: 'technicianName' },
-    { label: 'Billable Amount', fieldName: 'billableAmount' },
-    { label: 'Billing Status', fieldName: 'billingStatus' }
-];
-
 export default class BillingControlCenterOpportunityTable extends LightningElement {
     _opportunityGroups = [];
-    displayedRows = [];
-    selectedRowIds = [];
-    sortedBy = 'completionDateTime';
-    sortDirection = 'desc';
+    _selectedOpportunityIds = [];
+    displayedGroups = [];
 
     @api emptyMessage = 'No records found.';
     @api tableLabel = 'Service appointments grouped by opportunity';
@@ -28,7 +15,7 @@ export default class BillingControlCenterOpportunityTable extends LightningEleme
             rows: (group.rows || []).map(row => ({ ...row }))
         }));
         this.pruneState();
-        this.rebuildRows();
+        this.rebuildGroups();
     }
 
     get opportunityGroups() {
@@ -36,15 +23,14 @@ export default class BillingControlCenterOpportunityTable extends LightningEleme
     }
 
     @api
-    setSelectedServiceAppointmentIds(ids) {
-        const availableRowIds = new Set();
-        for (const group of this._opportunityGroups) {
-            for (const row of group.rows || []) {
-                availableRowIds.add(row.serviceAppointmentId);
-            }
-        }
-        this.selectedRowIds = (ids || []).filter(id => availableRowIds.has(id));
-        this.rebuildRows();
+    set selectedOpportunityIds(value) {
+        this._selectedOpportunityIds = Array.isArray(value) ? [...value] : [];
+        this.pruneState();
+        this.rebuildGroups();
+    }
+
+    get selectedOpportunityIds() {
+        return this._selectedOpportunityIds;
     }
 
     get hasRows() {
@@ -55,170 +41,148 @@ export default class BillingControlCenterOpportunityTable extends LightningEleme
         return this._opportunityGroups.reduce((sum, group) => sum + (group.rows || []).length, 0);
     }
 
-    get allRowsSelected() {
-        return this.totalRowCount > 0 && this.selectedRowIds.length === this.totalRowCount;
+    get groupColumnSpan() {
+        return 5;
     }
 
-    get columns() {
-        return COLUMN_CONFIG.map(column => {
-            const isSorted = this.sortedBy === column.fieldName;
-            const isAscending = this.sortDirection === 'asc';
+    handleOpportunitySelection(event) {
+        const opportunityId = event.target.dataset.opportunityId;
+        if (!opportunityId) {
+            return;
+        }
+
+        const selected = new Set(this.selectedOpportunityIds);
+        if (event.target.checked) {
+            selected.add(opportunityId);
+        } else {
+            selected.delete(opportunityId);
+        }
+
+        this._selectedOpportunityIds = Array.from(selected);
+        this.rebuildGroups();
+        this.notifySelectionChange([opportunityId], event.target.checked);
+    }
+
+    pruneState() {
+        const visibleIds = new Set(this.getAllOpportunityIds());
+        this._selectedOpportunityIds = (this._selectedOpportunityIds || []).filter(
+            opportunityId => visibleIds.has(opportunityId)
+        );
+    }
+
+    rebuildGroups() {
+        const selectedIds = new Set(this.selectedOpportunityIds);
+
+        this.displayedGroups = (this._opportunityGroups || []).map(group => {
+            const opportunityId = group.opportunityId;
+            const accountId = group.accountId;
+
+            const rows = (group.rows || [])
+                .map(row => ({
+                    ...row,
+                    opportunityId: row.opportunityId || opportunityId,
+                    opportunityName: row.opportunityName || group.opportunityName,
+                    opportunityAmount:
+                        row.opportunityAmount !== null && row.opportunityAmount !== undefined
+                            ? row.opportunityAmount
+                            : group.opportunityAmount,
+                    accountId: row.accountId || accountId,
+                    accountName: row.accountName || group.accountName
+                }))
+                .sort((left, right) => this.compareByCompletion(left, right))
+                .map(row => {
+                    const effectiveOpportunityId = row.opportunityId || opportunityId;
+                    return {
+                        ...row,
+                        key: `${effectiveOpportunityId || 'NO_OPP'}-${row.serviceAppointmentId}`,
+                        hasWorkOrder: !!row.workOrderId,
+                        serviceAppointmentUrl: row.serviceAppointmentId
+                            ? `/lightning/r/ServiceAppointment/${row.serviceAppointmentId}/view`
+                            : null,
+                        workOrderUrl: row.workOrderId ? `/lightning/r/WorkOrder/${row.workOrderId}/view` : null
+                    };
+                });
+
+            const effectiveOpportunityId = opportunityId || (rows.length > 0 ? rows[0].opportunityId : null);
+            const effectiveAccountId = accountId || (rows.length > 0 ? rows[0].accountId : null);
+
             return {
-                ...column,
-                isSorted,
-                ariaSort: isSorted ? (isAscending ? 'ascending' : 'descending') : 'none',
-                sortIcon: isAscending ? 'utility:arrowup' : 'utility:arrowdown',
-                sortAltText: isAscending ? 'Sorted ascending' : 'Sorted descending'
+                ...group,
+                opportunityId: effectiveOpportunityId,
+                groupKey: `OPP-${effectiveOpportunityId || 'NO_OPP'}`,
+                rowCount: rows.length,
+                rows,
+                hasOpportunity: !!effectiveOpportunityId,
+                hasAccount: !!effectiveAccountId,
+                isSelectable: !!effectiveOpportunityId,
+                isNotSelectable: !effectiveOpportunityId,
+                isSelected: !!effectiveOpportunityId && selectedIds.has(effectiveOpportunityId),
+                selectLabel: `Select opportunity ${group.opportunityName || effectiveOpportunityId || ''}`,
+                opportunityUrl: effectiveOpportunityId ? `/lightning/r/Opportunity/${effectiveOpportunityId}/view` : null,
+                accountUrl: effectiveAccountId ? `/lightning/r/Account/${effectiveAccountId}/view` : null,
+                displayOpportunityAmount:
+                    group.opportunityAmount !== null && group.opportunityAmount !== undefined
+                        ? group.opportunityAmount
+                        : rows.length > 0
+                            ? rows[0].opportunityAmount
+                            : null
             };
         });
     }
 
-    handleSort(event) {
-        const fieldName = event.currentTarget.dataset.field;
-        if (!fieldName) {
-            return;
-        }
-
-        if (this.sortedBy === fieldName) {
-            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
-        } else {
-            this.sortedBy = fieldName;
-            this.sortDirection = fieldName === 'completionDateTime' ? 'desc' : 'asc';
-        }
-        this.rebuildRows();
-    }
-
-    handleSelectAll(event) {
-        if (event.target.checked) {
-            const ids = [];
-            for (const group of this._opportunityGroups) {
-                for (const row of group.rows || []) {
-                    ids.push(row.serviceAppointmentId);
+    notifySelectionChange(changedOpportunityIds = [], checked = false) {
+        this.dispatchEvent(
+            new CustomEvent('selectionchange', {
+                detail: {
+                    selectedOpportunityIds: [...this.selectedOpportunityIds],
+                    selectedCount: this.selectedOpportunityIds.length,
+                    changedOpportunityIds,
+                    checked
                 }
-            }
-            this.selectedRowIds = ids;
-        } else {
-            this.selectedRowIds = [];
-        }
-        this.rebuildRows();
-        this.notifySelectionChange();
+            })
+        );
     }
 
-    handleRowSelection(event) {
-        const rowId = event.target.dataset.id;
-        if (!rowId) {
-            return;
-        }
-
-        const selected = new Set(this.selectedRowIds);
-        if (event.target.checked) {
-            selected.add(rowId);
-        } else {
-            selected.delete(rowId);
-        }
-        this.selectedRowIds = Array.from(selected);
-        this.rebuildRows();
-        this.notifySelectionChange();
-    }
-
-    handleNavigateToServiceAppointment(event) {
-        const rowId = event.currentTarget.dataset.id;
-        if (!rowId) {
-            return;
-        }
-        window.open('/lightning/r/ServiceAppointment/' + rowId + '/view', '_blank');
-    }
-
-    handleNavigateToWorkOrder(event) {
-        const workOrderId = event.currentTarget.dataset.id;
-        if (!workOrderId) {
-            return;
-        }
-        window.open('/lightning/r/WorkOrder/' + workOrderId + '/view', '_blank');
-    }
-
-    pruneState() {
-        const availableRowIds = new Set();
+    getAllOpportunityIds() {
+        const opportunityIds = new Set();
         for (const group of this._opportunityGroups) {
-            for (const row of group.rows || []) {
-                availableRowIds.add(row.serviceAppointmentId);
+            const effectiveOpportunityId = group.opportunityId
+                || ((group.rows || []).length > 0 ? group.rows[0].opportunityId : null);
+            if (effectiveOpportunityId) {
+                opportunityIds.add(effectiveOpportunityId);
             }
         }
-
-        this.selectedRowIds = this.selectedRowIds.filter(id => availableRowIds.has(id));
+        return Array.from(opportunityIds);
     }
 
-    rebuildRows() {
-        const selectedIds = new Set(this.selectedRowIds);
+    compareByCompletion(left, right) {
+        const leftDate = left && left.completionDateTime ? Date.parse(left.completionDateTime) : NaN;
+        const rightDate = right && right.completionDateTime ? Date.parse(right.completionDateTime) : NaN;
 
-        const flattenedRows = [];
-        for (const group of this._opportunityGroups) {
-            for (const row of group.rows || []) {
-                flattenedRows.push({
-                    ...row,
-                    opportunityId: row.opportunityId || group.opportunityId,
-                    opportunityName: row.opportunityName || group.opportunityName,
-                    accountName: row.accountName || group.accountName
-                });
-            }
+        if (Number.isNaN(leftDate) && Number.isNaN(rightDate)) {
+            return this.compareText(
+                left ? left.serviceAppointmentNumber : null,
+                right ? right.serviceAppointmentNumber : null
+            );
         }
-
-        this.displayedRows = flattenedRows
-            .sort((left, right) => this.compareValues(left[this.sortedBy], right[this.sortedBy], this.sortDirection))
-            .map(row => ({
-                ...row,
-                key: `${row.opportunityId || 'NO_OPP'}-${row.serviceAppointmentId}`,
-                isSelected: selectedIds.has(row.serviceAppointmentId),
-                selectLabel: `Select ${row.serviceAppointmentNumber || row.serviceAppointmentId}`,
-                hasWorkOrder: !!row.workOrderId
-            }));
+        if (Number.isNaN(leftDate)) {
+            return 1;
+        }
+        if (Number.isNaN(rightDate)) {
+            return -1;
+        }
+        if (leftDate !== rightDate) {
+            return rightDate - leftDate;
+        }
+        return this.compareText(
+            left ? left.serviceAppointmentNumber : null,
+            right ? right.serviceAppointmentNumber : null
+        );
     }
 
-    notifySelectionChange() {
-        const selectedIds = new Set(this.selectedRowIds);
-        const selectedRows = [];
-        for (const group of this._opportunityGroups) {
-            for (const row of group.rows || []) {
-                if (selectedIds.has(row.serviceAppointmentId)) {
-                    selectedRows.push({ ...row });
-                }
-            }
-        }
-
-        this.dispatchEvent(new CustomEvent('selectionchange', {
-            detail: {
-                selectedIds: [...this.selectedRowIds],
-                selectedCount: this.selectedRowIds.length,
-                selectedRows
-            }
-        }));
-    }
-
-    compareValues(leftValue, rightValue, direction) {
-        const multiplier = direction === 'asc' ? 1 : -1;
-
-        if (leftValue === rightValue) {
-            return 0;
-        }
-        if (leftValue === null || leftValue === undefined || leftValue === '') {
-            return 1 * multiplier;
-        }
-        if (rightValue === null || rightValue === undefined || rightValue === '') {
-            return -1 * multiplier;
-        }
-        if (typeof leftValue === 'number' && typeof rightValue === 'number') {
-            return (leftValue - rightValue) * multiplier;
-        }
-
-        const leftDate = Date.parse(leftValue);
-        const rightDate = Date.parse(rightValue);
-        if (!Number.isNaN(leftDate) && !Number.isNaN(rightDate)) {
-            return (leftDate - rightDate) * multiplier;
-        }
-
-        return String(leftValue).localeCompare(String(rightValue), undefined, {
-            numeric: true,
-            sensitivity: 'base'
-        }) * multiplier;
+    compareText(leftValue, rightValue) {
+        const leftText = leftValue ? String(leftValue) : '';
+        const rightText = rightValue ? String(rightValue) : '';
+        return leftText.localeCompare(rightText, undefined, { numeric: true, sensitivity: 'base' });
     }
 }

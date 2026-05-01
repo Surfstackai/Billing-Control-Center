@@ -11,47 +11,42 @@ const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US');
 
-const BUCKET_KEYS = ['UNSCHEDULED', 'SCHEDULED_BACKLOG', 'SCHEDULED_TODAY', 'COMPLETED_TODAY'];
+const BUCKET_KEYS = ['UNSCHEDULED', 'SCHEDULED', 'SCHEDULED_TODAY', 'COMPLETED_TODAY'];
 
-const DEFAULT_SORT_FIELD = 'accountUrl';
-
-const KPI_MODE_BACKLOG = 'backlog';
-const KPI_MODE_SERVICE_APPOINTMENTS = 'serviceAppointments';
+const DEFAULT_SORT_FIELD = 'workOrderUrl';
 
 const KPI_CONFIG = [
     {
         key: 'unscheduled',
-        mode: KPI_MODE_BACKLOG,
         revenueKey: 'unscheduledRevenue',
         countKey: 'unscheduledCount',
-        title: 'Unscheduled Backlog',
+        title: 'Unscheduled Work',
         icon: 'utility:date_input',
-        hint: 'Closed Won (last 3 years) with a work order still in "For Clearance" or "For Appointment Booking".'
+        hint: 'Work orders in For Clearance or For Appointment Booking.'
     },
     {
-        key: 'scheduledBacklog',
-        mode: KPI_MODE_BACKLOG,
-        revenueKey: 'scheduledBacklogRevenue',
-        countKey: 'scheduledBacklogCount',
-        title: 'Scheduled Backlog',
+        key: 'scheduled',
+        revenueKey: 'scheduledRevenue',
+        countKey: 'scheduledCount',
+        title: 'Scheduled Work',
         icon: 'utility:clock',
-        hint: 'Closed Won with a Scheduled or In Progress service appointment, including work scheduled for today.'
+        hint: 'Work orders with at least one Scheduled or In Progress service appointment.'
     },
     {
         key: 'scheduledToday',
-        mode: KPI_MODE_SERVICE_APPOINTMENTS,
-        countKey: 'serviceAppointmentsScheduledTodayCount',
+        revenueKey: 'scheduledTodayRevenue',
+        countKey: 'scheduledTodayCount',
         title: 'Scheduled for Today',
-        icon: 'utility:event',
-        hint: 'Service appointments with Status Scheduled or In Progress and SchedStartTime on today.'
+        icon: 'utility:sync',
+        hint: 'Service appointments scheduled or in progress today.'
     },
     {
         key: 'completedToday',
-        mode: KPI_MODE_SERVICE_APPOINTMENTS,
-        countKey: 'serviceAppointmentsCompletedTodayCount',
+        revenueKey: 'completedTodayRevenue',
+        countKey: 'completedTodayCount',
         title: 'Completed Today',
-        icon: 'utility:success',
-        hint: 'Service appointments with Status Completed and ActualEndTime on today.'
+        icon: 'utility:check',
+        hint: 'Service appointments completed today.'
     }
 ];
 
@@ -61,10 +56,9 @@ const WORK_ORDER_COLUMNS = [
         fieldName: 'accountUrl',
         type: 'url',
         sortable: true,
-        initialWidth: 200,
         typeAttributes: {
             label: { fieldName: 'accountName' },
-            target: '_self'
+            target: '_blank'
         }
     },
     {
@@ -72,10 +66,9 @@ const WORK_ORDER_COLUMNS = [
         fieldName: 'opportunityUrl',
         type: 'url',
         sortable: true,
-        initialWidth: 200,
         typeAttributes: {
             label: { fieldName: 'opportunityName' },
-            target: '_self'
+            target: '_blank'
         }
     },
     {
@@ -83,26 +76,23 @@ const WORK_ORDER_COLUMNS = [
         fieldName: 'workOrderUrl',
         type: 'url',
         sortable: true,
-        initialWidth: 130,
         typeAttributes: {
             label: { fieldName: 'workOrderNumber' },
-            target: '_self'
+            target: '_blank'
         }
     },
     {
         label: 'Service Appointments',
-        fieldName: 'serviceAppointmentsSummary',
+        fieldName: 'serviceAppointmentDisplay',
         type: 'text',
         sortable: true,
-        wrapText: true,
-        initialWidth: 300
+        wrapText: true
     },
     {
         label: 'Created Date',
         fieldName: 'createdDate',
         type: 'date',
         sortable: true,
-        initialWidth: 130,
         typeAttributes: {
             year: 'numeric',
             month: '2-digit',
@@ -110,23 +100,22 @@ const WORK_ORDER_COLUMNS = [
         }
     },
     { label: 'Subject', fieldName: 'subject', type: 'text', sortable: true, wrapText: true },
-    { label: 'WO Status', fieldName: 'status', type: 'text', sortable: true, initialWidth: 150 },
+    { label: 'Work Order Status', fieldName: 'status', type: 'text', sortable: true },
     {
-        label: 'Opp Amount',
+        label: 'Opportunity Amount',
         fieldName: 'opportunityAmount',
         type: 'currency',
         sortable: true,
-        initialWidth: 120,
         typeAttributes: { currencyCode: 'USD' }
     },
-    { label: 'Owner', fieldName: 'ownerName', type: 'text', sortable: true, initialWidth: 140 }
+    { label: 'Owner', fieldName: 'ownerName', type: 'text', sortable: true }
 ];
 
-function workOrderRecordUrl(workOrderId) {
-    if (!workOrderId) {
+function accountRecordUrl(accountId) {
+    if (!accountId) {
         return null;
     }
-    return `/lightning/r/WorkOrder/${workOrderId}/view`;
+    return `/lightning/r/Account/${accountId}/view`;
 }
 
 function opportunityRecordUrl(opportunityId) {
@@ -136,22 +125,22 @@ function opportunityRecordUrl(opportunityId) {
     return `/lightning/r/Opportunity/${opportunityId}/view`;
 }
 
-function accountRecordUrl(accountId) {
-    if (!accountId) {
+function workOrderRecordUrl(workOrderId) {
+    if (!workOrderId) {
         return null;
     }
-    return `/lightning/r/Account/${accountId}/view`;
+    return `/lightning/r/WorkOrder/${workOrderId}/view`;
 }
 
 function resolveSortField(fieldName) {
-    if (fieldName === 'workOrderUrl') {
-        return 'workOrderNumber';
+    if (fieldName === 'accountUrl') {
+        return 'accountName';
     }
     if (fieldName === 'opportunityUrl') {
         return 'opportunityName';
     }
-    if (fieldName === 'accountUrl') {
-        return 'accountName';
+    if (fieldName === 'workOrderUrl') {
+        return 'workOrderNumber';
     }
     return fieldName;
 }
@@ -210,8 +199,8 @@ function sortWorkOrderRows(rows, fieldName, direction) {
         if (primary !== 0) {
             return primary;
         }
-        const tieLeft = left.workOrderId != null ? String(left.workOrderId) : '';
-        const tieRight = right.workOrderId != null ? String(right.workOrderId) : '';
+        const tieLeft = left.rowKey != null ? String(left.rowKey) : '';
+        const tieRight = right.rowKey != null ? String(right.rowKey) : '';
         return tieLeft.localeCompare(tieRight) * directionMultiplier;
     });
 }
@@ -234,29 +223,17 @@ export default class BillingControlCenterOrders extends LightningElement {
     kpiState = {};
     errorMessage;
     isLoading = true;
-    /** @type {Promise<void> | null} */
-    _loadInFlight = null;
 
     connectedCallback() {
         this.loadData();
     }
 
     get kpiTiles() {
-        return KPI_CONFIG.map(tile => {
-            const count = this.kpiState[tile.countKey] || 0;
-            const isBacklog = tile.mode === KPI_MODE_BACKLOG;
-            const revenue = isBacklog ? this.kpiState[tile.revenueKey] || 0 : 0;
-            return {
-                ...tile,
-                isBacklog,
-                primaryValue: isBacklog
-                    ? CURRENCY_FORMATTER.format(revenue)
-                    : NUMBER_FORMATTER.format(count),
-                secondaryValue: isBacklog
-                    ? `${NUMBER_FORMATTER.format(count)} opportunities`
-                    : 'service appointments'
-            };
-        });
+        return KPI_CONFIG.map(tile => ({
+            ...tile,
+            formattedRevenue: CURRENCY_FORMATTER.format(this.kpiState[tile.revenueKey] || 0),
+            formattedCount: `${NUMBER_FORMATTER.format(this.kpiState[tile.countKey] || 0)} records`
+        }));
     }
 
     get accordionSections() {
@@ -267,12 +244,13 @@ export default class BillingControlCenterOrders extends LightningElement {
                 rows = rows.filter(row =>
                     [
                         row.workOrderNumber,
+                        row.serviceAppointmentDisplay,
                         row.subject,
                         row.status,
+                        row.serviceAppointmentNumber,
                         row.accountName,
                         row.opportunityName,
-                        row.ownerName,
-                        row.serviceAppointmentsSummary
+                        row.ownerName
                     ]
                         .filter(Boolean)
                         .some(value => String(value).toLowerCase().includes(q))
@@ -303,10 +281,10 @@ export default class BillingControlCenterOrders extends LightningElement {
 
     get searchSummary() {
         if (!this.searchKey.trim()) {
-            return `${this.totalWorkOrderRows} work orders across buckets`;
+            return `${this.totalWorkOrderRows} records across buckets`;
         }
-        const shown = this.accordionSections.reduce((sum, s) => sum + s.filteredRows.length, 0);
-        return `Showing ${shown} matching work orders`;
+        const shownCount = this.accordionSections.reduce((sum, s) => sum + s.filteredRows.length, 0);
+        return `Showing ${shownCount} matching records`;
     }
 
     handleSearchChange(event) {
@@ -314,7 +292,7 @@ export default class BillingControlCenterOrders extends LightningElement {
     }
 
     async handleRefresh() {
-        await this.loadData();
+        await this.loadData(true);
     }
 
     handleWorkOrderSort(event) {
@@ -340,32 +318,33 @@ export default class BillingControlCenterOrders extends LightningElement {
         return null;
     }
 
-    loadData() {
-        if (this._loadInFlight) {
-            return this._loadInFlight;
-        }
-        this._loadInFlight = this.runLoad();
-        return this._loadInFlight;
-    }
-
-    async runLoad() {
+    async loadData(forceRefresh = false) {
         this.isLoading = true;
         this.errorMessage = undefined;
 
         try {
-            const [kpis, bucketSections] = await Promise.all([getKpis(), getBucketWorkOrders()]);
+            const refreshToken = forceRefresh ? Date.now() : null;
+            const [kpis, bucketSections] = await Promise.all([
+                getKpis({ refreshToken }),
+                getBucketWorkOrders({ refreshToken })
+            ]);
 
-            this.kpiState = kpis || {};
-            this.sections = (bucketSections || []).map(s => ({
+            this.kpiState = { ...(kpis || {}) };
+            const normalizedSections = (bucketSections || []).map(s => ({
                 bucketKey: s.bucketKey,
                 sectionLabel: s.sectionLabel,
-                rows: (s.rows || []).map(r => ({
-                    ...r,
-                    accountUrl: accountRecordUrl(r.accountId),
-                    opportunityUrl: opportunityRecordUrl(r.opportunityId),
-                    workOrderUrl: workOrderRecordUrl(r.workOrderId)
-                }))
+                rows: (s.rows || []).map((r, index) => {
+                    const rowKey = r.rowKey || r.serviceAppointmentId || r.workOrderId || `${s.bucketKey}-${index}`;
+                    return {
+                        ...r,
+                        rowKey,
+                        accountUrl: accountRecordUrl(r.accountId),
+                        opportunityUrl: opportunityRecordUrl(r.opportunityId),
+                        workOrderUrl: workOrderRecordUrl(r.workOrderId)
+                    };
+                })
             }));
+            this.sections = [...normalizedSections];
             this.sortState = defaultSortState();
         } catch (error) {
             this.kpiState = {};
@@ -374,7 +353,6 @@ export default class BillingControlCenterOrders extends LightningElement {
             this.errorMessage = this.reduceError(error);
         } finally {
             this.isLoading = false;
-            this._loadInFlight = null;
         }
     }
 

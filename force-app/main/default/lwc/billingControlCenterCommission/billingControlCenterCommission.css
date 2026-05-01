@@ -18,3 +18,27 @@
 .billing-tab-panel {
     padding-top: 1.25rem;
 }
+
+.bucket-accordion {
+    margin-top: 0.25rem;
+}
+
+.bucket-section-body {
+    padding-top: 0.25rem;
+}
+
+.bucket-table-host {
+    display: block;
+    max-height: 650px;
+    overflow-y: auto;
+}
+
+.bucket-empty {
+    margin: 0.5rem 0 0;
+    color: var(--bcc-muted);
+    font-size: 0.875rem;
+}
+
+.section-meta {
+    margin: 0 0 0.75rem;
+}

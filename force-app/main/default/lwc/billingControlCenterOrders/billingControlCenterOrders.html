@@ -4,11 +4,10 @@
             <div class="hero__intro">
                 <p class="hero__eyebrow">Billing Control Center</p>
                 <h1 class="hero__title">Work Orders Pending Scheduling or Completion</h1>
-                <p class="hero__subtitle">Backlog (Closed Won opportunity dollars) on the left, today's service appointment activity on the right. Expand a section to see its work orders.</p>
+                <p class="hero__subtitle">Closed Won pipeline: unscheduled work, scheduled work, scheduled for today, and completed today.</p>
             </div>
             <lightning-button
                 class="hero__refresh"
-                type="button"
                 icon-name="utility:refresh"
                 label="Refresh"
                 onclick={handleRefresh}
@@ -30,19 +29,25 @@
             <lightning-spinner alternative-text="Loading billing control center"></lightning-spinner>
         </template>
 
-        <section class="kpi-grid">
-            <template for:each={kpiTiles} for:item="tile">
-                <article key={tile.key} class="kpi-tile">
-                    <div class="kpi-tile__header">
-                        <span class="kpi-tile__title">{tile.title}</span>
-                        <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
+        <div class="billing-kpi-container">
+            <section class="slds-grid slds-wrap slds-gutters kpi-grid">
+                <template for:each={kpiTiles} for:item="tile">
+                    <div key={tile.key} class="slds-col slds-size_1-of-4 kpi-grid__col">
+                        <article class="kpi-tile">
+                            <div class="kpi-tile__header">
+                                <span class="kpi-tile__title">{tile.title}</span>
+                                <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
+                            </div>
+                            <div class="kpi-tile__metric">{tile.formattedRevenue}</div>
+                            <div class="kpi-tile__count">{tile.formattedCount}</div>
+                            <div class="kpi-description">
+                                <p class="kpi-tile__hint">{tile.hint}</p>
+                            </div>
+                        </article>
                     </div>
-                    <div class="kpi-tile__metric">{tile.primaryValue}</div>
-                    <div class="kpi-tile__count">{tile.secondaryValue}</div>
-                    <p class="kpi-tile__hint">{tile.hint}</p>
-                </article>
-            </template>
-        </section>
+                </template>
+            </section>
+        </div>
 
         <section class="table-shell">
             <div class="table-toolbar">
@@ -56,7 +61,7 @@
                         type="search"
                         label="Search"
                         variant="label-hidden"
-                        placeholder="Search account, opportunity, work order, service appointments, owner"
+                        placeholder="Search work order, account, opportunity, owner"
                         value={searchKey}
                         onchange={handleSearchChange}>
                     </lightning-input>
@@ -73,17 +78,17 @@
                         key={section.bucketKey}
                         name={section.bucketKey}
                         label={section.titleWithCount}>
-                        <div class="bucket-section-body">
-                            <template if:true={section.isEmpty}>
-                                <p class="bucket-empty">No work orders in this bucket for the current filters.</p>
-                            </template>
-                            <template if:false={section.isEmpty}>
-                                <div class="bucket-table-host" data-bucket={section.bucketKey}>
-                                    <lightning-datatable
-                                        key-field="workOrderId"
-                                        data={section.filteredRows}
-                                        columns={workOrderColumns}
-                                        sorted-by={section.sortedBy}
+                            <div class="bucket-section-body">
+                                <template if:true={section.isEmpty}>
+                                    <p class="bucket-empty">No records in this bucket for the current filters.</p>
+                                </template>
+                                <template if:false={section.isEmpty}>
+                                    <div class="bucket-table-host" data-bucket={section.bucketKey}>
+                                        <lightning-datatable
+                                            key-field="rowKey"
+                                            data={section.filteredRows}
+                                            columns={workOrderColumns}
+                                            sorted-by={section.sortedBy}
                                         sorted-direction={section.sortDirection}
                                         hide-checkbox-column
                                         onsort={handleWorkOrderSort}>

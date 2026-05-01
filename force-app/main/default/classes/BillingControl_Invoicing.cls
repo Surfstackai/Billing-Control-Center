@@ -16,14 +16,31 @@ public with sharing class BillingControl_Invoicing {
         READY_FOR_BILLING,
         AWAITING_BILLING
     };
+    /** Legacy value kept for compatibility with existing records/orgs. */
     private static final String OUTSTANDING_RECEIVABLE = 'Billed (Outstanding Receivable)';
+    /** Required target status for Complete Billing. */
+    private static final String OUTSTANDING_RECEIVABLES = 'Billed (Outstanding Receivables)';
+    private static final List<String> OUTSTANDING_RECEIVABLE_BILLING_STATUSES = new List<String>{
+        OUTSTANDING_RECEIVABLE,
+        OUTSTANDING_RECEIVABLES
+    };
     private static final String PAID = 'Paid';
     private static final String PARTIALLY_PAID = 'Partially Paid';
-    private static final String COMMISSION_EARNED = 'earned';
-    private static final String COMMISSION_PAYABLE = 'payable';
+    private static final String KPI_CATEGORY_REVENUE_UNDER_COLLECTION = 'REVENUE_UNDER_COLLECTION';
+    private static final String KPI_CATEGORY_COMMISSION_EARNED = 'COMMISSION_EARNED';
+    private static final String KPI_CATEGORY_COMMISSION_PAYABLE = 'COMMISSION_PAYABLE';
+    private static final String KPI_LABEL_REVENUE_UNDER_COLLECTION = 'Accounts Receivable (A/R)';
+    private static final String KPI_LABEL_COMMISSION_EARNED = 'Commission Accrued';
+    private static final String KPI_LABEL_COMMISSION_PAYABLE = 'Commission Payable';
     private static final String SERVICE_APPOINTMENT_STATUS_COMPLETED = 'Completed';
     private static final String BILLING_STATE_READY = 'Pending Invoice';
     private static final String BILLING_STATE_PARTIAL = 'Partial';
+    private static final String KPI_CATEGORY_AGED_COMPLETED = 'AGED_COMPLETED';
+    private static final String KPI_CATEGORY_READY_TO_BILL = 'READY_TO_BILL';
+    private static final String KPI_CATEGORY_UNBILLED_REVENUE = 'UNBILLED_REVENUE';
+    private static final String KPI_LABEL_AGED_COMPLETED = 'Aged Completed Work (>2 Days)';
+    private static final String KPI_LABEL_READY_TO_BILL = 'Billable Service Appointments';
+    private static final String KPI_LABEL_UNBILLED_REVENUE = 'Uninvoiced Revenue';
     private static final String INVOICE_STATUS_DRAFT = 'Draft';
     private static final String INVOICE_STATUS_SENT = 'Sent';
     private static final String INVOICE_STATUS_PARTIALLY_PAID = 'Partially Paid';
@@ -31,6 +48,24 @@ public with sharing class BillingControl_Invoicing {
 
     private static Boolean isInvoicingPageOpportunityBillingStatus(String billingStatus) {
         return String.isNotBlank(billingStatus) && INVOICING_PAGE_OPPORTUNITY_BILLING_STATUSES.contains(billingStatus);
+    }
+
+    private static Boolean isOutstandingReceivableStatus(String billingStatus) {
+        return String.isNotBlank(billingStatus) && OUTSTANDING_RECEIVABLE_BILLING_STATUSES.contains(billingStatus);
+    }
+
+    /**
+     * Prefer the required plural status when it exists in picklist metadata, otherwise fall back
+     * to the legacy singular value to avoid runtime DML failures in orgs that haven't migrated yet.
+     */
+    private static String getOutstandingReceivableStatusForUpdate() {
+        List<Schema.PicklistEntry> entries = Opportunity.Billing_Status__c.getDescribe().getPicklistValues();
+        for (Schema.PicklistEntry entry : entries) {
+            if (entry != null && entry.isActive() && entry.getValue() == OUTSTANDING_RECEIVABLES) {
+                return OUTSTANDING_RECEIVABLES;
+            }
+        }
+        return OUTSTANDING_RECEIVABLE;
     }
 
     /**
@@ -142,7 +177,7 @@ public with sharing class BillingControl_Invoicing {
                 Amount_Paid__c,
                 Ready_for_Billing_Date__c
             FROM Opportunity
-            WHERE Billing_Status__c = :OUTSTANDING_RECEIVABLE
+            WHERE Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
             OR Billing_Status__c = :PARTIALLY_PAID
             ORDER BY CloseDate ASC NULLS LAST, Name ASC
         ]);
@@ -172,15 +207,22 @@ public with sharing class BillingControl_Invoicing {
         AggregateResult[] outstandingReceivableResults = [
             SELECT COUNT(Id) opportunityCount
             FROM Opportunity
-            WHERE Billing_Status__c = :OUTSTANDING_RECEIVABLE
+            WHERE Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
         ];
         metrics.outstandingReceivables = extractInteger(outstandingReceivableResults, 'opportunityCount');
 
         return metrics;
     }
 
-    @AuraEnabled
+    @AuraEnabled(cacheable=true)
     public static BillingControlMetricsWrapper getServiceAppointmentBillingMetrics() {
+        return getServiceAppointmentBillingMetricsWithRefresh(null);
+    }
+
+    @AuraEnabled(cacheable=true)
+    public static BillingControlMetricsWrapper getServiceAppointmentBillingMetricsWithRefresh(Long refreshToken) {
+        // refreshToken intentionally unused in server logic; it exists to vary cache keys on demand.
+        Long ignoredRefreshToken = refreshToken;
         List<ServiceAppointmentRowWrapper> rows = buildBillableServiceAppointmentRows();
 
         BillingControlMetricsWrapper metrics = new BillingControlMetricsWrapper();
@@ -194,16 +236,202 @@ public with sharing class BillingControl_Invoicing {
             if (row.completionDateTime != null && row.completionDateTime < twoDaysAgo) {
                 metrics.completedMoreThan2Days++;
             }
-            metrics.unbilledRevenue += row.billableAmount != null ? row.billableAmount : 0;
         }
+        metrics.unbilledRevenue = calculateUniqueOpportunityRevenue(rows);
 
         return metrics;
     }
 
-    @AuraEnabled
-    public static List<ServiceAppointmentOpportunityGroupWrapper> getBillableServiceAppointmentGroups() {
+    @AuraEnabled(cacheable=true)
+    public static List<ServiceAppointmentKpiCategoryWrapper> getBillableServiceAppointmentGroups() {
+        return getBillableServiceAppointmentGroupsWithRefresh(null);
+    }
+
+    @AuraEnabled(cacheable=true)
+    public static List<ServiceAppointmentKpiCategoryWrapper> getBillableServiceAppointmentGroupsWithRefresh(Long refreshToken) {
+        // refreshToken intentionally unused in server logic; it exists to vary cache keys on demand.
+        Long ignoredRefreshToken = refreshToken;
         List<ServiceAppointmentRowWrapper> rows = buildBillableServiceAppointmentRows();
-        if (rows.isEmpty()) {
+        List<ServiceAppointmentKpiCategoryWrapper> sections = new List<ServiceAppointmentKpiCategoryWrapper>{
+            new ServiceAppointmentKpiCategoryWrapper(KPI_CATEGORY_AGED_COMPLETED, KPI_LABEL_AGED_COMPLETED),
+            new ServiceAppointmentKpiCategoryWrapper(KPI_CATEGORY_READY_TO_BILL, KPI_LABEL_READY_TO_BILL),
+            new ServiceAppointmentKpiCategoryWrapper(KPI_CATEGORY_UNBILLED_REVENUE, KPI_LABEL_UNBILLED_REVENUE)
+        };
+
+        Map<String, List<ServiceAppointmentRowWrapper>> appointmentRowsByCategory =
+            new Map<String, List<ServiceAppointmentRowWrapper>>{
+                KPI_CATEGORY_AGED_COMPLETED => new List<ServiceAppointmentRowWrapper>(),
+                KPI_CATEGORY_READY_TO_BILL => new List<ServiceAppointmentRowWrapper>(),
+                KPI_CATEGORY_UNBILLED_REVENUE => new List<ServiceAppointmentRowWrapper>()
+            };
+
+        if (!rows.isEmpty()) {
+            Datetime twoDaysAgo = System.now().addDays(-2);
+            for (ServiceAppointmentRowWrapper row : rows) {
+                if (row.completionDateTime != null && row.completionDateTime < twoDaysAgo) {
+                    appointmentRowsByCategory.get(KPI_CATEGORY_AGED_COMPLETED).add(row);
+                }
+                appointmentRowsByCategory.get(KPI_CATEGORY_READY_TO_BILL).add(row);
+                appointmentRowsByCategory.get(KPI_CATEGORY_UNBILLED_REVENUE).add(row);
+            }
+        }
+
+        for (ServiceAppointmentKpiCategoryWrapper section : sections) {
+            List<ServiceAppointmentRowWrapper> sectionRows = appointmentRowsByCategory.containsKey(section.categoryKey)
+                ? appointmentRowsByCategory.get(section.categoryKey)
+                : new List<ServiceAppointmentRowWrapper>();
+            section.rows = buildWorkOrderCentricRows(sectionRows);
+            section.opportunityGroups = buildServiceAppointmentOpportunityGroups(sectionRows);
+            section.serviceAppointmentCount = sectionRows.size();
+            if (section.categoryKey == KPI_CATEGORY_UNBILLED_REVENUE) {
+                section.totalBillableAmount = calculateUniqueOpportunityRevenue(sectionRows);
+            } else {
+                section.totalBillableAmount = 0;
+                for (ServiceAppointmentRowWrapper row : sectionRows) {
+                    section.totalBillableAmount += row.billableAmount != null ? row.billableAmount : 0;
+                }
+            }
+        }
+
+        return sections;
+    }
+
+    private static List<ServiceAppointmentRowWrapper> buildWorkOrderCentricRows(
+        List<ServiceAppointmentRowWrapper> appointmentRows
+    ) {
+        if (appointmentRows == null || appointmentRows.isEmpty()) {
+            return new List<ServiceAppointmentRowWrapper>();
+        }
+
+        Map<Id, List<ServiceAppointmentRowWrapper>> appointmentsByWorkOrderId =
+            new Map<Id, List<ServiceAppointmentRowWrapper>>();
+        List<Id> orderedWorkOrderIds = new List<Id>();
+        Set<Id> seenWorkOrderIds = new Set<Id>();
+
+        for (ServiceAppointmentRowWrapper appointmentRow : appointmentRows) {
+            if (appointmentRow == null || appointmentRow.workOrderId == null) {
+                continue;
+            }
+            if (!appointmentsByWorkOrderId.containsKey(appointmentRow.workOrderId)) {
+                appointmentsByWorkOrderId.put(appointmentRow.workOrderId, new List<ServiceAppointmentRowWrapper>());
+            }
+            appointmentsByWorkOrderId.get(appointmentRow.workOrderId).add(appointmentRow);
+            if (seenWorkOrderIds.add(appointmentRow.workOrderId)) {
+                orderedWorkOrderIds.add(appointmentRow.workOrderId);
+            }
+        }
+
+        Map<Id, WorkOrder> workOrderById = new Map<Id, WorkOrder>();
+        if (!orderedWorkOrderIds.isEmpty()) {
+            workOrderById = new Map<Id, WorkOrder>([
+                SELECT Id, WorkOrderNumber, CreatedDate, Subject, Status, OwnerId, Owner.Name
+                FROM WorkOrder
+                WHERE Id IN :orderedWorkOrderIds
+            ]);
+        }
+
+        List<ServiceAppointmentRowWrapper> workOrderRows = new List<ServiceAppointmentRowWrapper>();
+        Set<Id> processedWorkOrderIds = new Set<Id>();
+        for (Id workOrderId : orderedWorkOrderIds) {
+            if (!processedWorkOrderIds.add(workOrderId)) {
+                continue;
+            }
+
+            List<ServiceAppointmentRowWrapper> relatedRows = appointmentsByWorkOrderId.get(workOrderId);
+            if (relatedRows == null || relatedRows.isEmpty()) {
+                continue;
+            }
+
+            ServiceAppointmentRowWrapper firstRow = relatedRows[0];
+            WorkOrder workOrderRecord = workOrderById.get(workOrderId);
+
+            Decimal totalBillableAmount = 0;
+            Datetime latestCompletion = null;
+            for (ServiceAppointmentRowWrapper sourceRow : relatedRows) {
+                totalBillableAmount += sourceRow.billableAmount != null ? sourceRow.billableAmount : 0;
+                if (sourceRow.completionDateTime != null && (latestCompletion == null || sourceRow.completionDateTime > latestCompletion)) {
+                    latestCompletion = sourceRow.completionDateTime;
+                }
+            }
+
+            ServiceAppointmentRowWrapper workOrderRow = new ServiceAppointmentRowWrapper();
+            workOrderRow.opportunityId = firstRow.opportunityId;
+            workOrderRow.opportunityName = firstRow.opportunityName;
+            workOrderRow.opportunityAmount = firstRow.opportunityAmount;
+            workOrderRow.accountId = firstRow.accountId;
+            workOrderRow.accountName = firstRow.accountName;
+            workOrderRow.workOrderId = workOrderId;
+            workOrderRow.workOrderNumber = workOrderRecord != null ? workOrderRecord.WorkOrderNumber : firstRow.workOrderNumber;
+            workOrderRow.createdDate = workOrderRecord != null ? workOrderRecord.CreatedDate : firstRow.createdDate;
+            workOrderRow.subject = workOrderRecord != null ? workOrderRecord.Subject : firstRow.subject;
+            workOrderRow.status = workOrderRecord != null ? workOrderRecord.Status : firstRow.status;
+            workOrderRow.ownerId = workOrderRecord != null ? workOrderRecord.OwnerId : firstRow.ownerId;
+            workOrderRow.ownerName = workOrderRecord != null && workOrderRecord.Owner != null
+                ? workOrderRecord.Owner.Name
+                : firstRow.ownerName;
+            workOrderRow.billingStatus = firstRow.billingStatus;
+            workOrderRow.completionDateTime = latestCompletion;
+            workOrderRow.billableAmount = totalBillableAmount;
+            workOrderRow.serviceAppointmentDisplay = buildServiceAppointmentDisplay(relatedRows);
+            workOrderRow.relatedServiceAppointments = relatedRows;
+
+            workOrderRows.add(workOrderRow);
+        }
+
+        return workOrderRows;
+    }
+
+    private static String buildServiceAppointmentDisplay(List<ServiceAppointmentRowWrapper> appointmentRows) {
+        if (appointmentRows == null || appointmentRows.isEmpty()) {
+            return null;
+        }
+
+        List<String> lines = new List<String>();
+        for (ServiceAppointmentRowWrapper row : appointmentRows) {
+            String appointmentName = String.isNotBlank(row.serviceAppointmentNumber)
+                ? row.serviceAppointmentNumber
+                : (row.serviceAppointmentId != null ? String.valueOf(row.serviceAppointmentId) : '');
+            String appointmentStatus = String.isNotBlank(row.serviceAppointmentStatus)
+                ? row.serviceAppointmentStatus
+                : SERVICE_APPOINTMENT_STATUS_COMPLETED;
+            String completionDate = row.completionDateTime != null ? formatDateAsIso(row.completionDateTime.date()) : '';
+            lines.add(String.join(new List<String>{ appointmentName, appointmentStatus, completionDate }, ': '));
+        }
+        return String.join(lines, '\n');
+    }
+
+    private static String formatDateAsIso(Date value) {
+        if (value == null) {
+            return '';
+        }
+        return String.valueOf(value.year())
+            + '-'
+            + String.valueOf(value.month()).leftPad(2, '0')
+            + '-'
+            + String.valueOf(value.day()).leftPad(2, '0');
+    }
+
+    private static Decimal calculateUniqueOpportunityRevenue(List<ServiceAppointmentRowWrapper> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return 0;
+        }
+
+        Set<Id> seenOpportunityIds = new Set<Id>();
+        Decimal totalRevenue = 0;
+        for (ServiceAppointmentRowWrapper row : rows) {
+            if (row == null || row.opportunityId == null || seenOpportunityIds.contains(row.opportunityId)) {
+                continue;
+            }
+            seenOpportunityIds.add(row.opportunityId);
+            totalRevenue += row.opportunityAmount != null ? row.opportunityAmount : 0;
+        }
+        return totalRevenue;
+    }
+
+    private static List<ServiceAppointmentOpportunityGroupWrapper> buildServiceAppointmentOpportunityGroups(
+        List<ServiceAppointmentRowWrapper> rows
+    ) {
+        if (rows == null || rows.isEmpty()) {
             return new List<ServiceAppointmentOpportunityGroupWrapper>();
         }
 
@@ -238,6 +466,9 @@ public with sharing class BillingControl_Invoicing {
                 opportunityGroup = new ServiceAppointmentOpportunityGroupWrapper();
                 opportunityGroup.opportunityId = row.opportunityId;
                 opportunityGroup.opportunityName = row.opportunityName;
+                opportunityGroup.opportunityAmount = row.opportunityAmount;
+                opportunityGroup.opportunityBillingStatus = row.billingStatus;
+                opportunityGroup.accountId = row.accountId;
                 opportunityGroup.accountName = row.accountName;
                 opportunityGroup.totalBillableAmount = 0;
                 opportunityGroup.serviceAppointmentCount = 0;
@@ -489,6 +720,35 @@ public with sharing class BillingControl_Invoicing {
             update serviceAppointmentsToUpdate;
         }
 
+        Set<Id> opportunityIdsToUpdate = new Set<Id>();
+        for (ServiceAppointment appointmentRecord : serviceAppointmentsToUpdate) {
+            Id effectiveOpportunityId = effectiveOpportunityByAppointmentId.get(appointmentRecord.Id);
+            if (effectiveOpportunityId != null) {
+                opportunityIdsToUpdate.add(effectiveOpportunityId);
+            }
+        }
+
+        String billedStatusForUpdate = getOutstandingReceivableStatusForUpdate();
+        if (!opportunityIdsToUpdate.isEmpty()) {
+            List<Opportunity> opportunitiesToUpdate = new List<Opportunity>();
+            for (Opportunity opportunityRecord : [
+                SELECT Id, Billing_Status__c
+                FROM Opportunity
+                WHERE Id IN :opportunityIdsToUpdate
+            ]) {
+                if (opportunityRecord.Billing_Status__c == billedStatusForUpdate) {
+                    continue;
+                }
+                opportunitiesToUpdate.add(new Opportunity(
+                    Id = opportunityRecord.Id,
+                    Billing_Status__c = billedStatusForUpdate
+                ));
+            }
+            if (!opportunitiesToUpdate.isEmpty()) {
+                update opportunitiesToUpdate;
+            }
+        }
+
         result.invoicesCreated = result.invoiceGroups.size();
         result.serviceAppointmentsUpdated = serviceAppointmentsToUpdate.size();
         return result;
@@ -526,7 +786,7 @@ public with sharing class BillingControl_Invoicing {
         for (Opportunity opportunityRecord : [
             SELECT Amount, Amount_Paid__c
             FROM Opportunity
-            WHERE Billing_Status__c = :OUTSTANDING_RECEIVABLE
+            WHERE Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
             OR Billing_Status__c = :PARTIALLY_PAID
         ]) {
             Decimal amount = opportunityRecord.Amount != null ? opportunityRecord.Amount : 0;
@@ -611,7 +871,7 @@ public with sharing class BillingControl_Invoicing {
         return result;
     }
 
-    @AuraEnabled
+    @AuraEnabled(cacheable=true)
     public static CommissionMetricsWrapper getCommissionMetrics() {
         CommissionMetricsWrapper metrics = new CommissionMetricsWrapper();
 
@@ -626,7 +886,7 @@ public with sharing class BillingControl_Invoicing {
         AggregateResult[] revenueUnderCollectionResults = [
             SELECT COUNT(Id) recordCount, SUM(Amount) totalAmount
             FROM Opportunity
-            WHERE Billing_Status__c = :OUTSTANDING_RECEIVABLE
+            WHERE Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
         ];
         metrics.revenueUnderCollectionCount = extractInteger(revenueUnderCollectionResults, 'recordCount');
         metrics.revenueUnderCollection = extractDecimal(revenueUnderCollectionResults, 'totalAmount');
@@ -634,7 +894,7 @@ public with sharing class BillingControl_Invoicing {
         AggregateResult[] commissionEarnedResults = [
             SELECT COUNT(Id) recordCount, SUM(Commission_Amount__c) totalAmount
             FROM Commission__c
-            WHERE Opportunity__r.Billing_Status__c = :OUTSTANDING_RECEIVABLE
+            WHERE Opportunity__r.Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
         ];
         metrics.commissionEarnedCount = extractInteger(commissionEarnedResults, 'recordCount');
         metrics.commissionEarned = extractDecimal(commissionEarnedResults, 'totalAmount');
@@ -664,51 +924,66 @@ public with sharing class BillingControl_Invoicing {
         return metrics;
     }
 
-    @AuraEnabled
-    public static List<SalespersonWrapper> getCommissionData(String subtabType) {
-        String normalizedSubtabType = String.isBlank(subtabType)
-            ? COMMISSION_EARNED
-            : subtabType.trim().toLowerCase();
+    @AuraEnabled(cacheable=true)
+    public static List<CommissionKpiCategoryWrapper> getCommissionData(String subtabType) {
+        List<CommissionKpiCategoryWrapper> sections = new List<CommissionKpiCategoryWrapper>{
+            new CommissionKpiCategoryWrapper(
+                KPI_CATEGORY_REVENUE_UNDER_COLLECTION,
+                KPI_LABEL_REVENUE_UNDER_COLLECTION
+            ),
+            new CommissionKpiCategoryWrapper(
+                KPI_CATEGORY_COMMISSION_EARNED,
+                KPI_LABEL_COMMISSION_EARNED
+            ),
+            new CommissionKpiCategoryWrapper(
+                KPI_CATEGORY_COMMISSION_PAYABLE,
+                KPI_LABEL_COMMISSION_PAYABLE
+            )
+        };
 
-        List<Commission__c> commissionRecords;
-        if (normalizedSubtabType == COMMISSION_PAYABLE) {
-            commissionRecords = [
-                SELECT Id,
-                    Opportunity__c,
-                    Opportunity__r.Name,
-                    Opportunity__r.Account.Name,
-                    Opportunity__r.Amount,
-                    Opportunity__r.Amount_Paid__c,
-                    Opportunity__r.Billing_Status__c,
-                    Sales_Person__c,
-                    Sales_Person__r.Name,
-                    Commission_Amount__c,
-                    Commission_Paid__c
-                FROM Commission__c
-                WHERE Opportunity__r.Billing_Status__c = :PAID
-                ORDER BY Sales_Person__r.Name ASC NULLS LAST, Opportunity__r.Name ASC NULLS LAST
-            ];
-        } else {
-            commissionRecords = [
-                SELECT Id,
-                    Opportunity__c,
-                    Opportunity__r.Name,
-                    Opportunity__r.Account.Name,
-                    Opportunity__r.Amount,
-                    Opportunity__r.Amount_Paid__c,
-                    Opportunity__r.Billing_Status__c,
-                    Sales_Person__c,
-                    Sales_Person__r.Name,
-                    Commission_Amount__c,
-                    Commission_Paid__c
-                FROM Commission__c
-                WHERE Opportunity__r.Billing_Status__c = :OUTSTANDING_RECEIVABLE
-                ORDER BY Sales_Person__r.Name ASC NULLS LAST, Opportunity__r.Name ASC NULLS LAST
-            ];
+        Map<String, CommissionKpiCategoryWrapper> sectionByKey = new Map<String, CommissionKpiCategoryWrapper>();
+        Map<String, Map<String, SalespersonWrapper>> salespersonIndexByCategoryKey =
+            new Map<String, Map<String, SalespersonWrapper>>();
+        for (CommissionKpiCategoryWrapper section : sections) {
+            sectionByKey.put(section.categoryKey, section);
+            salespersonIndexByCategoryKey.put(section.categoryKey, new Map<String, SalespersonWrapper>());
         }
 
-        List<SalespersonWrapper> results = new List<SalespersonWrapper>();
-        Map<String, SalespersonWrapper> salespersonByKey = new Map<String, SalespersonWrapper>();
+        List<Opportunity> outstandingReceivableOpportunities = [
+            SELECT Id,
+                Name,
+                Account.Name,
+                Amount,
+                Amount_Paid__c,
+                Billing_Status__c,
+                OwnerId,
+                Owner.Name
+            FROM Opportunity
+            WHERE Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
+            ORDER BY Owner.Name ASC NULLS LAST, Name ASC NULLS LAST
+        ];
+
+        List<Commission__c> commissionRecords = [
+            SELECT Id,
+                Opportunity__c,
+                Opportunity__r.Name,
+                Opportunity__r.Account.Name,
+                Opportunity__r.Amount,
+                Opportunity__r.Amount_Paid__c,
+                Opportunity__r.Billing_Status__c,
+                Sales_Person__c,
+                Sales_Person__r.Name,
+                Commission_Amount__c,
+                Commission_Paid__c
+            FROM Commission__c
+            WHERE Opportunity__r.Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
+            OR Opportunity__r.Billing_Status__c = :PAID
+            ORDER BY Sales_Person__r.Name ASC NULLS LAST, Opportunity__r.Name ASC NULLS LAST
+        ];
+
+        Map<Id, Commission__c> firstOutstandingCommissionByOpportunityId = new Map<Id, Commission__c>();
+        Map<Id, Commission__c> firstPayableCommissionByOpportunityId = new Map<Id, Commission__c>();
+        List<Commission__c> payableCommissionRows = new List<Commission__c>();
 
         for (Commission__c commissionRecord : commissionRecords) {
             Decimal commissionAmount = commissionRecord.Commission_Amount__c != null
@@ -717,60 +992,165 @@ public with sharing class BillingControl_Invoicing {
             Decimal commissionPaid = commissionRecord.Commission_Paid__c != null
                 ? commissionRecord.Commission_Paid__c
                 : 0;
-
-            if (normalizedSubtabType == COMMISSION_PAYABLE && commissionPaid >= commissionAmount) {
-                continue;
-            }
-
-            String salespersonKey = commissionRecord.Sales_Person__c != null
-                ? String.valueOf(commissionRecord.Sales_Person__c)
-                : 'UNASSIGNED';
-            SalespersonWrapper salesperson = salespersonByKey.get(salespersonKey);
-
-            if (salesperson == null) {
-                salesperson = new SalespersonWrapper();
-                salesperson.salespersonId = commissionRecord.Sales_Person__c;
-                salesperson.salespersonName = commissionRecord.Sales_Person__r != null
-                    ? commissionRecord.Sales_Person__r.Name
-                    : 'Unassigned';
-                salesperson.totalAmount = 0;
-                salesperson.totalCommission = 0;
-                salesperson.totalPaid = 0;
-                salesperson.opportunities = new List<OpportunityWrapper>();
-                salespersonByKey.put(salespersonKey, salesperson);
-                results.add(salesperson);
-            }
-
-            OpportunityWrapper opportunity = new OpportunityWrapper();
-            opportunity.opportunityId = commissionRecord.Opportunity__c;
-            opportunity.name = commissionRecord.Opportunity__r != null ? commissionRecord.Opportunity__r.Name : null;
-            opportunity.opportunityName = opportunity.name;
-            opportunity.accountName = commissionRecord.Opportunity__r != null && commissionRecord.Opportunity__r.Account != null
-                ? commissionRecord.Opportunity__r.Account.Name
-                : null;
-            opportunity.amount = commissionRecord.Opportunity__r != null
-                ? commissionRecord.Opportunity__r.Amount
-                : null;
-            opportunity.amountPaid = commissionRecord.Opportunity__r != null
-                ? (Decimal) commissionRecord.Opportunity__r.get('Amount_Paid__c')
-                : null;
-            Decimal opportunityAmount = opportunity.amount != null ? opportunity.amount : 0;
-            Decimal opportunityAmountPaid = opportunity.amountPaid != null ? opportunity.amountPaid : 0;
-            opportunity.balanceDue = opportunityAmount - opportunityAmountPaid;
-            opportunity.billingStatus = commissionRecord.Opportunity__r != null
+            String billingStatus = commissionRecord.Opportunity__r != null
                 ? commissionRecord.Opportunity__r.Billing_Status__c
                 : null;
-            opportunity.commissionAmount = commissionAmount;
-            opportunity.commissionPaid = commissionPaid;
-            opportunity.commissionId = commissionRecord.Id;
 
-            salesperson.totalAmount += opportunity.amount != null ? opportunity.amount : 0;
-            salesperson.totalCommission += opportunity.commissionAmount != null ? opportunity.commissionAmount : 0;
-            salesperson.totalPaid += opportunity.commissionPaid != null ? opportunity.commissionPaid : 0;
-            salesperson.opportunities.add(opportunity);
+            if (
+                isOutstandingReceivableStatus(billingStatus)
+                && commissionRecord.Opportunity__c != null
+                && !firstOutstandingCommissionByOpportunityId.containsKey(commissionRecord.Opportunity__c)
+            ) {
+                firstOutstandingCommissionByOpportunityId.put(commissionRecord.Opportunity__c, commissionRecord);
+            }
+
+            if (
+                billingStatus == PAID
+                && commissionPaid < commissionAmount
+                && commissionRecord.Opportunity__c != null
+                && !firstPayableCommissionByOpportunityId.containsKey(commissionRecord.Opportunity__c)
+            ) {
+                firstPayableCommissionByOpportunityId.put(commissionRecord.Opportunity__c, commissionRecord);
+                payableCommissionRows.add(commissionRecord);
+            }
         }
 
-        return results;
+        CommissionKpiCategoryWrapper revenueSection = sectionByKey.get(KPI_CATEGORY_REVENUE_UNDER_COLLECTION);
+        CommissionKpiCategoryWrapper earnedSection = sectionByKey.get(KPI_CATEGORY_COMMISSION_EARNED);
+        CommissionKpiCategoryWrapper payableSection = sectionByKey.get(KPI_CATEGORY_COMMISSION_PAYABLE);
+
+        for (Opportunity opportunityRecord : outstandingReceivableOpportunities) {
+            // Accounts Receivable KPI is opportunity-driven, so every outstanding receivable opportunity belongs here.
+            addOpportunityToCommissionSection(
+                revenueSection,
+                salespersonIndexByCategoryKey.get(revenueSection.categoryKey),
+                opportunityRecord.OwnerId,
+                opportunityRecord.Owner != null ? opportunityRecord.Owner.Name : null,
+                buildOpportunityFromOpportunity(opportunityRecord)
+            );
+
+            // Commission Accrued KPI is commission-driven on outstanding receivable opportunities.
+            Commission__c earnedCommission = firstOutstandingCommissionByOpportunityId.get(opportunityRecord.Id);
+            if (earnedCommission != null) {
+                addOpportunityToCommissionSection(
+                    earnedSection,
+                    salespersonIndexByCategoryKey.get(earnedSection.categoryKey),
+                    earnedCommission.Sales_Person__c,
+                    earnedCommission.Sales_Person__r != null ? earnedCommission.Sales_Person__r.Name : null,
+                    buildOpportunityFromCommission(earnedCommission)
+                );
+            }
+        }
+
+        for (Commission__c payableCommission : payableCommissionRows) {
+            addOpportunityToCommissionSection(
+                payableSection,
+                salespersonIndexByCategoryKey.get(payableSection.categoryKey),
+                payableCommission.Sales_Person__c,
+                payableCommission.Sales_Person__r != null ? payableCommission.Sales_Person__r.Name : null,
+                buildOpportunityFromCommission(payableCommission)
+            );
+        }
+
+        return sections;
+    }
+
+    private static OpportunityWrapper buildOpportunityFromOpportunity(Opportunity opportunityRecord) {
+        OpportunityWrapper opportunity = new OpportunityWrapper();
+        opportunity.opportunityId = opportunityRecord != null ? opportunityRecord.Id : null;
+        opportunity.name = opportunityRecord != null ? opportunityRecord.Name : null;
+        opportunity.opportunityName = opportunity.name;
+        opportunity.accountName = opportunityRecord != null && opportunityRecord.Account != null
+            ? opportunityRecord.Account.Name
+            : null;
+        opportunity.amount = opportunityRecord != null ? opportunityRecord.Amount : null;
+        Decimal amountPaid = opportunityRecord != null
+            ? (Decimal) opportunityRecord.get('Amount_Paid__c')
+            : null;
+        opportunity.amountPaid = amountPaid != null ? amountPaid : 0;
+        Decimal amount = opportunity.amount != null ? opportunity.amount : 0;
+        opportunity.balanceDue = amount - opportunity.amountPaid;
+        opportunity.billingStatus = opportunityRecord != null
+            ? (String) opportunityRecord.get('Billing_Status__c')
+            : null;
+        opportunity.commissionAmount = 0;
+        opportunity.commissionPaid = 0;
+        opportunity.commissionId = null;
+        return opportunity;
+    }
+
+    private static OpportunityWrapper buildOpportunityFromCommission(Commission__c commissionRecord) {
+        OpportunityWrapper opportunity = new OpportunityWrapper();
+        opportunity.opportunityId = commissionRecord != null ? commissionRecord.Opportunity__c : null;
+        opportunity.name = commissionRecord != null && commissionRecord.Opportunity__r != null
+            ? commissionRecord.Opportunity__r.Name
+            : null;
+        opportunity.opportunityName = opportunity.name;
+        opportunity.accountName = commissionRecord != null
+            && commissionRecord.Opportunity__r != null
+            && commissionRecord.Opportunity__r.Account != null
+                ? commissionRecord.Opportunity__r.Account.Name
+                : null;
+        opportunity.amount = commissionRecord != null && commissionRecord.Opportunity__r != null
+            ? commissionRecord.Opportunity__r.Amount
+            : null;
+        Decimal amountPaid = commissionRecord != null && commissionRecord.Opportunity__r != null
+            ? (Decimal) commissionRecord.Opportunity__r.get('Amount_Paid__c')
+            : null;
+        opportunity.amountPaid = amountPaid != null ? amountPaid : 0;
+        Decimal amount = opportunity.amount != null ? opportunity.amount : 0;
+        opportunity.balanceDue = amount - opportunity.amountPaid;
+        opportunity.billingStatus = commissionRecord != null && commissionRecord.Opportunity__r != null
+            ? commissionRecord.Opportunity__r.Billing_Status__c
+            : null;
+        opportunity.commissionAmount = commissionRecord != null && commissionRecord.Commission_Amount__c != null
+            ? commissionRecord.Commission_Amount__c
+            : 0;
+        opportunity.commissionPaid = commissionRecord != null && commissionRecord.Commission_Paid__c != null
+            ? commissionRecord.Commission_Paid__c
+            : 0;
+        opportunity.commissionId = commissionRecord != null ? commissionRecord.Id : null;
+        return opportunity;
+    }
+
+    private static void addOpportunityToCommissionSection(
+        CommissionKpiCategoryWrapper section,
+        Map<String, SalespersonWrapper> salespersonIndex,
+        Id salespersonId,
+        String salespersonName,
+        OpportunityWrapper opportunity
+    ) {
+        if (section == null || salespersonIndex == null || opportunity == null || opportunity.opportunityId == null) {
+            return;
+        }
+
+        String salespersonKey = salespersonId != null ? String.valueOf(salespersonId) : 'UNASSIGNED';
+        SalespersonWrapper salesperson = salespersonIndex.get(salespersonKey);
+        if (salesperson == null) {
+            salesperson = new SalespersonWrapper();
+            salesperson.salespersonId = salespersonId;
+            salesperson.salespersonName = String.isNotBlank(salespersonName) ? salespersonName : 'Unassigned';
+            salesperson.totalAmount = 0;
+            salesperson.totalCommission = 0;
+            salesperson.totalPaid = 0;
+            salesperson.opportunities = new List<OpportunityWrapper>();
+            salespersonIndex.put(salespersonKey, salesperson);
+            section.salespersonGroups.add(salesperson);
+        }
+
+        Decimal amount = opportunity.amount != null ? opportunity.amount : 0;
+        Decimal commissionAmount = opportunity.commissionAmount != null ? opportunity.commissionAmount : 0;
+        Decimal commissionPaid = opportunity.commissionPaid != null ? opportunity.commissionPaid : 0;
+
+        salesperson.totalAmount += amount;
+        salesperson.totalCommission += commissionAmount;
+        salesperson.totalPaid += commissionPaid;
+        salesperson.opportunities.add(opportunity);
+
+        section.opportunityCount++;
+        section.totalAmount += amount;
+        section.totalCommission += commissionAmount;
+        section.totalPaid += commissionPaid;
     }
 
     @AuraEnabled
@@ -934,7 +1314,7 @@ public with sharing class BillingControl_Invoicing {
             for (Id opportunityId : successfulOpportunityIds) {
                 opportunitiesToUpdate.add(new Opportunity(
                     Id = opportunityId,
-                    Billing_Status__c = OUTSTANDING_RECEIVABLE
+                    Billing_Status__c = getOutstandingReceivableStatusForUpdate()
                 ));
             }
             System.debug(LoggingLevel.ERROR, 'BCC opportunitiesToUpdate=' + JSON.serialize(opportunitiesToUpdate));
@@ -1194,7 +1574,7 @@ public with sharing class BillingControl_Invoicing {
 
         Set<Id> resolvedOpportunityIds = new Set<Id>(effectiveOpportunityByAppointmentId.values());
         Map<Id, Opportunity> opportunityById = new Map<Id, Opportunity>([
-            SELECT Id, Name, Billing_Status__c, Amount, Account.Name
+            SELECT Id, Name, Billing_Status__c, Amount, AccountId, Account.Name
             FROM Opportunity
             WHERE Id IN :resolvedOpportunityIds
         ]);
@@ -1237,7 +1617,7 @@ public with sharing class BillingControl_Invoicing {
         Map<Id, WorkOrder> workOrderById = new Map<Id, WorkOrder>();
         if (!workOrderIds.isEmpty()) {
             workOrderById = new Map<Id, WorkOrder>([
-                SELECT Id, WorkOrderNumber, TotalPrice
+                SELECT Id, WorkOrderNumber, TotalPrice, CreatedDate, Subject, Status, OwnerId, Owner.Name
                 FROM WorkOrder
                 WHERE Id IN :workOrderIds
             ]);
@@ -1247,23 +1627,32 @@ public with sharing class BillingControl_Invoicing {
         for (ServiceAppointment appointment : appointments) {
             Id effectiveOpportunityId = effectiveOpportunityByAppointmentId.get(appointment.Id);
             Opportunity resolvedOpportunity = opportunityById.get(effectiveOpportunityId);
+            WorkOrder workOrderRecord = workOrderById.get(appointment.ParentRecordId);
 
             ServiceAppointmentRowWrapper row = new ServiceAppointmentRowWrapper();
             row.serviceAppointmentId = appointment.Id;
             row.serviceAppointmentNumber = appointment.AppointmentNumber;
+            row.serviceAppointmentStatus = appointment.Status;
             row.opportunityId = effectiveOpportunityId;
             row.opportunityName = resolvedOpportunity != null ? resolvedOpportunity.Name : null;
+            row.opportunityAmount = resolvedOpportunity != null ? resolvedOpportunity.Amount : null;
+            row.accountId = resolvedOpportunity != null ? resolvedOpportunity.AccountId : null;
             row.accountName = resolvedOpportunity != null && resolvedOpportunity.Account != null
                 ? resolvedOpportunity.Account.Name
                 : null;
             row.workOrderId = appointment.ParentRecordId;
-            row.workOrderNumber = workOrderById.containsKey(appointment.ParentRecordId)
-                ? workOrderById.get(appointment.ParentRecordId).WorkOrderNumber
+            row.workOrderNumber = workOrderRecord != null ? workOrderRecord.WorkOrderNumber : null;
+            row.createdDate = workOrderRecord != null ? workOrderRecord.CreatedDate : null;
+            row.subject = workOrderRecord != null ? workOrderRecord.Subject : null;
+            row.status = workOrderRecord != null ? workOrderRecord.Status : null;
+            row.ownerId = workOrderRecord != null ? workOrderRecord.OwnerId : null;
+            row.ownerName = workOrderRecord != null && workOrderRecord.Owner != null
+                ? workOrderRecord.Owner.Name
                 : null;
             row.completionDateTime = appointment.ActualEndTime;
             row.technicianId = appointment.OwnerId;
             row.technicianName = appointment.Owner != null ? appointment.Owner.Name : null;
-            row.billingStatus = appointment.Invoice_Number__c == null ? 'Pending Invoice' : 'Billed';
+            row.billingStatus = resolvedOpportunity != null ? resolvedOpportunity.Billing_Status__c : null;
             row.invoiceNumber = appointment.Invoice_Number__c;
 
             row.billableAmount = resolveBillableAmount(
@@ -1500,30 +1889,81 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public List<OpportunityWrapper> opportunities;
     }
 
+    public class CommissionKpiCategoryWrapper {
+        @AuraEnabled public String categoryKey;
+        @AuraEnabled public String categoryLabel;
+        @AuraEnabled public Integer opportunityCount;
+        @AuraEnabled public Decimal totalAmount;
+        @AuraEnabled public Decimal totalCommission;
+        @AuraEnabled public Decimal totalPaid;
+        @AuraEnabled public List<SalespersonWrapper> salespersonGroups;
+
+        public CommissionKpiCategoryWrapper(String categoryKeyValue, String categoryLabelValue) {
+            categoryKey = categoryKeyValue;
+            categoryLabel = categoryLabelValue;
+            opportunityCount = 0;
+            totalAmount = 0;
+            totalCommission = 0;
+            totalPaid = 0;
+            salespersonGroups = new List<SalespersonWrapper>();
+        }
+    }
+
     public class ServiceAppointmentRowWrapper {
         @AuraEnabled public Id serviceAppointmentId;
         @AuraEnabled public String serviceAppointmentNumber;
+        @AuraEnabled public String serviceAppointmentStatus;
         @AuraEnabled public Id opportunityId;
         @AuraEnabled public String opportunityName;
+        @AuraEnabled public Decimal opportunityAmount;
+        @AuraEnabled public Id accountId;
         @AuraEnabled public String accountName;
         @AuraEnabled public Id workOrderId;
         @AuraEnabled public String workOrderNumber;
+        @AuraEnabled public String serviceAppointmentDisplay;
+        @AuraEnabled public Datetime createdDate;
+        @AuraEnabled public String subject;
+        @AuraEnabled public String status;
+        @AuraEnabled public Id ownerId;
+        @AuraEnabled public String ownerName;
         @AuraEnabled public Datetime completionDateTime;
         @AuraEnabled public Id technicianId;
         @AuraEnabled public String technicianName;
         @AuraEnabled public Decimal billableAmount;
         @AuraEnabled public String billingStatus;
         @AuraEnabled public String invoiceNumber;
+        @AuraEnabled public List<ServiceAppointmentRowWrapper> relatedServiceAppointments;
     }
 
     public class ServiceAppointmentOpportunityGroupWrapper {
         @AuraEnabled public Id opportunityId;
         @AuraEnabled public String opportunityName;
+        @AuraEnabled public Decimal opportunityAmount;
+        @AuraEnabled public String opportunityBillingStatus;
+        @AuraEnabled public Id accountId;
         @AuraEnabled public String accountName;
         @AuraEnabled public Integer serviceAppointmentCount;
         @AuraEnabled public Decimal totalBillableAmount;
         @AuraEnabled public String billingState;
         @AuraEnabled public List<ServiceAppointmentRowWrapper> rows;
+    }
+
+    public class ServiceAppointmentKpiCategoryWrapper {
+        @AuraEnabled public String categoryKey;
+        @AuraEnabled public String categoryLabel;
+        @AuraEnabled public Integer serviceAppointmentCount;
+        @AuraEnabled public Decimal totalBillableAmount;
+        @AuraEnabled public List<ServiceAppointmentRowWrapper> rows;
+        @AuraEnabled public List<ServiceAppointmentOpportunityGroupWrapper> opportunityGroups;
+
+        public ServiceAppointmentKpiCategoryWrapper(String categoryKeyValue, String categoryLabelValue) {
+            categoryKey = categoryKeyValue;
+            categoryLabel = categoryLabelValue;
+            serviceAppointmentCount = 0;
+            totalBillableAmount = 0;
+            rows = new List<ServiceAppointmentRowWrapper>();
+            opportunityGroups = new List<ServiceAppointmentOpportunityGroupWrapper>();
+        }
     }
 
     public class InvoiceGroupResultWrapper {

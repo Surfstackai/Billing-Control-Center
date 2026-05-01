@@ -12,43 +12,18 @@ export default class BillingControlCenterCompleteBillingModal extends LightningE
 
     @api
     set serviceAppointments(value) {
-        const previousInvoiceNumbers = this.captureInvoiceNumbers();
-        const previousOpportunityIds = new Set(
-            this.opportunityGroups.map(group => group.opportunityId).filter(Boolean)
-        );
-
         this.localServiceAppointments = (value || []).map(row => ({ ...row }));
         this.isSaving = false;
+        this.hasReviewedGroupedBilling = false;
         this.errorMessage = undefined;
-        this.rebuildOpportunityGroups(previousInvoiceNumbers);
-
-        const nextOpportunityIds = new Set(
-            this.opportunityGroups.map(group => group.opportunityId).filter(Boolean)
-        );
-        const introducesNewOpportunity = [...nextOpportunityIds].some(
-            id => !previousOpportunityIds.has(id)
-        );
-        if (previousOpportunityIds.size === 0 || introducesNewOpportunity) {
-            this.hasReviewedGroupedBilling = false;
-        }
+        this.rebuildOpportunityGroups();
     }
 
     get serviceAppointments() {
         return this.localServiceAppointments;
     }
 
-    captureInvoiceNumbers() {
-        const byOpportunityId = new Map();
-        for (const group of this.opportunityGroups) {
-            if (group.opportunityId) {
-                byOpportunityId.set(group.opportunityId, group.invoiceNumber || '');
-            }
-        }
-        return byOpportunityId;
-    }
-
-    rebuildOpportunityGroups(previousInvoiceNumbers) {
-        const existingInvoiceNumbers = previousInvoiceNumbers || this.captureInvoiceNumbers();
+    rebuildOpportunityGroups() {
         const mapByOpportunity = new Map();
         for (const row of this.localServiceAppointments) {
             const key = row.opportunityId || 'NO_OPP';
@@ -61,9 +36,7 @@ export default class BillingControlCenterCompleteBillingModal extends LightningE
                     count: 0,
                     totalBillableAmount: 0,
                     appointments: [],
-                    invoiceNumber: row.opportunityId
-                        ? existingInvoiceNumbers.get(row.opportunityId) || ''
-                        : ''
+                    invoiceNumber: ''
                 });
             }
             const group = mapByOpportunity.get(key);
@@ -144,58 +117,6 @@ export default class BillingControlCenterCompleteBillingModal extends LightningE
             }
             return group;
         });
-    }
-
-    handleRemoveServiceAppointment(event) {
-        if (this.isSaving) {
-            return;
-        }
-        const serviceAppointmentId = event.currentTarget.dataset.serviceAppointmentId;
-        if (!serviceAppointmentId) {
-            return;
-        }
-        this.removeServiceAppointments([serviceAppointmentId]);
-    }
-
-    handleRemoveOpportunityGroup(event) {
-        if (this.isSaving) {
-            return;
-        }
-        const opportunityId = event.currentTarget.dataset.opportunityId;
-        if (!opportunityId) {
-            return;
-        }
-        const idsToRemove = this.localServiceAppointments
-            .filter(row => row.opportunityId === opportunityId)
-            .map(row => row.serviceAppointmentId)
-            .filter(Boolean);
-        if (idsToRemove.length === 0) {
-            return;
-        }
-        this.removeServiceAppointments(idsToRemove);
-    }
-
-    removeServiceAppointments(idsToRemove) {
-        const removalSet = new Set(idsToRemove);
-        const previousInvoiceNumbers = this.captureInvoiceNumbers();
-        this.localServiceAppointments = this.localServiceAppointments.filter(
-            row => !removalSet.has(row.serviceAppointmentId)
-        );
-        this.rebuildOpportunityGroups(previousInvoiceNumbers);
-
-        this.dispatchEvent(new CustomEvent('selectionupdate', {
-            detail: {
-                serviceAppointmentIds: this.localServiceAppointments
-                    .map(row => row.serviceAppointmentId)
-                    .filter(Boolean),
-                serviceAppointments: this.localServiceAppointments.map(row => ({ ...row })),
-                removedServiceAppointmentIds: [...removalSet]
-            }
-        }));
-
-        if (this.localServiceAppointments.length === 0) {
-            this.dispatchEvent(new CustomEvent('close'));
-        }
     }
 
     handleCancel() {

@@ -7,7 +7,6 @@
                 <p class="hero__subtitle">Monitor completed unbilled appointments and complete billing in grouped invoice batches.</p>
             </div>
             <lightning-button
-                type="button"
                 icon-name="utility:refresh"
                 label="Refresh"
                 variant="brand"
@@ -66,6 +65,15 @@
                         <h2 class="table-toolbar__title">Service Appointments Ready to Bill</h2>
                     </div>
                     <div class="table-toolbar__actions">
+                        <lightning-input
+                            class="toolbar-search"
+                            type="search"
+                            label="Search"
+                            variant="label-hidden"
+                            placeholder="Search work order, account, opportunity, owner"
+                            value={searchKey}
+                            onchange={handleSearchChange}>
+                        </lightning-input>
                         <lightning-button
                             label="Complete Billing"
                             variant="brand"
@@ -77,26 +85,46 @@
 
                 <div class="table-meta">
                     <span><lightning-formatted-number value={billableCount}></lightning-formatted-number> Service Appointments</span>
-                    <span><lightning-formatted-number value={selectedCount}></lightning-formatted-number> Selected</span>
+                    <span><lightning-formatted-number value={selectedOpportunityCount}></lightning-formatted-number> Opportunities Selected</span>
+                    <span>{searchSummary}</span>
                 </div>
 
-                <div class="table-scroll-container">
-                    <c-billing-control-center-opportunity-table
-                        opportunity-groups={appointmentGroups}
-                        empty-message="No completed unbilled Service Appointments are currently available."
-                        table-label="Service appointments ready for billing"
-                        onselectionchange={handleSelectionChange}>
-                    </c-billing-control-center-opportunity-table>
-                </div>
+                <lightning-accordion class="bucket-accordion" allow-multiple-sections-open>
+                    <template for:each={visibleAccordionSections} for:item="section">
+                        <lightning-accordion-section
+                            key={section.categoryKey}
+                            name={section.categoryKey}
+                            label={section.titleWithCount}>
+                            <div class="bucket-section-body">
+                                <template if:true={section.isEmpty}>
+                                    <p class="bucket-empty">No service appointments contribute to this KPI.</p>
+                                </template>
+                                <template if:false={section.isEmpty}>
+                                    <div class="bucket-table-host" data-bucket={section.categoryKey}>
+                                        <lightning-datatable
+                                            key-field="rowKey"
+                                            data={section.filteredRows}
+                                            columns={workOrderColumns}
+                                            selected-rows={section.selectedRowKeys}
+                                            sorted-by={section.sortedBy}
+                                            sorted-direction={section.sortDirection}
+                                            onsort={handleWorkOrderSort}
+                                            onrowselection={handleRowSelection}>
+                                        </lightning-datatable>
+                                    </div>
+                                </template>
+                            </div>
+                        </lightning-accordion-section>
+                    </template>
+                </lightning-accordion>
             </div>
         </section>
     </div>
 
     <template if:true={isCompleteBillingModalOpen}>
         <c-billing-control-center-complete-billing-modal
-            service-appointments={modalServiceAppointmentRows}
+            service-appointments={completeBillingModalSelections}
             onclose={handleCompleteBillingClose}
-            onselectionupdate={handleModalSelectionUpdate}
             onsuccess={handleCompleteBillingSuccess}>
         </c-billing-control-center-complete-billing-modal>
     </template>

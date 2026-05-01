@@ -24,14 +24,22 @@
     overflow-y: auto;
 }
 
-@media (max-width: 980px) {
-    .kpi-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
+.bucket-accordion {
+    margin-top: 0.25rem;
 }
 
-@media (max-width: 640px) {
-    .kpi-grid {
-        grid-template-columns: 1fr;
-    }
+.bucket-section-body {
+    padding-top: 0.25rem;
+}
+
+.bucket-table-host {
+    display: block;
+    max-height: 650px;
+    overflow-y: auto;
+}
+
+.bucket-empty {
+    margin: 0.5rem 0 0;
+    color: var(--bcc-muted);
+    font-size: 0.875rem;
 }

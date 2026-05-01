@@ -21,8 +21,6 @@
     gap: 1rem;
     align-items: flex-start;
     padding: 1.5rem 1.5rem 1rem;
-    position: relative;
-    z-index: 2;
 }
 
 .hero__eyebrow,
@@ -50,10 +48,13 @@
 }
 
 .kpi-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 1rem;
     padding: 0 1.5rem 1.5rem;
+}
+
+.kpi-grid__col {
+    flex: 1 1 25%;
+    max-width: 25%;
+    min-width: 0;
 }
 
 .kpi-tile {
@@ -91,8 +92,15 @@
     font-weight: 600;
 }
 
+.kpi-description {
+    min-height: 40px;
+    margin-top: 0.6rem;
+    display: flex;
+    align-items: flex-start;
+}
+
 .kpi-tile__hint {
-    margin: 0.6rem 0 0;
+    margin: 0;
     color: var(--bcc-muted);
     font-size: 0.8rem;
 }
@@ -148,12 +156,6 @@
     font-size: 0.875rem;
 }
 
-@media (max-width: 1200px) {
-    .kpi-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-}
-
 @media (max-width: 980px) {
     .table-toolbar {
         flex-direction: column;
@@ -176,8 +178,10 @@
         flex-direction: column;
     }
 
-    .kpi-grid {
-        grid-template-columns: 1fr;
+    .kpi-grid__col {
+        flex: 1 1 50%;
+        max-width: 50%;
+        min-width: 0;
     }
 
     .hero,
@@ -185,5 +189,13 @@
     .table-shell {
         padding-left: 1rem;
         padding-right: 1rem;
+    }
+}
+
+@media (max-width: 420px) {
+    .kpi-grid__col {
+        flex: 1 1 100%;
+        max-width: 100%;
+        min-width: 0;
     }
 }
