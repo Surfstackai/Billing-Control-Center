@@ -2,14 +2,14 @@
 <CustomApplication xmlns="http://soap.sforce.com/2006/04/metadata">
     <actionOverrides>
         <actionName>Tab</actionName>
-        <content>Billing_Control_Center_Orders</content>
+        <content>Billing_Control_Center_Shell</content>
         <formFactor>Large</formFactor>
         <skipRecordTypeSelect>false</skipRecordTypeSelect>
         <type>Flexipage</type>
         <pageOrSobjectType>standard-home</pageOrSobjectType>
     </actionOverrides>
     <brand>
-        <headerColor>#0D6F4F</headerColor>
+        <headerColor>#0D4FBD</headerColor>
         <shouldOverrideOrgTheme>false</shouldOverrideOrgTheme>
     </brand>
     <description>Operational billing control center for Orders, Opportunities, and Work Orders.</description>
@@ -22,7 +22,7 @@
     <navType>Standard</navType>
     <profileActionOverrides>
         <actionName>Tab</actionName>
-        <content>Billing_Control_Center_Orders</content>
+        <content>Billing_Control_Center_Shell</content>
         <formFactor>Large</formFactor>
         <pageOrSobjectType>standard-home</pageOrSobjectType>
         <type>Flexipage</type>
@@ -30,7 +30,7 @@
     </profileActionOverrides>
     <profileActionOverrides>
         <actionName>Tab</actionName>
-        <content>Billing_Control_Center_Orders</content>
+        <content>Billing_Control_Center_Shell</content>
         <formFactor>Large</formFactor>
         <pageOrSobjectType>standard-home</pageOrSobjectType>
         <type>Flexipage</type>
@@ -38,19 +38,37 @@
     </profileActionOverrides>
     <profileActionOverrides>
         <actionName>Tab</actionName>
-        <content>Billing_Control_Center_Orders</content>
+        <content>Billing_Control_Center_Shell</content>
         <formFactor>Large</formFactor>
         <pageOrSobjectType>standard-home</pageOrSobjectType>
         <type>Flexipage</type>
         <profile>Executive Admin</profile>
     </profileActionOverrides>
-    <tabs>Orders</tabs>
-    <tabs>Billing_Control</tabs>
-    <tabs>Commission</tabs>
-    <tabs>standard-report</tabs>
-    <tabs>standard-Dashboard</tabs>
-    <tabs>standard-Order</tabs>
+    <profileActionOverrides>
+        <actionName>View</actionName>
+        <content>Opportunity_Quote_from_Email</content>
+        <formFactor>Large</formFactor>
+        <pageOrSobjectType>Opportunity</pageOrSobjectType>
+        <recordType>Opportunity.Quote_from_Email</recordType>
+        <type>Flexipage</type>
+        <profile>Executive Admin</profile>
+    </profileActionOverrides>
+    <profileActionOverrides>
+        <actionName>View</actionName>
+        <content>Opportunity_Quote_from_Email</content>
+        <formFactor>Large</formFactor>
+        <pageOrSobjectType>Opportunity</pageOrSobjectType>
+        <recordType>Opportunity.Quote_from_Email</recordType>
+        <type>Flexipage</type>
+        <profile>ProPump Sales</profile>
+    </profileActionOverrides>
+    <tabs>Billing_Control_Center</tabs>
+    <tabs>standard-Account</tabs>
     <tabs>standard-Opportunity</tabs>
     <tabs>standard-WorkOrder</tabs>
+    <tabs>standard-ServiceAppointment</tabs>
+    <tabs>standard-Order</tabs>
+    <tabs>standard-report</tabs>
+    <tabs>standard-Dashboard</tabs>
     <uiType>Lightning</uiType>
 </CustomApplication>

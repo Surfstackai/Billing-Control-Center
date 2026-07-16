@@ -1,0 +1,50 @@
+.diagnostics {
+    background: var(--bcc-card-background, #ffffff);
+    border: 1px solid var(--bcc-border-color, #dde6f2);
+    border-left: 4px solid var(--bcc-primary-blue, #145bdb);
+    border-radius: var(--bcc-radius-md, 1rem);
+    box-shadow: var(--bcc-shadow-soft, 0 12px 32px rgba(9, 30, 66, 0.08));
+    padding: 0.875rem 1rem;
+}
+
+.diagnostics__header {
+    align-items: center;
+    display: flex;
+    gap: 1rem;
+    justify-content: space-between;
+}
+
+.diagnostics__copy {
+    align-items: center;
+    display: flex;
+    gap: 0.75rem;
+    min-width: 0;
+}
+
+.diagnostics__icon {
+    --slds-c-icon-color-foreground-default: var(--bcc-primary-blue, #145bdb);
+    flex-shrink: 0;
+}
+
+.diagnostics__title {
+    color: var(--bcc-text-strong, #16325c);
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+.diagnostics__meta {
+    color: var(--bcc-text-muted, #5c6f91);
+    font-size: 0.78rem;
+    margin-top: 0.15rem;
+}
+
+.diagnostics__list {
+    color: var(--bcc-text-muted, #43506b);
+    margin-top: 0.75rem;
+    padding-left: 1.25rem;
+}
+
+.diagnostics__item + .diagnostics__item {
+    margin-top: 0.35rem;
+}

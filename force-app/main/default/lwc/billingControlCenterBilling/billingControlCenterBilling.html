@@ -3,17 +3,31 @@
         <div class="hero">
             <div class="hero__intro">
                 <p class="hero__eyebrow">Billing Control Center</p>
-                <h1 class="hero__title">Service Appointments Ready to Bill</h1>
-                <p class="hero__subtitle">Monitor completed unbilled appointments and complete billing in grouped invoice batches.</p>
+                <h1 class="hero__title">{heroTitle}</h1>
+                <p class="hero__subtitle">{heroSubtitle}</p>
             </div>
-            <lightning-button
-                icon-name="utility:refresh"
-                label="Refresh"
-                variant="brand"
-                title="Refresh billing control center"
-                onclick={handleRefresh}
-                disabled={isLoading}>
-            </lightning-button>
+            <template if:true={useExternalToolbar}>
+                <div class="hero__controls">
+                    <c-billing-control-center-date-filter
+                        compact
+                        selected-filter-key={externalDateFilterKey}
+                        ondatefilterchange={handleExternalDateFilterChange}>
+                    </c-billing-control-center-date-filter>
+                    <lightning-button
+                        label={refreshLabel}
+                        icon-name="utility:refresh"
+                        variant="brand"
+                        disabled={isLoading}
+                        onclick={handleRefresh}>
+                    </lightning-button>
+                </div>
+            </template>
+            <template if:false={useExternalToolbar}>
+                <c-billing-control-center-action-bar
+                    actions={heroActions}
+                    onactionclick={handleHeroActionClick}>
+                </c-billing-control-center-action-bar>
+            </template>
         </div>
 
         <template if:true={errorMessage}>
@@ -25,100 +39,82 @@
             </div>
         </template>
 
+        <c-billing-control-center-diagnostics
+            warnings={diagnosticWarnings}
+            title="Configuration warnings detected"
+            is-visible={showDiagnostics}>
+        </c-billing-control-center-diagnostics>
+
         <template if:true={isLoading}>
             <lightning-spinner alternative-text="Refreshing data" size="small"></lightning-spinner>
         </template>
 
         <div class="billing-kpi-container">
-            <section class="kpi-grid">
-                <template for:each={kpiTiles} for:item="tile">
-                    <article key={tile.key} class="kpi-tile">
-                        <div class="kpi-tile__header">
-                            <span class="kpi-tile__title">{tile.title}</span>
-                            <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
-                        </div>
-                        <div class="kpi-tile__metric">
-                            <template if:true={tile.isCurrency}>
-                                <lightning-formatted-number
-                                    value={tile.value}
-                                    format-style="currency"
-                                    currency-code="USD"
-                                    maximum-fraction-digits="2">
-                                </lightning-formatted-number>
-                            </template>
-                            <template if:false={tile.isCurrency}>
-                                <lightning-formatted-number value={tile.value}></lightning-formatted-number>
-                            </template>
-                        </div>
-                        <div class="kpi-tile__count">{tile.countText}</div>
-                        <p class="kpi-tile__hint">{tile.hint}</p>
-                    </article>
-                </template>
-            </section>
+            <c-billing-control-center-kpi-grid tiles={kpiTiles}></c-billing-control-center-kpi-grid>
         </div>
 
-        <section class="table-shell billing-console-shell">
-            <div class="billing-tab-panel">
-                <div class="table-toolbar">
-                    <div class="table-toolbar__copy">
-                        <p class="table-toolbar__eyebrow">Billing</p>
-                        <h2 class="table-toolbar__title">Service Appointments Ready to Bill</h2>
+        <template if:true={showTableShell}>
+            <section class="table-shell billing-console-shell">
+                <div class="billing-tab-panel">
+                    <div class="table-toolbar">
+                        <div class="table-toolbar__copy">
+                            <p class="table-toolbar__eyebrow">Billing</p>
+                            <h2 class="table-toolbar__title">{tableTitle}</h2>
+                        </div>
+                        <div class="table-toolbar__actions">
+                            <lightning-input
+                                class="toolbar-search"
+                                type="search"
+                                label="Search"
+                                variant="label-hidden"
+                                placeholder="Search work order, account, opportunity, owner"
+                                value={searchKey}
+                                onchange={handleSearchChange}>
+                            </lightning-input>
+                            <c-billing-control-center-action-bar
+                                actions={tableActions}
+                                onactionclick={handleTableActionClick}>
+                            </c-billing-control-center-action-bar>
+                        </div>
                     </div>
-                    <div class="table-toolbar__actions">
-                        <lightning-input
-                            class="toolbar-search"
-                            type="search"
-                            label="Search"
-                            variant="label-hidden"
-                            placeholder="Search work order, account, opportunity, owner"
-                            value={searchKey}
-                            onchange={handleSearchChange}>
-                        </lightning-input>
-                        <lightning-button
-                            label="Complete Billing"
-                            variant="brand"
-                            onclick={handleOpenCompleteBillingModal}
-                            disabled={isCompleteBillingDisabled}>
-                        </lightning-button>
+
+                    <div class="table-meta">
+                        <span><lightning-formatted-number value={billableCount}></lightning-formatted-number> Diary Records</span>
+                        <span><lightning-formatted-number value={selectedOpportunityCount}></lightning-formatted-number> Opportunities Selected</span>
+                        <span>{searchSummary}</span>
                     </div>
-                </div>
 
-                <div class="table-meta">
-                    <span><lightning-formatted-number value={billableCount}></lightning-formatted-number> Service Appointments</span>
-                    <span><lightning-formatted-number value={selectedOpportunityCount}></lightning-formatted-number> Opportunities Selected</span>
-                    <span>{searchSummary}</span>
+                    <lightning-accordion class="bucket-accordion" allow-multiple-sections-open>
+                        <template for:each={visibleAccordionSections} for:item="section">
+                            <lightning-accordion-section
+                                key={section.categoryKey}
+                                name={section.categoryKey}
+                                label={section.titleWithCount}>
+                                <div class="bucket-section-body">
+                                    <template if:true={section.isEmpty}>
+                                        <p class="bucket-empty">No order diary records contribute to this KPI.</p>
+                                    </template>
+                                    <template if:false={section.isEmpty}>
+                                        <div class="bucket-table-host" data-bucket={section.categoryKey}>
+                                            <lightning-datatable
+                                                key-field="rowKey"
+                                                data={section.filteredRows}
+                                                columns={workOrderColumns}
+                                                selected-rows={section.selectedRowKeys}
+                                                sorted-by={section.sortedBy}
+                                                sorted-direction={section.sortDirection}
+                                                onsort={handleWorkOrderSort}
+                                                onrowselection={handleRowSelection}>
+                                            </lightning-datatable>
+                                        </div>
+                                    </template>
+                                </div>
+                            </lightning-accordion-section>
+                        </template>
+                    </lightning-accordion>
                 </div>
-
-                <lightning-accordion class="bucket-accordion" allow-multiple-sections-open>
-                    <template for:each={visibleAccordionSections} for:item="section">
-                        <lightning-accordion-section
-                            key={section.categoryKey}
-                            name={section.categoryKey}
-                            label={section.titleWithCount}>
-                            <div class="bucket-section-body">
-                                <template if:true={section.isEmpty}>
-                                    <p class="bucket-empty">No service appointments contribute to this KPI.</p>
-                                </template>
-                                <template if:false={section.isEmpty}>
-                                    <div class="bucket-table-host" data-bucket={section.categoryKey}>
-                                        <lightning-datatable
-                                            key-field="rowKey"
-                                            data={section.filteredRows}
-                                            columns={workOrderColumns}
-                                            selected-rows={section.selectedRowKeys}
-                                            sorted-by={section.sortedBy}
-                                            sorted-direction={section.sortDirection}
-                                            onsort={handleWorkOrderSort}
-                                            onrowselection={handleRowSelection}>
-                                        </lightning-datatable>
-                                    </div>
-                                </template>
-                            </div>
-                        </lightning-accordion-section>
-                    </template>
-                </lightning-accordion>
-            </div>
-        </section>
+            </section>
+        </template>
     </div>
 
     <template if:true={isCompleteBillingModalOpen}>

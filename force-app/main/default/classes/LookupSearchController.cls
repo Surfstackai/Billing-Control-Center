@@ -1,4 +1,12 @@
 public with sharing class LookupSearchController {
+    private static final String STAGE_CLOSED_WON = 'Closed Won';
+    private static final Set<String> EXCLUDED_BILLING_STATUSES = new Set<String>{
+        'Billed (Outstanding Receivable)',
+        'Billed (Outstanding Receivables)',
+        'Paid',
+        'Partially Paid'
+    };
+
     public class OpportunitySearchResult {
         @AuraEnabled public Id id;
         @AuraEnabled public String name;
@@ -26,7 +34,11 @@ public with sharing class LookupSearchController {
                 SELECT Id, Name, StageName, Amount, CloseDate
                 FROM Opportunity
                 WHERE Id IN :filteredIds
-                AND IsClosed = false
+                AND StageName = :STAGE_CLOSED_WON
+                AND (
+                    Billing_Status__c = null
+                    OR Billing_Status__c NOT IN :EXCLUDED_BILLING_STATUSES
+                )
                 ORDER BY Name ASC
                 LIMIT 25
             ];
@@ -36,7 +48,11 @@ public with sharing class LookupSearchController {
                 SELECT Id, Name, StageName, Amount, CloseDate
                 FROM Opportunity
                 WHERE Id IN :filteredIds
-                AND IsClosed = false
+                AND StageName = :STAGE_CLOSED_WON
+                AND (
+                    Billing_Status__c = null
+                    OR Billing_Status__c NOT IN :EXCLUDED_BILLING_STATUSES
+                )
                 AND (
                     Name LIKE :normalizedSearch
                     OR StageName LIKE :normalizedSearch

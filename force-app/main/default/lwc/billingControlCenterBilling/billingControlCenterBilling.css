@@ -1,18 +1,16 @@
 @import 'c/billingControlCenterStyles';
 
-.control-center-card {
-    background:
-        radial-gradient(circle at top left, rgba(13, 111, 79, 0.12), transparent 34%),
-        linear-gradient(180deg, #f8fbf9 0%, var(--bcc-surface) 100%);
-}
-
-.kpi-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+.hero__controls {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    flex-wrap: wrap;
 }
 
 .billing-console-shell {
     padding-top: 0;
-    background: #f8fbf9;
+    background: #f8fbff;
 }
 
 .billing-tab-panel {
@@ -42,4 +40,11 @@
     margin: 0.5rem 0 0;
     color: var(--bcc-muted);
     font-size: 0.875rem;
+}
+
+@media (max-width: 720px) {
+    .hero__controls {
+        width: 100%;
+        justify-content: flex-start;
+    }
 }

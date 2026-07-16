@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Navigation_Target_Type__c</fullName>
+    <label>Navigation Target Type</label>
+    <required>false</required>
+    <trackTrending>false</trackTrending>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+                <fullName>Internal BCC Tab</fullName>
+                <default>false</default>
+                <label>Internal BCC Tab</label>
+            </value>
+            <value>
+                <fullName>Object Home</fullName>
+                <default>false</default>
+                <label>Object Home</label>
+            </value>
+            <value>
+                <fullName>App</fullName>
+                <default>false</default>
+                <label>App</label>
+            </value>
+            <value>
+                <fullName>URL</fullName>
+                <default>false</default>
+                <label>URL</label>
+            </value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>

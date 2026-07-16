@@ -1,15 +1,22 @@
-import { LightningElement, wire } from 'lwc';
+import { LightningElement, api } from 'lwc';
 import { NavigationMixin } from 'lightning/navigation';
-import { refreshApex } from '@salesforce/apex';
 import { ShowToastEvent } from 'lightning/platformShowToastEvent';
+import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Billing_Control_Center_Admin_Access';
 
-import getCommissionData from '@salesforce/apex/BillingControl_Invoicing.getCommissionData';
-import getCommissionMetrics from '@salesforce/apex/BillingControl_Invoicing.getCommissionMetrics';
+import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
+import getReceivablesRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getReceivablesRuntimeData';
 import updateCommissionPaid from '@salesforce/apex/BillingControl_Invoicing.updateCommissionPaid';
+
+const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0
+});
 
 const KPI_CONFIG = [
     {
         key: 'revenueUnderCollection',
+        developerKey: 'ACCOUNTS_RECEIVABLE',
         countKey: 'revenueUnderCollectionCount',
         title: 'Accounts Receivable (A/R)',
         icon: 'utility:moneybag',
@@ -17,6 +24,7 @@ const KPI_CONFIG = [
     },
     {
         key: 'commissionEarned',
+        developerKey: 'COMMISSION_ACCRUED',
         countKey: 'commissionEarnedCount',
         title: 'Commission Accrued',
         icon: 'utility:approval',
@@ -24,6 +32,7 @@ const KPI_CONFIG = [
     },
     {
         key: 'commissionPayable',
+        developerKey: 'COMMISSION_PAYABLE',
         countKey: 'commissionPayableCount',
         title: 'Commission Payable',
         icon: 'utility:currency',
@@ -37,13 +46,64 @@ const CATEGORY_KEYS = {
     COMMISSION_PAYABLE: 'COMMISSION_PAYABLE'
 };
 
+const DEFAULT_HERO_TITLE = 'Receivables';
+const DEFAULT_HERO_SUBTITLE = 'Track open invoices, posted receipts, and commission payouts.';
+const DEFAULT_TABLE_TITLE = 'Outstanding Opportunities and Payment Status';
+const DEFAULT_REFRESH_LABEL = 'Refresh';
+const DEFAULT_POST_RECEIPT_LABEL = 'Post Receipt';
+const DEFAULT_PAY_COMMISSION_LABEL = 'Pay Commission';
+const RECEIVABLES_DATASET_KEYS = {
+    INVOICES: 'RECEIVABLES_INVOICES',
+    COMMISSIONS: 'RECEIVABLES_COMMISSIONS'
+};
+const receivablesRuntimeCache = new Map();
+const RECEIVABLES_SECTION_KEY_BY_CATEGORY = {
+    [CATEGORY_KEYS.REVENUE_UNDER_COLLECTION]: 'INVOICES',
+    [CATEGORY_KEYS.COMMISSION_EARNED]: 'COMMISSIONS',
+    [CATEGORY_KEYS.COMMISSION_PAYABLE]: 'COMMISSIONS'
+};
+const RECEIVABLES_KPI_DEFINITIONS = {
+    ACCOUNTS_RECEIVABLE: KPI_CONFIG[0],
+    OUTSTANDING_RECEIVABLES: KPI_CONFIG[0],
+    COMMISSION_ACCRUED: KPI_CONFIG[1],
+    OUTSTANDING_COMMISSION: KPI_CONFIG[1],
+    COMMISSION_PAYABLE: KPI_CONFIG[2]
+};
+
+function normalizeConfigKey(value) {
+    return value ? String(value).trim().toUpperCase() : '';
+}
+
+function buildConfigMap(records) {
+    const result = {};
+    (records || []).forEach(record => {
+        const key = normalizeConfigKey(record?.developerKey);
+        if (key) {
+            result[key] = record;
+        }
+    });
+    return result;
+}
+
+function cloneRuntimeData(value) {
+    return value ? JSON.parse(JSON.stringify(value)) : value;
+}
+
+function buildRuntimeCacheKey(dateFilter) {
+    return JSON.stringify(dateFilter || { filterKey: 'Today' });
+}
+
 export default class BillingControlCenterCommission extends NavigationMixin(LightningElement) {
+    _dateFilter;
+    _dateFilterSignature = '';
+    _isConnected = false;
+
+    @api useExternalToolbar = false;
+
     metrics = {};
     commissionSections = [];
     selectedRows = [];
     expandedRows = [];
-    wiredMetricsResult;
-    wiredCommissionDataResult;
     isMetricsLoading = true;
     isDataLoading = true;
     isRefreshing = false;
@@ -51,63 +111,183 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     isPostReceiptModalOpen = false;
     selectedOpportunityForReceipt = null;
     errorMessage;
+    providerWarnings = [];
+    receivablesTabConfig;
+    receivablesConfigLoaded = false;
+    receivablesDatasetsByKey = {};
+    receivablesKpisByKey = {};
+    receivablesSectionsByKey = {};
+    receivablesActionsByKey = {};
 
-    get commissionDataContext() {
-        return 'kpi';
+    @api
+    get dateFilter() {
+        return this._dateFilter;
     }
 
-    @wire(getCommissionMetrics)
-    wiredMetrics(value) {
-        this.wiredMetricsResult = value;
-        const { data, error } = value;
+    set dateFilter(value) {
+        const normalizedValue = value ? { ...value } : null;
+        const signature = JSON.stringify(normalizedValue || {});
+        if (signature === this._dateFilterSignature) {
+            return;
+        }
 
-        if (data) {
-            this.metrics = data;
-            this.isMetricsLoading = false;
-            this.errorMessage = undefined;
-        } else if (error) {
-            this.metrics = {};
-            this.isMetricsLoading = false;
-            this.errorMessage = this.reduceError(error);
+        this._dateFilter = normalizedValue;
+        this._dateFilterSignature = signature;
+
+        if (this._isConnected) {
+            this.loadData();
         }
     }
 
-    @wire(getCommissionData, { subtabType: '$commissionDataContext' })
-    wiredCommissionData(value) {
-        this.wiredCommissionDataResult = value;
-        const { data, error } = value;
-
-        if (data) {
-            this.commissionSections = this.normalizeSections(data);
-            this.isDataLoading = false;
-            this.errorMessage = undefined;
-            this.reconcileActiveState();
-        } else if (error) {
-            this.commissionSections = [];
-            this.isDataLoading = false;
-            this.errorMessage = this.reduceError(error);
-            this.setSelectedRows([]);
-            this.setExpandedRows([]);
-        }
+    connectedCallback() {
+        this._isConnected = true;
+        this.loadReceivablesConfig();
+        this.loadData();
     }
 
     get isLoading() {
         return this.isMetricsLoading || this.isDataLoading || this.isRefreshing || this.isActionLoading;
     }
 
+    get showDiagnostics() {
+        return hasBillingControlCenterAdminAccess && this.providerWarnings.length > 0;
+    }
+
     get kpiTiles() {
-        return KPI_CONFIG.map(tile => ({
-            ...tile,
-            value: this.metrics[tile.key] || 0,
-            countText: this.buildKpiCountText(tile.countKey)
-        }));
+        if (!this.receivablesConfigLoaded) {
+            return KPI_CONFIG.map(tile => this.buildKpiTile(tile));
+        }
+
+        const configuredKpis = this.receivablesTabConfig?.kpis || [];
+        if (configuredKpis.length === 0) {
+            return [];
+        }
+
+        const tiles = [];
+        configuredKpis.forEach(configRecord => {
+            const developerKey = normalizeConfigKey(configRecord?.developerKey);
+            const definition = RECEIVABLES_KPI_DEFINITIONS[developerKey];
+
+            if (!definition) {
+                console.warn(
+                    `Skipping unsupported Receivables KPI config: ${configRecord?.developerKey || 'unknown'}`
+                );
+                return;
+            }
+
+            if (definition.datasetKey && !this.receivablesDatasetsByKey[definition.datasetKey]) {
+                return;
+            }
+
+            tiles.push(this.buildKpiTile(definition, configRecord));
+        });
+
+        return tiles;
+    }
+
+    get heroTitle() {
+        return this.receivablesTabConfig?.label || DEFAULT_HERO_TITLE;
+    }
+
+    get heroSubtitle() {
+        return DEFAULT_HERO_SUBTITLE;
+    }
+
+    get tableTitle() {
+        const invoicesLabel = this.receivablesSectionsByKey.INVOICES?.label;
+        const commissionsLabel = this.receivablesSectionsByKey.COMMISSIONS?.label;
+        if (invoicesLabel && commissionsLabel) {
+            return `${invoicesLabel} and ${commissionsLabel}`;
+        }
+        if (invoicesLabel) {
+            return invoicesLabel;
+        }
+        if (commissionsLabel) {
+            return commissionsLabel;
+        }
+        return DEFAULT_TABLE_TITLE;
+    }
+
+    get refreshLabel() {
+        return this.receivablesActionsByKey.REFRESH?.label || DEFAULT_REFRESH_LABEL;
+    }
+
+    get externalDateFilterKey() {
+        return this.dateFilter?.filterKey || 'Today';
+    }
+
+    get heroActions() {
+        if (this.useExternalToolbar) {
+            return [];
+        }
+
+        if (this.receivablesConfigLoaded && !this.receivablesActionsByKey.REFRESH) {
+            return [];
+        }
+
+        return [
+            {
+                key: 'refresh',
+                label: this.refreshLabel,
+                iconName: 'utility:refresh',
+                variant: 'brand',
+                disabled: this.isLoading,
+                title: this.refreshLabel
+            }
+        ];
+    }
+
+    get postReceiptLabel() {
+        return this.receivablesActionsByKey.POST_RECEIPT?.label || DEFAULT_POST_RECEIPT_LABEL;
+    }
+
+    get payCommissionLabel() {
+        return this.receivablesActionsByKey.PAY_COMMISSION?.label || DEFAULT_PAY_COMMISSION_LABEL;
+    }
+
+    get tableActions() {
+        if (!this.showTableShell) {
+            return [];
+        }
+
+        if (!this.receivablesConfigLoaded) {
+            return this.buildDefaultTableActions();
+        }
+
+        const actions = [];
+        if (this.receivablesActionsByKey.POST_RECEIPT) {
+            actions.push({
+                key: 'postReceipt',
+                label: this.postReceiptLabel,
+                variant: 'brand',
+                disabled: this.isPostReceiptDisabled,
+                title: this.postReceiptLabel
+            });
+        }
+        if (this.receivablesActionsByKey.PAY_COMMISSION) {
+            actions.push({
+                key: 'payCommission',
+                label: this.payCommissionLabel,
+                variant: 'neutral',
+                disabled: this.isPayCommissionDisabled,
+                title: this.payCommissionLabel
+            });
+        }
+        return actions;
+    }
+
+    get showTableShell() {
+        if (!this.receivablesConfigLoaded) {
+            return true;
+        }
+        return this.getRenderableCommissionSections().length > 0;
     }
 
     get accordionSections() {
         const expandedKeys = new Set(this.expandedRows);
         const selectedKeys = new Set(this.selectedRows);
 
-        return this.commissionSections.map(section => ({
+        return this.getRenderableCommissionSections().map(section => ({
             ...section,
             titleWithCount: `${section.categoryLabel} (${section.opportunityCount || 0})`,
             isEmpty: (section.opportunityCount || 0) === 0,
@@ -135,7 +315,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         const selectedKeys = new Set(this.selectedRows);
         const opportunitiesById = new Map();
 
-        this.commissionSections.forEach(section => {
+        this.getRenderableCommissionSections().forEach(section => {
             section.salespeople.forEach(salesperson => {
                 const parentSelected = selectedKeys.has(salesperson.key);
                 salesperson.opportunities.forEach(opportunity => {
@@ -182,7 +362,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         const selectedKeys = new Set(this.selectedRows);
         const commissionIds = new Set();
 
-        this.commissionSections.forEach(section => {
+        this.getRenderableCommissionSections().forEach(section => {
             if (section.categoryKey !== CATEGORY_KEYS.COMMISSION_PAYABLE) {
                 return;
             }
@@ -208,11 +388,14 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     get opportunityCount() {
-        return this.commissionSections.reduce((total, section) => total + (section.opportunityCount || 0), 0);
+        return this.getRenderableCommissionSections().reduce(
+            (total, section) => total + (section.opportunityCount || 0),
+            0
+        );
     }
 
     get salespersonCount() {
-        return this.commissionSections.reduce(
+        return this.getRenderableCommissionSections().reduce(
             (total, section) => total + (section.salespeople ? section.salespeople.length : 0),
             0
         );
@@ -306,11 +489,30 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this.isRefreshing = true;
 
         try {
-            await Promise.all(this.getRefreshPromises());
+            await this.loadData(true);
         } catch (error) {
             this.errorMessage = this.reduceError(error);
         } finally {
             this.isRefreshing = false;
+        }
+    }
+
+    @api
+    async refreshData() {
+        await this.handleRefresh();
+    }
+
+    handleExternalDateFilterChange(event) {
+        this.dispatchEvent(
+            new CustomEvent('datefilterchange', {
+                detail: event.detail
+            })
+        );
+    }
+
+    handleHeroActionClick(event) {
+        if (event.detail?.key === 'refresh') {
+            this.handleRefresh();
         }
     }
 
@@ -335,12 +537,20 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             );
 
             this.isRefreshing = true;
-            await Promise.all(this.getRefreshPromises());
+            await this.loadData(true);
         } catch (error) {
             this.errorMessage = this.reduceError(error);
         } finally {
             this.isRefreshing = false;
             this.isActionLoading = false;
+        }
+    }
+
+    handleTableActionClick(event) {
+        if (event.detail?.key === 'postReceipt') {
+            this.handleOpenPostReceipt();
+        } else if (event.detail?.key === 'payCommission') {
+            this.handlePayCommission();
         }
     }
 
@@ -375,10 +585,84 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this.setSelectedRows([]);
         this.isRefreshing = true;
         try {
-            await Promise.all(this.getRefreshPromises());
+            await this.loadData(true);
         } finally {
             this.isRefreshing = false;
         }
+    }
+
+    buildDefaultTableActions() {
+        return [
+            {
+                key: 'postReceipt',
+                label: this.postReceiptLabel,
+                variant: 'brand',
+                disabled: this.isPostReceiptDisabled,
+                title: this.postReceiptLabel
+            },
+            {
+                key: 'payCommission',
+                label: this.payCommissionLabel,
+                variant: 'neutral',
+                disabled: this.isPayCommissionDisabled,
+                title: this.payCommissionLabel
+            }
+        ];
+    }
+
+    buildKpiTile(definition, configRecord) {
+        return {
+            ...definition,
+            title: configRecord?.label || definition.title,
+            icon: configRecord?.iconName || definition.icon,
+            metricText: CURRENCY_FORMATTER.format(this.metrics[definition.key] || 0),
+            countText: this.buildKpiCountText(definition.countKey)
+        };
+    }
+
+    getRenderableCommissionSections() {
+        if (!this.receivablesConfigLoaded) {
+            return this.commissionSections;
+        }
+
+        const configuredSections = this.receivablesTabConfig?.sections || [];
+        if (configuredSections.length === 0) {
+            return [];
+        }
+
+        const supportedSectionKeys = new Set();
+        configuredSections.forEach(configRecord => {
+            const developerKey = normalizeConfigKey(configRecord?.developerKey);
+            if (developerKey === 'INVOICES' || developerKey === 'COMMISSIONS') {
+                supportedSectionKeys.add(developerKey);
+                return;
+            }
+
+            console.warn(
+                `Skipping unsupported Receivables section config: ${configRecord?.developerKey || 'unknown'}`
+            );
+        });
+
+        if (supportedSectionKeys.size === 0) {
+            return this.commissionSections;
+        }
+
+        return this.commissionSections
+            .filter(section => {
+                const sectionKey = RECEIVABLES_SECTION_KEY_BY_CATEGORY[section.categoryKey];
+                if (!sectionKey || !supportedSectionKeys.has(sectionKey)) {
+                    return false;
+                }
+
+                const datasetKey = RECEIVABLES_DATASET_KEYS[sectionKey];
+                return Boolean(this.receivablesDatasetsByKey[datasetKey]);
+            })
+            .map(section => ({
+                ...section,
+                categoryLabel:
+                    this.receivablesSectionsByKey[RECEIVABLES_SECTION_KEY_BY_CATEGORY[section.categoryKey]]?.label ||
+                    section.categoryLabel
+            }));
     }
 
     normalizeSections(data) {
@@ -436,7 +720,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     findSalespersonByKey(rowKey) {
-        for (const section of this.commissionSections) {
+        for (const section of this.getRenderableCommissionSections()) {
             for (const salesperson of section.salespeople || []) {
                 if (salesperson.key === rowKey) {
                     return salesperson;
@@ -450,7 +734,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         const validParentKeys = new Set();
         const validKeys = new Set();
 
-        this.commissionSections.forEach(section => {
+        this.getRenderableCommissionSections().forEach(section => {
             (section.salespeople || []).forEach(salesperson => {
                 validParentKeys.add(salesperson.key);
                 validKeys.add(salesperson.key);
@@ -470,17 +754,46 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this.expandedRows = nextRows;
     }
 
-    getRefreshPromises() {
-        const refreshes = [];
+    async loadData(forceRefresh = false) {
+        this.isMetricsLoading = true;
+        this.isDataLoading = true;
+        this.errorMessage = undefined;
+        const cacheKey = buildRuntimeCacheKey(this.dateFilter);
 
-        if (this.wiredMetricsResult) {
-            refreshes.push(refreshApex(this.wiredMetricsResult));
-        }
-        if (this.wiredCommissionDataResult) {
-            refreshes.push(refreshApex(this.wiredCommissionDataResult));
-        }
+        try {
+            if (forceRefresh) {
+                receivablesRuntimeCache.delete(cacheKey);
+            } else if (receivablesRuntimeCache.has(cacheKey)) {
+                this.applyRuntimeData(cloneRuntimeData(receivablesRuntimeCache.get(cacheKey)));
+                return;
+            }
 
-        return refreshes;
+            const refreshToken = forceRefresh ? Date.now() : null;
+            const data = await getReceivablesRuntimeData({
+                refreshToken,
+                dateFilter: this.dateFilter
+            });
+            receivablesRuntimeCache.set(cacheKey, cloneRuntimeData(data));
+            this.applyRuntimeData(data);
+        } catch (error) {
+            this.providerWarnings = [];
+            this.metrics = {};
+            this.commissionSections = [];
+            this.errorMessage = this.reduceError(error);
+            this.setSelectedRows([]);
+            this.setExpandedRows([]);
+        } finally {
+            this.isMetricsLoading = false;
+            this.isDataLoading = false;
+        }
+    }
+
+    applyRuntimeData(data) {
+        this.providerWarnings = data?.warnings || [];
+        (data?.warnings || []).forEach(warning => console.warn(warning));
+        this.metrics = data?.metrics || {};
+        this.commissionSections = this.normalizeSections(data?.sections || []);
+        this.reconcileActiveState();
     }
 
     reduceError(error) {
@@ -506,5 +819,34 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             ? 'Commission'
             : 'Opportunity';
         return `${normalizedCount} ${noun}${normalizedCount === 1 ? '' : 's'}`;
+    }
+
+    async loadReceivablesConfig() {
+        try {
+            const config = await getTabConfig({ developerKey: 'RECEIVABLES' });
+            if (!config) {
+                console.warn('Billing Control Center Receivables config not found. Using default presentation.');
+                return;
+            }
+
+            this.receivablesTabConfig = config;
+            this.receivablesConfigLoaded = true;
+            this.receivablesDatasetsByKey = buildConfigMap(config.datasets);
+            this.receivablesKpisByKey = buildConfigMap(config.kpis);
+            this.receivablesSectionsByKey = buildConfigMap(config.sections);
+            this.receivablesActionsByKey = buildConfigMap(config.actions);
+            this.reconcileActiveState();
+        } catch (error) {
+            console.warn(
+                'Failed to load Billing Control Center Receivables config. Using default presentation.',
+                error
+            );
+            this.receivablesTabConfig = undefined;
+            this.receivablesConfigLoaded = false;
+            this.receivablesDatasetsByKey = {};
+            this.receivablesKpisByKey = {};
+            this.receivablesSectionsByKey = {};
+            this.receivablesActionsByKey = {};
+        }
     }
 }

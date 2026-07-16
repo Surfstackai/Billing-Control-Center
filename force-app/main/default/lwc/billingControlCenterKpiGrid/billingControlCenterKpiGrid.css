@@ -1,0 +1,14 @@
+@import 'c/billingControlCenterStyles';
+
+.kpi-description {
+    min-height: 40px;
+    margin-top: 0.6rem;
+    display: flex;
+    align-items: flex-start;
+}
+
+.kpi-tile__hint {
+    margin: 0;
+    color: var(--bcc-muted);
+    font-size: 0.8rem;
+}

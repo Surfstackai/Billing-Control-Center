@@ -1,0 +1,16 @@
+<template>
+    <div class="bcc-action-bar">
+        <template for:each={normalizedActions} for:item="action">
+            <lightning-button
+                key={action.key}
+                data-key={action.key}
+                label={action.label}
+                variant={action.variant}
+                icon-name={action.iconName}
+                title={action.title}
+                disabled={action.disabled}
+                onclick={handleActionClick}>
+            </lightning-button>
+        </template>
+    </div>
+</template>

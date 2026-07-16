@@ -1,0 +1,35 @@
+<template>
+    <template if:true={shouldRender}>
+        <section class="diagnostics slds-m-horizontal_large slds-m-bottom_medium" aria-live="polite">
+            <div class="diagnostics__header">
+                <div class="diagnostics__copy">
+                    <lightning-icon
+                        icon-name="utility:warning"
+                        size="x-small"
+                        alternative-text="Warning"
+                        class="diagnostics__icon">
+                    </lightning-icon>
+                    <div>
+                        <p class="diagnostics__title">{title}</p>
+                        <p class="diagnostics__meta">{warningCountLabel}</p>
+                    </div>
+                </div>
+                <lightning-button-icon
+                    icon-name={toggleIconName}
+                    alternative-text={toggleLabel}
+                    title={toggleLabel}
+                    onclick={handleToggle}
+                    variant="bare">
+                </lightning-button-icon>
+            </div>
+
+            <template if:true={isExpanded}>
+                <ul class="diagnostics__list slds-list_dotted">
+                    <template for:each={normalizedWarnings} for:item="warning">
+                        <li key={warning.id} class="diagnostics__item">{warning.message}</li>
+                    </template>
+                </ul>
+            </template>
+        </section>
+    </template>
+</template>

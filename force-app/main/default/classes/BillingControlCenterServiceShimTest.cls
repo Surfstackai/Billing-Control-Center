@@ -8,14 +8,12 @@ private class BillingControlCenterServiceShimTest {
         List<BillingControl_Invoicing.OpportunityWrapper> outstanding = BillingControlCenterService.getOutstandingReceivableOpportunities();
         BillingControl_Invoicing.OpportunityBillingMetricsWrapper opportunityMetrics = BillingControlCenterService.getOpportunityBillingMetrics();
         BillingControl_Invoicing.BillingControlMetricsWrapper saMetrics = BillingControlCenterService.getServiceAppointmentBillingMetrics();
-        List<BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper> groups = BillingControlCenterService.getBillableServiceAppointmentGroups();
-        BillingControl_Invoicing.CompleteBillingResultWrapper completeResult = BillingControlCenterService.completeServiceAppointmentBilling(
-            new List<Id>(),
-            null
-        );
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> groups = BillingControlCenterService.getBillableServiceAppointmentGroups();
+        BillingControl_Invoicing.CompleteBillingResultWrapper completeResult = BillingControlCenterService.completeServiceAppointmentBilling(new List<Id>());
         BillingControl_Invoicing.BillingControlMetricsWrapper billingMetrics = BillingControlCenterService.getBillingControlMetrics();
         BillingControl_Invoicing.CommissionMetricsWrapper commissionMetrics = BillingControlCenterService.getCommissionMetrics();
-        List<BillingControl_Invoicing.SalespersonWrapper> commissionData = BillingControlCenterService.getCommissionData('earned');
+        List<BillingControl_Invoicing.CommissionKpiCategoryWrapper> commissionData =
+            BillingControlCenterService.getCommissionData('earned');
         BillingControlCenterService.updateCommissionPaid(new List<Id>());
         BillingControl_Invoicing.CommissionResultWrapper commissionResult = BillingControlCenterService.createCommissionRecords(
             new List<BillingControl_Invoicing.CommissionInputWrapper>()

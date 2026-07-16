@@ -3,17 +3,31 @@
         <div class="hero">
             <div class="hero__intro">
                 <p class="hero__eyebrow">Billing Control Center</p>
-                <h1 class="hero__title">Work Orders Pending Scheduling or Completion</h1>
-                <p class="hero__subtitle">Closed Won pipeline: unscheduled work, scheduled work, scheduled for today, completed today, and completed this week.</p>
+                <h1 class="hero__title">{heroTitle}</h1>
+                <p class="hero__subtitle">{heroSubtitle}</p>
             </div>
-            <lightning-button
-                class="hero__refresh"
-                icon-name="utility:refresh"
-                label="Refresh"
-                onclick={handleRefresh}
-                variant="brand"
-                disabled={isLoading}>
-            </lightning-button>
+            <template if:true={useExternalToolbar}>
+                <div class="hero__controls">
+                    <c-billing-control-center-date-filter
+                        compact
+                        selected-filter-key={externalDateFilterKey}
+                        ondatefilterchange={handleExternalDateFilterChange}>
+                    </c-billing-control-center-date-filter>
+                    <lightning-button
+                        label={refreshLabel}
+                        icon-name="utility:refresh"
+                        variant="brand"
+                        disabled={isLoading}
+                        onclick={handleRefresh}>
+                    </lightning-button>
+                </div>
+            </template>
+            <template if:false={useExternalToolbar}>
+                <c-billing-control-center-action-bar
+                    actions={heroActions}
+                    onactionclick={handleHeroActionClick}>
+                </c-billing-control-center-action-bar>
+            </template>
         </div>
 
         <template if:true={errorMessage}>
@@ -25,35 +39,25 @@
             </div>
         </template>
 
+        <c-billing-control-center-diagnostics
+            warnings={providerWarnings}
+            title="Configuration warnings detected"
+            is-visible={showDiagnostics}>
+        </c-billing-control-center-diagnostics>
+
         <template if:true={isLoading}>
             <lightning-spinner alternative-text="Loading billing control center"></lightning-spinner>
         </template>
 
         <div class="billing-kpi-container">
-            <section class="slds-grid slds-wrap slds-gutters kpi-grid">
-                <template for:each={kpiTiles} for:item="tile">
-                    <div key={tile.key} class="kpi-grid__col">
-                        <article class="kpi-tile">
-                            <div class="kpi-tile__header">
-                                <span class="kpi-tile__title">{tile.title}</span>
-                                <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
-                            </div>
-                            <div class="kpi-tile__metric">{tile.formattedRevenue}</div>
-                            <div class="kpi-tile__count">{tile.formattedCount}</div>
-                            <div class="kpi-description">
-                                <p class="kpi-tile__hint">{tile.hint}</p>
-                            </div>
-                        </article>
-                    </div>
-                </template>
-            </section>
+            <c-billing-control-center-kpi-grid tiles={kpiTiles}></c-billing-control-center-kpi-grid>
         </div>
 
         <section class="table-shell">
             <div class="table-toolbar">
                 <div class="table-toolbar__copy">
                     <p class="table-toolbar__eyebrow">Work orders</p>
-                    <h2 class="table-toolbar__title">Pipeline work orders by bucket</h2>
+                    <h2 class="table-toolbar__title">{tableTitle}</h2>
                 </div>
                 <div class="table-toolbar__actions">
                     <lightning-input

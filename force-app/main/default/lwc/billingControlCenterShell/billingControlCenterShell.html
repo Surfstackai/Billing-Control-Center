@@ -1,0 +1,110 @@
+<template>
+    <div class={shellClass}>
+        <aside class={sidebarClass}>
+            <button
+                class="bcc-sidebar-toggle"
+                type="button"
+                onclick={handleToggleSidebar}
+                title={toggleAlternativeText}
+                aria-label={toggleAlternativeText}>
+                <lightning-icon icon-name={toggleIconName} size="xx-small" alternative-text={toggleAlternativeText}></lightning-icon>
+            </button>
+
+            <div class="bcc-brand">
+                <div class="bcc-brand__badge">
+                    <lightning-icon icon-name="utility:apps" size="x-small" alternative-text="Billing Control Center"></lightning-icon>
+                </div>
+                <div class="bcc-brand__copy">
+                    <span class="bcc-brand__eyebrow">Billing Control Center</span>
+                    <span class="bcc-brand__title">Operations</span>
+                </div>
+            </div>
+
+            <div class="bcc-nav">
+                <section class="bcc-nav__group">
+                    <p class="bcc-nav__heading">Billing</p>
+                    <template for:each={billingNavItems} for:item="item">
+                        <button
+                            key={item.developerKey}
+                            class={item.buttonClass}
+                            type="button"
+                            data-key={item.developerKey}
+                            data-group={item.navigationGroup}
+                            onclick={handleNavClick}
+                            title={item.label}
+                            aria-label={item.label}>
+                            <lightning-icon icon-name={item.iconName} size="x-small" alternative-text={item.label}></lightning-icon>
+                            <span class="bcc-nav__label">{item.label}</span>
+                        </button>
+                    </template>
+                </section>
+
+                <template if:true={hasStandardItems}>
+                    <section class="bcc-nav__group">
+                        <p class="bcc-nav__heading">Standard</p>
+                        <template for:each={standardNavItems} for:item="item">
+                            <button
+                                key={item.developerKey}
+                                class={item.buttonClass}
+                                type="button"
+                                data-key={item.developerKey}
+                                data-group={item.navigationGroup}
+                                onclick={handleNavClick}
+                                title={item.label}
+                                aria-label={item.label}>
+                                <lightning-icon icon-name={item.iconName} size="x-small" alternative-text={item.label}></lightning-icon>
+                                <span class="bcc-nav__label">{item.label}</span>
+                            </button>
+                        </template>
+                    </section>
+                </template>
+            </div>
+
+            <template if:true={hasAdminItems}>
+                <div class="bcc-nav bcc-nav_footer">
+                    <section class="bcc-nav__group">
+                        <p class="bcc-nav__heading">Settings</p>
+                        <template for:each={adminNavItems} for:item="item">
+                            <button
+                                key={item.developerKey}
+                                class={item.buttonClass}
+                                type="button"
+                                data-key={item.developerKey}
+                                data-group={item.navigationGroup}
+                                onclick={handleNavClick}
+                                title={item.label}
+                                aria-label={item.label}>
+                                <lightning-icon icon-name={item.iconName} size="x-small" alternative-text={item.label}></lightning-icon>
+                                <span class="bcc-nav__label">{item.label}</span>
+                            </button>
+                        </template>
+                    </section>
+                </div>
+            </template>
+        </aside>
+
+        <main class="bcc-shell__content">
+            <template if:true={isOrdersActive}>
+                <c-billing-control-center-orders
+                    date-filter={globalDateFilter}
+                    use-external-toolbar
+                    ondatefilterchange={handleDateFilterChange}>
+                </c-billing-control-center-orders>
+            </template>
+            <template if:true={isInvoicingActive}>
+                <c-billing-control-center-billing
+                    date-filter={globalDateFilter}
+                    use-external-toolbar
+                    ondatefilterchange={handleDateFilterChange}>
+                </c-billing-control-center-billing>
+            </template>
+            <template if:true={isReceivablesActive}>
+                <c-billing-control-center-commission
+                    date-filter={globalDateFilter}
+                    use-external-toolbar
+                    ondatefilterchange={handleDateFilterChange}>
+                </c-billing-control-center-commission>
+            </template>
+        </main>
+    </div>
+</template>

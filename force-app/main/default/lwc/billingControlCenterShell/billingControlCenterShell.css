@@ -1,0 +1,224 @@
+@import 'c/billingControlCenterStyles';
+
+:host {
+    display: block;
+    background: var(--bcc-page-bg);
+}
+
+.bcc-shell {
+    display: flex;
+    min-height: 100vh;
+    background: var(--bcc-page-bg);
+    transition: background-color 180ms ease;
+}
+
+.bcc-shell__sidebar {
+    display: flex;
+    flex-direction: column;
+    width: 14rem;
+    min-width: 14rem;
+    padding: 1rem 0.85rem;
+    color: #f4f7ff;
+    background: var(--bcc-sidebar-bg);
+    box-shadow: 12px 0 28px rgba(2, 19, 51, 0.2);
+    position: relative;
+    transition:
+        width 180ms ease,
+        min-width 180ms ease,
+        padding 180ms ease;
+}
+
+.bcc-shell__sidebar_collapsed {
+    width: 5.3rem;
+    min-width: 5.3rem;
+    padding-left: 0.65rem;
+    padding-right: 0.65rem;
+}
+
+.bcc-sidebar-toggle {
+    position: absolute;
+    top: 50%;
+    right: -0.7rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.45rem;
+    height: 3rem;
+    border: 1px solid #d7e1f2;
+    border-radius: 999px;
+    background: #ffffff;
+    color: var(--bcc-primary-blue);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+    transform: translateY(-50%);
+    z-index: 2;
+    cursor: pointer;
+}
+
+.bcc-sidebar-toggle lightning-icon {
+    --slds-c-icon-color-foreground-default: currentColor;
+}
+
+.bcc-shell__sidebar_collapsed .bcc-sidebar-toggle {
+    right: -0.6rem;
+}
+
+.bcc-brand {
+    display: flex;
+    gap: 0.85rem;
+    align-items: center;
+    margin-bottom: 1.25rem;
+    padding: 0.1rem 0.3rem 0.8rem;
+    transition: padding 180ms ease, margin-bottom 180ms ease;
+}
+
+.bcc-brand__badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    border-radius: 0.6rem;
+    background: rgba(255, 255, 255, 0.16);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.bcc-brand__badge lightning-icon,
+.bcc-nav__item lightning-icon {
+    --slds-c-icon-color-foreground-default: currentColor;
+}
+
+.bcc-brand__copy {
+    display: flex;
+    flex-direction: column;
+    transition: opacity 140ms ease, width 140ms ease;
+}
+
+.bcc-brand__eyebrow {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(206, 224, 255, 0.66);
+}
+
+.bcc-brand__title {
+    font-size: 0.92rem;
+    font-weight: 700;
+}
+
+.bcc-nav {
+    display: flex;
+    flex-direction: column;
+    gap: 0.95rem;
+}
+
+.bcc-nav_footer {
+    margin-top: auto;
+    padding-top: 1rem;
+    border-top: 1px solid rgba(255, 255, 255, 0.16);
+}
+
+.bcc-nav__group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+}
+
+.bcc-nav__heading {
+    margin: 0 0 0.3rem;
+    padding: 0 0.45rem;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: rgba(214, 229, 255, 0.68);
+    transition: opacity 140ms ease;
+}
+
+.bcc-nav__item {
+    display: flex;
+    gap: 0.72rem;
+    align-items: center;
+    width: 100%;
+    padding: 0.78rem 0.92rem;
+    border: 0;
+    border-radius: 0.9rem;
+    color: #f4f7ff;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    transition: background-color 140ms ease, transform 140ms ease;
+    font-weight: 600;
+    font-size: 0.96rem;
+    transition:
+        background-color 140ms ease,
+        transform 140ms ease,
+        padding 180ms ease;
+}
+
+.bcc-nav__item:hover,
+.bcc-nav__item:focus-visible {
+    background: rgba(255, 255, 255, 0.08);
+    outline: none;
+    transform: translateX(1px);
+}
+
+.bcc-nav__item_active {
+    background: var(--bcc-sidebar-active-bg);
+    box-shadow:
+        inset 0 0 0 1px rgba(255, 255, 255, 0.14),
+        0 8px 18px rgba(2, 24, 66, 0.24);
+}
+
+.bcc-nav__label {
+    white-space: nowrap;
+    transition: opacity 120ms ease, width 120ms ease;
+}
+
+.bcc-shell__sidebar_collapsed .bcc-brand {
+    justify-content: center;
+    padding-bottom: 0.55rem;
+}
+
+.bcc-shell__sidebar_collapsed .bcc-brand__copy,
+.bcc-shell__sidebar_collapsed .bcc-nav__heading,
+.bcc-shell__sidebar_collapsed .bcc-nav__label {
+    width: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.bcc-shell__sidebar_collapsed .bcc-nav__item {
+    justify-content: center;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+}
+
+.bcc-shell__sidebar_collapsed .bcc-nav__item lightning-icon {
+    margin: 0;
+}
+
+.bcc-shell__content {
+    flex: 1;
+    min-width: 0;
+    padding: 1.2rem 1.35rem;
+    background: var(--bcc-page-bg);
+    transition: padding 180ms ease;
+}
+
+@media (max-width: 960px) {
+    .bcc-shell {
+        flex-direction: column;
+        min-height: auto;
+    }
+
+    .bcc-shell__sidebar {
+        width: 100%;
+        min-width: 100%;
+        box-shadow: none;
+    }
+
+    .bcc-shell__content {
+        padding: 1rem;
+    }
+}

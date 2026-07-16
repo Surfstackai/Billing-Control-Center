@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomPermission xmlns="http://soap.sforce.com/2006/04/metadata">
+    <description>Grants access to Billing Control Center admin-only navigation and configuration entry points.</description>
+    <isLicensed>false</isLicensed>
+    <label>Billing Control Center Admin Access</label>
+</CustomPermission>

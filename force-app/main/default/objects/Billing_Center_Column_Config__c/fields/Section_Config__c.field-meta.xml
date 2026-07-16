@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Section_Config__c</fullName>
+    <deleteConstraint>SetNull</deleteConstraint>
+    <label>Section Config</label>
+    <referenceTo>Billing_Center_Section_Config__c</referenceTo>
+    <relationshipLabel>Billing Center Column Configs</relationshipLabel>
+    <relationshipName>Billing_Center_Column_Configs</relationshipName>
+    <required>false</required>
+    <trackTrending>false</trackTrending>
+    <type>Lookup</type>
+</CustomField>

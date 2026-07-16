@@ -29,19 +29,13 @@ public with sharing class BillingControlCenterService {
     }
 
     @AuraEnabled(cacheable=true)
-    public static List<BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper> getBillableServiceAppointmentGroups() {
+    public static List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> getBillableServiceAppointmentGroups() {
         return BillingControl_Invoicing.getBillableServiceAppointmentGroups();
     }
 
     @AuraEnabled
-    public static BillingControl_Invoicing.CompleteBillingResultWrapper completeServiceAppointmentBilling(
-        List<Id> serviceAppointmentIds,
-        Map<String, String> invoiceNumberByOpportunityId
-    ) {
-        return BillingControl_Invoicing.completeServiceAppointmentBilling(
-            serviceAppointmentIds,
-            invoiceNumberByOpportunityId
-        );
+    public static BillingControl_Invoicing.CompleteBillingResultWrapper completeServiceAppointmentBilling(List<Id> serviceAppointmentIds) {
+        return BillingControl_Invoicing.completeServiceAppointmentBilling(serviceAppointmentIds, null);
     }
 
     @AuraEnabled
@@ -60,7 +54,7 @@ public with sharing class BillingControlCenterService {
     }
 
     @AuraEnabled(cacheable=true)
-    public static List<BillingControl_Invoicing.SalespersonWrapper> getCommissionData(String subtabType) {
+    public static List<BillingControl_Invoicing.CommissionKpiCategoryWrapper> getCommissionData(String subtabType) {
         return BillingControl_Invoicing.getCommissionData(subtabType);
     }
 
