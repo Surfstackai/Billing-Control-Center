@@ -41,7 +41,9 @@ export default class BillingControlCenterCompleteBillingModal extends LightningE
             }
             const group = mapByOpportunity.get(key);
             group.count += 1;
-            group.totalBillableAmount += row.billableAmount || 0;
+            if (group.count === 1) {
+                group.totalBillableAmount = row.invoiceableOpportunityAmount || 0;
+            }
             group.appointments.push(row);
         }
 
@@ -63,8 +65,8 @@ export default class BillingControlCenterCompleteBillingModal extends LightningE
     }
 
     get totalBillableAmount() {
-        return this.localServiceAppointments.reduce(
-            (sum, row) => sum + (row.billableAmount || 0),
+        return this.opportunityGroups.reduce(
+            (sum, group) => sum + (group.totalBillableAmount || 0),
             0
         );
     }

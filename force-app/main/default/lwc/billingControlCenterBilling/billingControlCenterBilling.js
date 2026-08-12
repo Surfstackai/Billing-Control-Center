@@ -33,7 +33,7 @@ const KPI_CONFIG = [
         developerKey: 'UNINVOICED_REVENUE',
         title: 'Uninvoiced Amount',
         icon: 'utility:money',
-        hint: 'Derived from order diary billable amounts.',
+        hint: 'Current Opportunity Amount, counted once per Opportunity.',
         isCurrency: true
     }
 ];
@@ -154,7 +154,7 @@ function cloneRuntimeData(value) {
 }
 
 function buildRuntimeCacheKey(dateFilter) {
-    return JSON.stringify(dateFilter || { filterKey: 'Today' });
+    return JSON.stringify(dateFilter || null);
 }
 
 function buildConfigMap(records) {
@@ -210,6 +210,39 @@ function buildConfiguredColumns(configColumns) {
     return matchedColumns;
 }
 
+function buildRenderableColumns(columns, sortedBy, sortDirection) {
+    return (columns || []).map((column, index) => {
+        const developerKey = normalizeConfigKey(column.developerKey);
+        const fieldName = column.fieldName || column.configFieldApiName;
+        const isSorted = sortedBy === fieldName;
+        const isAscending = sortDirection === 'asc';
+
+        const isBillableAmount = developerKey === 'OPPORTUNITY_AMOUNT';
+
+        return {
+            ...column,
+            key: `${developerKey || fieldName || 'column'}-${index}`,
+            fieldName,
+            developerKey,
+            isSorted,
+            ariaSort: isSorted ? (isAscending ? 'ascending' : 'descending') : 'none',
+            sortIcon: isAscending ? 'utility:arrowup' : 'utility:arrowdown',
+            sortAltText: isAscending ? 'Sorted ascending' : 'Sorted descending',
+            isAccount: developerKey === 'ACCOUNT',
+            isOpportunity: developerKey === 'OPPORTUNITY',
+            isWorkOrder: developerKey === 'WORK_ORDER',
+            isServiceAppointment: developerKey === 'SERVICE_APPOINTMENTS',
+            isCreatedDate: developerKey === 'CREATED_DATE',
+            isSubject: developerKey === 'SUBJECT',
+            isStatus: developerKey === 'WORK_ORDER_STATUS',
+            isBillableAmount,
+            isOwner: developerKey === 'OWNER',
+            headerClass: `grouped-diary-table__header${isBillableAmount ? ' grouped-diary-table__header--billable-amount' : ''}`,
+            cellClass: `grouped-diary-table__cell${isBillableAmount ? ' grouped-diary-table__cell--billable-amount' : ''}`
+        };
+    });
+}
+
 function accountRecordUrl(accountId) {
     if (!accountId) {
         return null;
@@ -242,6 +275,73 @@ function resolveSortField(fieldName) {
         return 'workOrderNumber';
     }
     return fieldName;
+}
+
+function normalizeAppointmentRows(row) {
+    const relatedServiceAppointments = (
+        row.relatedServiceAppointments && row.relatedServiceAppointments.length
+            ? row.relatedServiceAppointments
+            : [row]
+    ).map((appointment, index) => {
+        const lineKey =
+            appointment.rowKey ||
+            appointment.serviceAppointmentId ||
+            appointment.orderId ||
+            `${row.rowKey || row.workOrderId || 'appointment'}-${index}`;
+
+        return {
+            ...appointment,
+            lineKey,
+            serviceAppointmentUrl: appointment.serviceAppointmentId
+                ? `/lightning/r/ServiceAppointment/${appointment.serviceAppointmentId}/view`
+                : null,
+            createdDateValue: appointment.createdDate
+        };
+    });
+
+    const appointmentSearchTerms = relatedServiceAppointments.reduce((terms, appointment) => {
+        terms.push(
+            appointment.serviceAppointmentDisplay,
+            appointment.serviceAppointmentNumber,
+            appointment.subject,
+            appointment.status,
+            appointment.ownerName
+        );
+        return terms;
+    }, []);
+
+    const searchIndex = [
+        row.accountName,
+        row.opportunityName,
+        row.workOrderNumber,
+        ...appointmentSearchTerms
+    ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+    return {
+        ...row,
+        relatedServiceAppointments,
+        opportunityAmountValue: row.opportunityAmount,
+        hasOpportunityAmount: row.opportunityAmount !== undefined && row.opportunityAmount !== null,
+        serviceAppointmentCount: row.serviceAppointmentCount || relatedServiceAppointments.length,
+        searchIndex
+    };
+}
+
+function rowMatchesSearch(row, searchKey) {
+    if (!searchKey) {
+        return true;
+    }
+    return (row.searchIndex || '').includes(searchKey);
+}
+
+function countAppointments(rows) {
+    return (rows || []).reduce(
+        (sum, row) => sum + (row.serviceAppointmentCount || row.relatedServiceAppointments?.length || 0),
+        0
+    );
 }
 
 function compareRowValues(left, right, fieldName, directionMultiplier) {
@@ -411,10 +511,6 @@ export default class BillingControlCenterBilling extends LightningElement {
         return this.invoicingActionsByKey.COMPLETE_BILLING?.label || DEFAULT_COMPLETE_BILLING_LABEL;
     }
 
-    get externalDateFilterKey() {
-        return this.dateFilter?.filterKey || 'Today';
-    }
-
     get heroActions() {
         if (this.useExternalToolbar) {
             return [];
@@ -509,19 +605,7 @@ export default class BillingControlCenterBilling extends LightningElement {
             let rows = (section.rows || []).map(row => ({ ...row }));
 
             if (q) {
-                rows = rows.filter(row =>
-                    [
-                        row.workOrderNumber,
-                        row.serviceAppointmentDisplay,
-                        row.subject,
-                        row.status,
-                        row.accountName,
-                        row.opportunityName,
-                        row.ownerName
-                    ]
-                        .filter(Boolean)
-                        .some(value => String(value).toLowerCase().includes(q))
-                );
+                rows = rows.filter(row => rowMatchesSearch(row, q));
             }
 
             const categorySort = this.sortState[section.categoryKey] || {
@@ -529,20 +613,26 @@ export default class BillingControlCenterBilling extends LightningElement {
                 sortDirection: 'asc'
             };
             rows = sortWorkOrderRows(rows, categorySort.sortedBy, categorySort.sortDirection);
-
-            const selectedRowKeys = rows
-                .filter(row => row.rowKey && this.selectedRowKeys.has(row.rowKey))
-                .map(row => row.rowKey);
+            rows = rows.map(row => ({
+                ...row,
+                isSelected: row.rowKey ? this.selectedRowKeys.has(row.rowKey) : false
+            }));
+            const visibleAppointmentCount = countAppointments(rows);
 
             return {
                 categoryKey: section.categoryKey,
                 categoryLabel: section.categoryLabel,
-                titleWithCount: `${section.categoryLabel} (${rows.length})`,
+                titleWithCount: `${section.categoryLabel} (${visibleAppointmentCount})`,
                 filteredRows: rows,
                 isEmpty: rows.length === 0,
                 sortedBy: categorySort.sortedBy,
                 sortDirection: categorySort.sortDirection,
-                selectedRowKeys
+                columns: buildRenderableColumns(
+                    this.workOrderColumns,
+                    categorySort.sortedBy,
+                    categorySort.sortDirection
+                ),
+                visibleAppointmentCount
             };
         });
     }
@@ -564,7 +654,9 @@ export default class BillingControlCenterBilling extends LightningElement {
             }
         }
 
-        return this.accordionSections.filter(section => section.categoryKey !== 'UNBILLED_REVENUE');
+        return this.accordionSections.filter(
+            section => section.categoryKey !== 'AGED_COMPLETED' && section.categoryKey !== 'UNBILLED_REVENUE'
+        );
     }
 
     get completeBillingModalSelections() {
@@ -577,7 +669,8 @@ export default class BillingControlCenterBilling extends LightningElement {
             workOrderNumber: row.workOrderNumber,
             completionDateTime: row.completionDateTime,
             technicianName: row.technicianName,
-            billableAmount: row.billableAmount
+            opportunityAmount: row.opportunityAmount,
+            invoiceableOpportunityAmount: row.invoiceableOpportunityAmount
         }));
     }
 
@@ -591,10 +684,10 @@ export default class BillingControlCenterBilling extends LightningElement {
 
     get searchSummary() {
         if (!this.searchKey.trim()) {
-            return `${this.totalWorkOrderRows} records across buckets`;
+            return `${this.totalWorkOrderRows} work order rows across buckets`;
         }
         const shownCount = this.visibleAccordionSections.reduce((sum, section) => sum + section.filteredRows.length, 0);
-        return `Showing ${shownCount} matching records`;
+        return `Showing ${shownCount} matching work order rows`;
     }
 
     handleSearchChange(event) {
@@ -634,14 +727,6 @@ export default class BillingControlCenterBilling extends LightningElement {
         await this.handleRefresh();
     }
 
-    handleExternalDateFilterChange(event) {
-        this.dispatchEvent(
-            new CustomEvent('datefilterchange', {
-                detail: event.detail
-            })
-        );
-    }
-
     handleHeroActionClick(event) {
         if (event.detail?.key === 'refresh') {
             this.handleRefresh();
@@ -666,22 +751,26 @@ export default class BillingControlCenterBilling extends LightningElement {
         };
     }
 
-    handleWorkOrderSort(event) {
-        const categoryKey = this.readBucketKeyFromEvent(event);
-        if (!categoryKey || !this.sortState[categoryKey]) {
+    handleHeaderSort(event) {
+        const categoryKey = event.currentTarget?.dataset?.bucket;
+        const fieldName = event.currentTarget?.dataset?.field;
+        if (!categoryKey || !fieldName || !this.sortState[categoryKey]) {
             return;
         }
 
-        const { fieldName, sortDirection } = event.detail;
+        const currentSort = this.sortState[categoryKey];
+        const sortDirection =
+            currentSort.sortedBy === fieldName && currentSort.sortDirection === 'asc' ? 'desc' : 'asc';
         this.sortState = {
             ...this.sortState,
             [categoryKey]: { sortedBy: fieldName, sortDirection }
         };
     }
 
-    handleRowSelection(event) {
-        const categoryKey = this.readBucketKeyFromEvent(event);
-        if (!categoryKey) {
+    handleGroupSelection(event) {
+        const categoryKey = event.currentTarget?.dataset?.bucket;
+        const rowKey = event.currentTarget?.dataset?.rowKey;
+        if (!categoryKey || !rowKey) {
             return;
         }
 
@@ -691,31 +780,14 @@ export default class BillingControlCenterBilling extends LightningElement {
         }
 
         const nextSelection = new Set(this.selectedRowKeys);
-
-        for (const row of section.rows || []) {
-            if (row.rowKey) {
-                nextSelection.delete(row.rowKey);
-            }
-        }
-
-        for (const row of event.detail.selectedRows || []) {
-            if (row && row.rowKey) {
-                nextSelection.add(row.rowKey);
-            }
+        if (event.target.checked) {
+            nextSelection.add(rowKey);
+        } else {
+            nextSelection.delete(rowKey);
         }
 
         this.selectedRowKeys = nextSelection;
         this.selectedServiceAppointments = this.buildSelectedServiceAppointments();
-    }
-
-    readBucketKeyFromEvent(event) {
-        const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
-        for (const node of path) {
-            if (node && node.dataset && node.dataset.bucket) {
-                return node.dataset.bucket;
-            }
-        }
-        return null;
     }
 
     async loadData(forceRefresh = false) {
@@ -734,7 +806,7 @@ export default class BillingControlCenterBilling extends LightningElement {
 
             const runtimeData = await getInvoicingRuntimeData({
                 refreshToken,
-                dateFilter: this.dateFilter
+                dateFilter: this.dateFilter || null
             });
             invoicingRuntimeCache.set(cacheKey, cloneRuntimeData(runtimeData));
             this.applyRuntimeData(runtimeData);
@@ -820,23 +892,24 @@ export default class BillingControlCenterBilling extends LightningElement {
                     row.rowKey ||
                     row.serviceAppointmentId ||
                     (row.orderId ? `ORDER-${row.orderId}` : row.workOrderId ? `WO-${row.workOrderId}-${index}` : `${section.categoryKey}-${index}`);
-                const relatedServiceAppointments = (row.relatedServiceAppointments || []).map(appointment => ({
-                    ...appointment,
-                    accountName: appointment.accountName || row.accountName,
-                    opportunityId: appointment.opportunityId || row.opportunityId,
-                    opportunityName: appointment.opportunityName || row.opportunityName,
-                    workOrderNumber: appointment.workOrderNumber || row.workOrderNumber
-                }));
-
                 return {
-                    ...row,
-                    rowKey,
-                    accountUrl: accountRecordUrl(row.accountId),
-                    opportunityUrl: opportunityRecordUrl(row.opportunityId),
-                    workOrderUrl: workOrderRecordUrl(row.workOrderId),
-                    serviceAppointmentDisplay:
-                        row.serviceAppointmentDisplay || row.serviceAppointmentNumber || row.serviceAppointmentId,
-                    relatedServiceAppointments
+                    ...normalizeAppointmentRows({
+                        ...row,
+                        rowKey,
+                        accountUrl: accountRecordUrl(row.accountId),
+                        opportunityUrl: opportunityRecordUrl(row.opportunityId),
+                        workOrderUrl: workOrderRecordUrl(row.workOrderId),
+                        serviceAppointmentDisplay:
+                            row.serviceAppointmentDisplay || row.serviceAppointmentNumber || row.serviceAppointmentId,
+                        relatedServiceAppointments: (row.relatedServiceAppointments || []).map(appointment => ({
+                            ...appointment,
+                            accountName: appointment.accountName || row.accountName,
+                            opportunityId: appointment.opportunityId || row.opportunityId,
+                            opportunityName: appointment.opportunityName || row.opportunityName,
+                            workOrderNumber: appointment.workOrderNumber || row.workOrderNumber
+                        }))
+                    }),
+                    rowKey
                 };
             }),
             opportunityGroups: (section.opportunityGroups || []).map(group => ({
@@ -876,23 +949,32 @@ export default class BillingControlCenterBilling extends LightningElement {
                     continue;
                 }
 
-                const serviceAppointmentId = row.serviceAppointmentId;
-                if (!serviceAppointmentId || seenServiceAppointmentIds.has(serviceAppointmentId)) {
-                    continue;
-                }
+                const appointments =
+                    row.relatedServiceAppointments && row.relatedServiceAppointments.length
+                        ? row.relatedServiceAppointments
+                        : [row];
 
-                seenServiceAppointmentIds.add(serviceAppointmentId);
-                selectedRows.push({
-                    serviceAppointmentId,
-                    serviceAppointmentNumber: row.serviceAppointmentNumber,
-                    opportunityId: row.opportunityId,
-                    opportunityName: row.opportunityName,
-                    accountName: row.accountName,
-                    workOrderNumber: row.workOrderNumber,
-                    completionDateTime: row.completionDateTime,
-                    technicianName: row.technicianName,
-                    billableAmount: row.billableAmount
-                });
+                for (const appointment of appointments) {
+                    const serviceAppointmentId = appointment.serviceAppointmentId;
+                    if (!serviceAppointmentId || seenServiceAppointmentIds.has(serviceAppointmentId)) {
+                        continue;
+                    }
+
+                    seenServiceAppointmentIds.add(serviceAppointmentId);
+                    selectedRows.push({
+                        serviceAppointmentId,
+                        serviceAppointmentNumber: appointment.serviceAppointmentNumber,
+                        opportunityId: appointment.opportunityId || row.opportunityId,
+                        opportunityName: appointment.opportunityName || row.opportunityName,
+                        accountName: appointment.accountName || row.accountName,
+                        workOrderNumber: appointment.workOrderNumber || row.workOrderNumber,
+                        completionDateTime: appointment.completionDateTime,
+                        technicianName: appointment.technicianName || row.technicianName,
+                        opportunityAmount: appointment.opportunityAmount ?? row.opportunityAmount,
+                        invoiceableOpportunityAmount:
+                            appointment.invoiceableOpportunityAmount ?? row.invoiceableOpportunityAmount
+                    });
+                }
             }
         }
 

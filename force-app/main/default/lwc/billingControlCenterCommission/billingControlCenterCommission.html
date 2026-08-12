@@ -8,11 +8,6 @@
             </div>
             <template if:true={useExternalToolbar}>
                 <div class="hero__controls">
-                    <c-billing-control-center-date-filter
-                        compact
-                        selected-filter-key={externalDateFilterKey}
-                        ondatefilterchange={handleExternalDateFilterChange}>
-                    </c-billing-control-center-date-filter>
                     <lightning-button
                         label={refreshLabel}
                         icon-name="utility:refresh"

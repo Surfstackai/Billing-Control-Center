@@ -86,23 +86,17 @@
         <main class="bcc-shell__content">
             <template if:true={isOrdersActive}>
                 <c-billing-control-center-orders
-                    date-filter={globalDateFilter}
-                    use-external-toolbar
-                    ondatefilterchange={handleDateFilterChange}>
+                    use-external-toolbar>
                 </c-billing-control-center-orders>
             </template>
             <template if:true={isInvoicingActive}>
                 <c-billing-control-center-billing
-                    date-filter={globalDateFilter}
-                    use-external-toolbar
-                    ondatefilterchange={handleDateFilterChange}>
+                    use-external-toolbar>
                 </c-billing-control-center-billing>
             </template>
             <template if:true={isReceivablesActive}>
                 <c-billing-control-center-commission
-                    date-filter={globalDateFilter}
-                    use-external-toolbar
-                    ondatefilterchange={handleDateFilterChange}>
+                    use-external-toolbar>
                 </c-billing-control-center-commission>
             </template>
         </main>

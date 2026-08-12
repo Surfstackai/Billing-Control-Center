@@ -51,7 +51,6 @@ export default class BillingControlCenterShell extends NavigationMixin(Lightning
     adminNavItems = [];
     activeTabKey = 'ORDERS';
     isSidebarCollapsed = false;
-    selectedDateFilterKey = 'Today';
 
     connectedCallback() {
         this.loadShellConfig();
@@ -91,12 +90,6 @@ export default class BillingControlCenterShell extends NavigationMixin(Lightning
 
     get toggleAlternativeText() {
         return this.isSidebarCollapsed ? 'Expand navigation' : 'Collapse navigation';
-    }
-
-    get globalDateFilter() {
-        return {
-            filterKey: this.selectedDateFilterKey
-        };
     }
 
     async loadShellConfig() {
@@ -217,10 +210,6 @@ export default class BillingControlCenterShell extends NavigationMixin(Lightning
 
     handleToggleSidebar() {
         this.isSidebarCollapsed = !this.isSidebarCollapsed;
-    }
-
-    handleDateFilterChange(event) {
-        this.selectedDateFilterKey = event.detail?.filterKey || 'Today';
     }
 
     async handleNavClick(event) {

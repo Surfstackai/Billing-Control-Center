@@ -117,8 +117,12 @@ private class BillingControl_DataProviderTest {
         System.assertEquals(dmlBefore, dmlAfter);
         System.assertEquals(2, ordersData.filterContext.filters.size());
         System.assertEquals(4, invoicingData.filterContext.filters.size());
-        System.assertEquals(3, countOrderRows(ordersData.bucketSections));
-        System.assertEquals(1, invoicingData.metrics.readyToBill);
+        System.assertEquals(
+            2,
+            countOrderRows(ordersData.bucketSections),
+            'The draft diary appears in Unscheduled and in Scheduled for Today because its Service Appointment is yesterday.'
+        );
+        System.assertEquals(4, invoicingData.metrics.readyToBill, 'Eligibility is driven by related SA/WO values, not legacy diary flags.');
         System.assertEquals(1, receivablesData.metrics.revenueUnderCollectionCount);
     }
 
@@ -140,7 +144,7 @@ private class BillingControl_DataProviderTest {
         Test.stopTest();
 
         System.assertEquals(0, invoicingData.filterContext.filters.size());
-        System.assertEquals(1, invoicingData.metrics.readyToBill);
+        System.assertEquals(4, invoicingData.metrics.readyToBill, 'Disabling legacy configuration must not change SA/WO eligibility.');
     }
 
     @IsTest
@@ -283,7 +287,7 @@ private class BillingControl_DataProviderTest {
                 System.assertEquals(Date.today(), row.effectiveDate);
             }
         }
-        System.assertEquals(1, invoicingData.metrics.readyToBill);
+        System.assertEquals(4, invoicingData.metrics.readyToBill, 'Invoicing does not apply the page date filter.');
         System.assertEquals(0, receivablesData.metrics.revenueUnderCollectionCount);
         System.assertEquals(1, receivablesData.metrics.commissionPayableCount);
     }
@@ -316,7 +320,8 @@ private class BillingControl_DataProviderTest {
         BillingControl_Orders.KpiWrapper filteredKpis = BillingControl_Orders.getKpis(21L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(1, countOrderRows(sections));
+        System.assertEquals(2, countOrderRows(sections),
+            'The filtered draft diary is also eligible for the yesterday-based Scheduled for Today bucket.');
         System.assertEquals(1, filteredKpis.unscheduledCount);
     }
 
@@ -337,10 +342,10 @@ private class BillingControl_DataProviderTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(41L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(1, metrics.readyToBill);
+        System.assertEquals(4, metrics.readyToBill, 'The effective-date fixture contains four SA/WO-eligible diaries.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
             if (groupRecord.categoryKey == 'READY_TO_BILL') {
-                System.assertEquals(1, groupRecord.serviceAppointmentCount);
+                System.assertEquals(4, groupRecord.serviceAppointmentCount);
             }
         }
     }
@@ -384,13 +389,102 @@ private class BillingControl_DataProviderTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(42L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(1, metrics.readyToBill);
+        System.assertEquals(3, metrics.readyToBill, 'Legacy Invoiced Amount filters do not exclude SA/WO-eligible records.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
             if (groupRecord.categoryKey == 'READY_TO_BILL') {
-                System.assertEquals(1, groupRecord.serviceAppointmentCount);
+                System.assertEquals(3, groupRecord.serviceAppointmentCount);
                 System.assert(groupRecord.totalBillableAmount > 0);
             }
         }
+    }
+
+    @IsTest
+    static void directInvoicingGroupsRowsByWorkOrderButKeepsServiceAppointmentCounts() {
+        Order readyOrder = [
+            SELECT Id, AccountId, OpportunityId, Work_Order__c, EffectiveDate
+            FROM Order
+            WHERE Billing_Diary_Status__c = 'Ready to Bill'
+            AND Ready_For_Billing__c = true
+            ORDER BY CreatedDate DESC
+            LIMIT 1
+        ];
+        WorkOrder readyWorkOrder = [
+            SELECT Id, WorkTypeId
+            FROM WorkOrder
+            WHERE Id = :readyOrder.Work_Order__c
+            LIMIT 1
+        ];
+        Id standardPricebookId = Test.getStandardPricebookId();
+
+        List<ServiceAppointment> groupedAppointments = new List<ServiceAppointment>();
+        for (Integer indexValue = 0; indexValue < 2; indexValue++) {
+            Datetime completionDateTime = Datetime.newInstance(
+                readyOrder.EffectiveDate,
+                Time.newInstance(11 + indexValue, 0, 0, 0)
+            );
+            groupedAppointments.add(new ServiceAppointment(
+                ParentRecordId = readyWorkOrder.Id,
+                Status = 'Completed',
+                SchedStartTime = completionDateTime,
+                SchedEndTime = completionDateTime.addHours(1),
+                ActualEndTime = completionDateTime,
+                Subject = 'Grouped Ready SA ' + indexValue,
+                Opportunity__c = readyOrder.OpportunityId
+            ));
+        }
+        insert groupedAppointments;
+
+        List<Order> groupedOrders = new List<Order>();
+        for (Integer indexValue = 0; indexValue < groupedAppointments.size(); indexValue++) {
+            groupedOrders.add(
+                buildOrder(
+                    readyOrder.AccountId,
+                    readyOrder.OpportunityId,
+                    standardPricebookId,
+                    readyWorkOrder.Id,
+                    groupedAppointments[indexValue].Id,
+                    'Ready to Bill',
+                    true,
+                    150 + indexValue,
+                    0,
+                    0,
+                    readyOrder.EffectiveDate
+                )
+            );
+        }
+        insert groupedOrders;
+
+        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
+        filterContext.tabKey = 'INVOICING';
+        filterContext.datasetKey = 'INVOICING_SERVICE_APPOINTMENTS';
+        filterContext.filters.add(
+            buildFilter('READY_ONLY', 'Order', 'Billing_Diary_Status__c', 'Equals', 'Ready to Bill', 'Static', 10)
+        );
+
+        Test.startTest();
+        BillingControl_Invoicing.BillingControlMetricsWrapper metrics =
+            BillingControl_Invoicing.getServiceAppointmentBillingMetricsWithRefresh(43L, filterContext);
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> groups =
+            BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(43L, filterContext);
+        Test.stopTest();
+
+        BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper readyToBillGroup = findInvoicingGroup(
+            groups,
+            'READY_TO_BILL'
+        );
+
+        System.assertNotEquals(null, readyToBillGroup);
+        System.assertEquals(6, metrics.readyToBill);
+        System.assertEquals(6, readyToBillGroup.serviceAppointmentCount);
+        System.assertEquals(4, readyToBillGroup.rows.size());
+        BillingControl_Invoicing.ServiceAppointmentRowWrapper groupedWorkOrderRow;
+        for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : readyToBillGroup.rows) {
+            if (row.workOrderId == readyWorkOrder.Id) groupedWorkOrderRow = row;
+        }
+        System.assertNotEquals(null, groupedWorkOrderRow);
+        System.assertEquals(3, groupedWorkOrderRow.relatedServiceAppointments.size());
+        System.assertEquals(3, groupedWorkOrderRow.serviceAppointmentCount);
     }
 
     @IsTest
@@ -453,9 +547,9 @@ private class BillingControl_DataProviderTest {
         Test.stopTest();
 
         System.assertEquals(
-            2,
+            5,
             invoicingData.metrics.readyToBill,
-            'Active Equals 0 invoicing filters should also include Order diary rows where Invoiced_Amount__c is null.'
+            'Eligibility must include SA/WO-eligible records regardless of legacy Invoiced Amount configuration.'
         );
     }
 

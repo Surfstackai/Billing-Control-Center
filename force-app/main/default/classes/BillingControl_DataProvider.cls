@@ -76,14 +76,6 @@ public with sharing class BillingControl_DataProvider {
         BillingControl_ConfigService.TabConfigDTO tabConfig = BillingControl_ConfigService.getTabConfig(INVOICING_TAB_KEY);
         BillingControl_ConfigService.DatasetConfigDTO datasetConfig = findDataset(tabConfig, INVOICING_DATASET_KEY);
         result.filterContext = buildFilterContext(tabConfig, datasetConfig, result.warnings);
-        applyDateFilterToContext(
-            result.filterContext,
-            dateFilter,
-            'ServiceAppointment',
-            'ActualEndTime',
-            true,
-            result.warnings
-        );
 
         if (isDatasetConfiguredForHandlers(datasetConfig, INVOICING_DATASET_KEY, INVOICING_SUPPORTED_HANDLER_KEYS, result.warnings)) {
             loadInvoicingRuntimeData(refreshToken, result);

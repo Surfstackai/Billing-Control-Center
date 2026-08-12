@@ -325,9 +325,9 @@ private class BillingControlCenterServiceTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroups();
         Test.stopTest();
 
-        System.assertEquals(1, metrics.completedMoreThan2Days, 'One unbilled completed appointment should be older than two days.');
-        System.assertEquals(2, metrics.readyToBill, 'Two unbilled completed appointments should be ready to bill.');
-        System.assertEquals(300, metrics.unbilledRevenue, 'Uninvoiced revenue should sum unique opportunity amounts.');
+        System.assertEquals(0, metrics.completedMoreThan2Days, 'Invoicing eligibility must not use an aged ActualEndTime bucket.');
+        System.assertEquals(5, metrics.readyToBill, 'All SA/WO-eligible diary records qualify regardless of legacy diary values.');
+        System.assertEquals(1000, metrics.unbilledRevenue, 'Revenue deduplicates current Opportunity amounts across the expanded population.');
 
         System.assertEquals(3, sections.size(), 'Appointments should be returned in the three KPI-backed sections.');
         Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sectionByKey =
@@ -336,13 +336,13 @@ private class BillingControlCenterServiceTest {
             sectionByKey.put(section.categoryKey, section);
         }
 
-        System.assertEquals(1, sectionByKey.get('AGED_COMPLETED').serviceAppointmentCount, 'Aged section should only include appointments older than two days.');
-        System.assertEquals(100, sectionByKey.get('AGED_COMPLETED').totalBillableAmount, 'Aged section should total only its contributing appointment.');
-        System.assertEquals(2, sectionByKey.get('READY_TO_BILL').serviceAppointmentCount, 'Ready-to-bill section should include all completed unbilled appointments.');
-        System.assertEquals(300, sectionByKey.get('READY_TO_BILL').totalBillableAmount, 'Ready-to-bill section should total all completed unbilled appointments.');
+        System.assertEquals(0, sectionByKey.get('AGED_COMPLETED').serviceAppointmentCount, 'The retained response-shape category is not an eligibility section.');
+        System.assertEquals(0, sectionByKey.get('AGED_COMPLETED').totalBillableAmount, 'Invoicing must not calculate revenue from an ActualEndTime bucket.');
+        System.assertEquals(5, sectionByKey.get('READY_TO_BILL').serviceAppointmentCount, 'Ready-to-bill section should include all SA/WO-eligible appointments.');
+        System.assertEquals(1000, sectionByKey.get('READY_TO_BILL').totalBillableAmount, 'Ready-to-bill section revenue uses deduplicated Opportunities.');
         System.assertEquals(2, sectionByKey.get('READY_TO_BILL').rows.size(), 'Ready-to-bill table rows should remain one row per selected Order diary record.');
-        System.assertEquals(2, sectionByKey.get('UNBILLED_REVENUE').serviceAppointmentCount, 'Revenue section should include the appointments contributing to the revenue sum.');
-        System.assertEquals(300, sectionByKey.get('UNBILLED_REVENUE').totalBillableAmount, 'Revenue section should match the uninvoiced revenue KPI.');
+        System.assertEquals(5, sectionByKey.get('UNBILLED_REVENUE').serviceAppointmentCount, 'Revenue section should include the SA/WO-eligible appointments contributing to the KPI.');
+        System.assertEquals(1000, sectionByKey.get('UNBILLED_REVENUE').totalBillableAmount, 'Revenue section should match the deduplicated KPI.');
 
         Set<Id> readyRowAppointmentIds = new Set<Id>();
         for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : sectionByKey.get('READY_TO_BILL').rows) {
@@ -511,7 +511,7 @@ private class BillingControlCenterServiceTest {
         System.assertEquals(2, createdInvoiceLines.size(), 'Each billed appointment should create one invoice line.');
         for (Invoice_Line__c invoiceLineRecord : createdInvoiceLines) {
             System.assertNotEquals(null, invoiceLineRecord.Billing_Order__c, 'Invoice lines must stay linked to the billed Order diary row.');
-            System.assert(invoiceLineRecord.Line_Total__c > 0, 'Invoice lines should use positive Order diary billable amounts.');
+            System.assert(invoiceLineRecord.Line_Total__c > 0, 'Invoice lines should use positive current Opportunity-based allocations.');
         }
         Set<Id> billedOrderIds = new Set<Id>();
         for (Invoice_Line__c invoiceLineRecord : createdInvoiceLines) {
@@ -590,7 +590,7 @@ private class BillingControlCenterServiceTest {
     }
 
     @isTest
-    static void testCompleteServiceAppointmentBillingUsesOrderBillableAmount() {
+    static void testCompleteServiceAppointmentBillingUsesCurrentOpportunityAmount() {
         ServiceAppointment appointmentToBill = [
             SELECT Id, Opportunity__c
             FROM ServiceAppointment
@@ -623,7 +623,7 @@ private class BillingControlCenterServiceTest {
             AND Invoice_Number__c = 'ORDER-AMOUNT-001'
             LIMIT 1
         ];
-        System.assertEquals(100, createdInvoice.Total_Amount__c, 'Invoice totals must use Order.Billable_Amount__c, not Opportunity.Amount.');
+        System.assertEquals(9999, createdInvoice.Total_Amount__c, 'Invoice totals must use the current Opportunity.Amount, not the stale diary amount.');
 
         Invoice_Line__c createdInvoiceLine = [
             SELECT Line_Total__c, Billing_Order__r.Billable_Amount__c
@@ -631,8 +631,139 @@ private class BillingControlCenterServiceTest {
             WHERE Invoice__c = :createdInvoice.Id
             LIMIT 1
         ];
-        System.assertEquals(100, createdInvoiceLine.Line_Total__c);
-        System.assertEquals(createdInvoiceLine.Billing_Order__r.Billable_Amount__c, createdInvoiceLine.Line_Total__c);
+        System.assertEquals(9999, createdInvoiceLine.Line_Total__c);
+        System.assertEquals(100, createdInvoiceLine.Billing_Order__r.Billable_Amount__c, 'The stale diary amount must remain unchanged.');
+    }
+
+    @isTest
+    static void testCompleteBillingAllocatesCurrentOpportunityAmountOnceAcrossSelectedAppointments() {
+        Account accountRecord = [SELECT Id FROM Account WHERE Name = 'Billing Control Center Test Account' LIMIT 1];
+        WorkType workTypeRecord = [SELECT Id FROM WorkType LIMIT 1];
+        Id standardPricebookId = Test.getStandardPricebookId();
+
+        Opportunity opportunityRecord = new Opportunity(
+            Name = 'Current Amount Allocation Opportunity',
+            AccountId = accountRecord.Id,
+            StageName = 'Closed Won',
+            Amount = 100,
+            CloseDate = Date.today().addDays(10),
+            Billing_Status__c = 'Ready for Billing',
+            Work_Type__c = workTypeRecord.Id,
+            Do_not_create_Work_Order__c = true
+        );
+        insert opportunityRecord;
+
+        List<WorkOrder> workOrders = new List<WorkOrder>{
+            new WorkOrder(Subject = 'Allocation Work Order One', Status = 'New', AccountId = accountRecord.Id, WorkTypeId = workTypeRecord.Id),
+            new WorkOrder(Subject = 'Allocation Work Order Two', Status = 'New', AccountId = accountRecord.Id, WorkTypeId = workTypeRecord.Id)
+        };
+        insert workOrders;
+
+        Datetime startTime = System.now().addHours(-8);
+        List<ServiceAppointment> appointments = new List<ServiceAppointment>{
+            new ServiceAppointment(ParentRecordId = workOrders[0].Id, Status = 'Completed', SchedStartTime = startTime, SchedEndTime = startTime.addHours(1), ActualEndTime = startTime.addHours(1), Subject = 'Allocation SA One'),
+            new ServiceAppointment(ParentRecordId = workOrders[0].Id, Status = 'Completed', SchedStartTime = startTime.addHours(2), SchedEndTime = startTime.addHours(3), ActualEndTime = startTime.addHours(3), Subject = 'Allocation SA Two'),
+            new ServiceAppointment(ParentRecordId = workOrders[1].Id, Status = 'Completed', SchedStartTime = startTime.addHours(4), SchedEndTime = startTime.addHours(5), ActualEndTime = startTime.addHours(5), Subject = 'Allocation SA Three'),
+            new ServiceAppointment(ParentRecordId = workOrders[0].Id, Status = 'Completed', SchedStartTime = startTime.addHours(-2), SchedEndTime = startTime.addHours(-1), ActualEndTime = startTime.addHours(-1), Subject = 'Historical Allocation SA', Invoice_Number__c = 'HIST-ALLOCATION-001')
+        };
+        insert appointments;
+
+        List<Order> diaryOrders = new List<Order>{
+            new Order(AccountId = accountRecord.Id, OpportunityId = opportunityRecord.Id, EffectiveDate = Date.today(), Status = 'Draft', Pricebook2Id = standardPricebookId, Work_Order__c = workOrders[0].Id, Service_Appointment__c = appointments[0].Id, Technician__c = UserInfo.getUserId(), Billing_Diary_Status__c = 'Ready to Bill', Ready_For_Billing__c = true, Billable_Amount__c = 125, Invoiced_Amount__c = 0, Received_Amount__c = 0),
+            new Order(AccountId = accountRecord.Id, OpportunityId = opportunityRecord.Id, EffectiveDate = Date.today(), Status = 'Draft', Pricebook2Id = standardPricebookId, Work_Order__c = workOrders[0].Id, Service_Appointment__c = appointments[1].Id, Technician__c = UserInfo.getUserId(), Billing_Diary_Status__c = 'Ready to Bill', Ready_For_Billing__c = true, Billable_Amount__c = 150, Invoiced_Amount__c = 0, Received_Amount__c = 0),
+            new Order(AccountId = accountRecord.Id, OpportunityId = opportunityRecord.Id, EffectiveDate = Date.today(), Status = 'Draft', Pricebook2Id = standardPricebookId, Work_Order__c = workOrders[1].Id, Service_Appointment__c = appointments[2].Id, Technician__c = UserInfo.getUserId(), Billing_Diary_Status__c = 'Ready to Bill', Ready_For_Billing__c = true, Billable_Amount__c = 200, Invoiced_Amount__c = 0, Received_Amount__c = 0),
+            new Order(AccountId = accountRecord.Id, OpportunityId = opportunityRecord.Id, EffectiveDate = Date.today(), Status = 'Draft', Pricebook2Id = standardPricebookId, Work_Order__c = workOrders[0].Id, Service_Appointment__c = appointments[3].Id, Technician__c = UserInfo.getUserId(), Billing_Diary_Status__c = 'Invoiced', Ready_For_Billing__c = false, Billable_Amount__c = 25, Invoiced_Amount__c = 25, Received_Amount__c = 0)
+        };
+        insert diaryOrders;
+
+        // This simulates a prior partial invoice. The selected batch must invoice only the newly remaining value.
+        Invoice__c historicalInvoice = new Invoice__c(
+            Invoice_Number__c = 'HIST-ALLOCATION-001', Opportunity__c = opportunityRecord.Id, Account__c = accountRecord.Id,
+            Status__c = 'Sent', Invoice_Date__c = Date.today(), Due_Date__c = Date.today().addDays(30),
+            Subtotal__c = 25, Tax_Amount__c = 0, Total_Amount__c = 25, Amount_Paid__c = 0, Balance_Due__c = 25
+        );
+        insert historicalInvoice;
+        insert new Invoice_Line__c(
+            Invoice__c = historicalInvoice.Id, Opportunity__c = opportunityRecord.Id, Work_Order__c = workOrders[0].Id,
+            Service_Appointment__c = appointments[3].Id, Billing_Order__c = diaryOrders[3].Id, Description__c = 'Historical partial amount',
+            Quantity__c = 1, Unit_Price__c = 25, Line_Total__c = 25
+        );
+
+        // Opportunity.Amount changed after its diary rows were created; diary amounts remain intentionally stale.
+        update new Opportunity(Id = opportunityRecord.Id, Amount = 125);
+
+        Test.startTest();
+        BillingControl_Invoicing.CompleteBillingResultWrapper result = BillingControl_Invoicing.completeServiceAppointmentBilling(
+            new List<Id>{ appointments[0].Id, appointments[1].Id, appointments[2].Id },
+            new Map<String, String>{ String.valueOf(opportunityRecord.Id) => 'CURRENT-ALLOCATION-001' }
+        );
+        Test.stopTest();
+
+        System.assertEquals(1, result.invoicesCreated, 'All selected SAs for one Opportunity must create one invoice header.');
+        Invoice__c createdInvoice = [
+            SELECT Id, Subtotal__c, Total_Amount__c, Balance_Due__c
+            FROM Invoice__c
+            WHERE Invoice_Number__c = 'CURRENT-ALLOCATION-001'
+            LIMIT 1
+        ];
+        System.assertEquals(100, createdInvoice.Subtotal__c, 'Invoice value must be current Opportunity.Amount less the existing invoice-line value.');
+        System.assertEquals(createdInvoice.Subtotal__c, createdInvoice.Total_Amount__c);
+        System.assertEquals(createdInvoice.Total_Amount__c, createdInvoice.Balance_Due__c);
+
+        List<Invoice_Line__c> createdLines = [
+            SELECT Billing_Order__c, Line_Total__c
+            FROM Invoice_Line__c
+            WHERE Invoice__c = :createdInvoice.Id
+        ];
+        System.assertEquals(3, createdLines.size(), 'One traceability line must remain for each selected Service Appointment.');
+        Decimal lineTotal = 0;
+        for (Invoice_Line__c createdLine : createdLines) {
+            lineTotal += createdLine.Line_Total__c;
+        }
+        System.assertEquals(100, lineTotal, 'Selected SAs and Work Orders must not multiply the Opportunity value.');
+
+        Set<Id> selectedDiaryOrderIds = new Set<Id>{ diaryOrders[0].Id, diaryOrders[1].Id, diaryOrders[2].Id };
+        List<Order> updatedOrders = [
+            SELECT Billable_Amount__c, Invoiced_Amount__c
+            FROM Order
+            WHERE Id IN :selectedDiaryOrderIds
+        ];
+        Decimal invoicedOrderTotal = 0;
+        for (Order updatedOrder : updatedOrders) {
+            System.assert(updatedOrder.Billable_Amount__c == 125 || updatedOrder.Billable_Amount__c == 150 || updatedOrder.Billable_Amount__c == 200);
+            invoicedOrderTotal += updatedOrder.Invoiced_Amount__c;
+        }
+        System.assertEquals(100, invoicedOrderTotal, 'Order invoiced amounts must reconcile to the generated invoice lines, not stale diary values.');
+    }
+
+    @isTest
+    static void testCompleteBillingRejectsReadyDiaryOrderWithoutOpportunity() {
+        Account accountRecord = [SELECT Id FROM Account WHERE Name = 'Billing Control Center Test Account' LIMIT 1];
+        WorkType workTypeRecord = [SELECT Id FROM WorkType LIMIT 1];
+        WorkOrder workOrderRecord = new WorkOrder(Subject = 'No Opportunity Billing Work Order', Status = 'New', AccountId = accountRecord.Id, WorkTypeId = workTypeRecord.Id);
+        insert workOrderRecord;
+        Datetime startTime = System.now().addHours(-2);
+        ServiceAppointment appointmentRecord = new ServiceAppointment(
+            ParentRecordId = workOrderRecord.Id, Status = 'Completed', SchedStartTime = startTime,
+            SchedEndTime = startTime.addHours(1), ActualEndTime = startTime.addHours(1), Subject = 'No Opportunity Billing SA'
+        );
+        insert appointmentRecord;
+        insert new Order(
+            AccountId = accountRecord.Id, EffectiveDate = Date.today(), Status = 'Draft', Pricebook2Id = Test.getStandardPricebookId(),
+            Work_Order__c = workOrderRecord.Id, Service_Appointment__c = appointmentRecord.Id, Technician__c = UserInfo.getUserId(),
+            Billing_Diary_Status__c = 'Ready to Bill', Ready_For_Billing__c = true, Billable_Amount__c = 500, Invoiced_Amount__c = 0, Received_Amount__c = 0
+        );
+
+        Test.startTest();
+        try {
+            BillingControl_Invoicing.completeServiceAppointmentBilling(
+                new List<Id>{ appointmentRecord.Id }, new Map<String, String>()
+            );
+            System.assert(false, 'A ready diary row without Order.OpportunityId must not be billed.');
+        } catch (AuraHandledException exceptionRecord) {
+            System.assert(exceptionRecord.getMessage().contains('Order.OpportunityId'));
+        }
+        Test.stopTest();
     }
 
     @isTest
@@ -736,7 +867,7 @@ private class BillingControlCenterServiceTest {
             WHERE Invoice_Number__c = 'SCOPED-INV-001'
             LIMIT 1
         ];
-        System.assertEquals(125, createdInvoice.Total_Amount__c, 'Invoice totals should reflect only the selected Order diary amount.');
+        System.assertEquals(123, createdInvoice.Total_Amount__c, 'Invoice totals should reflect the current Opportunity.Amount for the selected opportunity.');
 
         List<Invoice_Line__c> createdInvoiceLines = [
             SELECT Billing_Order__c, Line_Total__c, Service_Appointment__c
@@ -746,7 +877,7 @@ private class BillingControlCenterServiceTest {
         System.assertEquals(1, createdInvoiceLines.size(), 'Only one selected diary row should create an invoice line.');
         System.assertEquals(readyOrder.Id, createdInvoiceLines[0].Billing_Order__c);
         System.assertEquals(readyAppointment.Id, createdInvoiceLines[0].Service_Appointment__c);
-        System.assertEquals(125, createdInvoiceLines[0].Line_Total__c);
+        System.assertEquals(123, createdInvoiceLines[0].Line_Total__c);
 
         ServiceAppointment refreshedReviewAppointment = [
             SELECT Invoice_Number__c
@@ -898,7 +1029,7 @@ private class BillingControlCenterServiceTest {
     }
 
     @isTest
-    static void testCompleteServiceAppointmentBillingRejectsUnresolvedOpportunitySelection() {
+    static void testCompleteServiceAppointmentBillingRejectsSelectionWithoutReadyDiaryOrder() {
         Account accountRecord = [
             SELECT Id
             FROM Account
@@ -932,11 +1063,11 @@ private class BillingControlCenterServiceTest {
                 new List<Id>{ unresolvedAppointment.Id },
                 new Map<String, String>()
             );
-            System.assert(false, 'Expected selections without a resolvable opportunity to be rejected.');
+            System.assert(false, 'Expected selections without a ready diary Order to be rejected.');
         } catch (AuraHandledException exceptionRecord) {
             System.assert(
-                exceptionRecord.getMessage().contains('resolve to an Opportunity-backed Order diary row'),
-                'The error should clearly explain the missing opportunity linkage requirement.'
+                exceptionRecord.getMessage().contains('requires one ready-to-bill Order diary record'),
+                'The error should clearly explain the missing ready diary requirement.'
             );
         }
         Test.stopTest();
@@ -985,17 +1116,16 @@ private class BillingControlCenterServiceTest {
     }
 
     @isTest
-    static void testCompleteServiceAppointmentBillingFailsWithoutBillableAmount() {
+    static void testCompleteServiceAppointmentBillingFailsWithoutOpportunityAmount() {
         Order readyOrder = [
-            SELECT Id, Service_Appointment__c, OpportunityId, Billable_Amount__c
+            SELECT Id, Service_Appointment__c, OpportunityId
             FROM Order
             WHERE Billing_Diary_Status__c = 'Ready to Bill'
             AND Ready_For_Billing__c = true
             ORDER BY CreatedDate ASC
             LIMIT 1
         ];
-        readyOrder.Billable_Amount__c = 0;
-        update readyOrder;
+        update new Opportunity(Id = readyOrder.OpportunityId, Amount = 0);
 
         Test.startTest();
         try {
@@ -1003,11 +1133,11 @@ private class BillingControlCenterServiceTest {
                 new List<Id>{ readyOrder.Service_Appointment__c },
                 new Map<String, String>{ String.valueOf(readyOrder.OpportunityId) => 'NO-AMOUNT-001' }
             );
-            System.assert(false, 'Expected billable amount validation to block billing.');
+            System.assert(false, 'Expected Opportunity amount validation to block billing.');
         } catch (AuraHandledException exceptionRecord) {
             System.assert(
-                exceptionRecord.getMessage().contains('Order.Billable_Amount__c greater than 0'),
-                'The error should clearly explain the missing billable amount requirement.'
+                exceptionRecord.getMessage().contains('Opportunity.Amount greater than 0'),
+                'The error should clearly explain the missing Opportunity amount requirement.'
             );
         }
         Test.stopTest();
@@ -1582,10 +1712,10 @@ private class BillingControlCenterServiceTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(51L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(2, metrics.readyToBill, 'Explicit 0-valued invoice filters should keep uninvoiced diary rows visible.');
+        System.assertEquals(5, metrics.readyToBill, 'Legacy zero-invoiced filters must not exclude SA/WO-eligible diary rows.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
             if (groupRecord.categoryKey == 'READY_TO_BILL') {
-                System.assertEquals(2, groupRecord.serviceAppointmentCount);
+                System.assertEquals(5, groupRecord.serviceAppointmentCount);
             }
         }
     }

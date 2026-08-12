@@ -90,7 +90,7 @@ function cloneRuntimeData(value) {
 }
 
 function buildRuntimeCacheKey(dateFilter) {
-    return JSON.stringify(dateFilter || { filterKey: 'Today' });
+    return JSON.stringify(dateFilter || null);
 }
 
 export default class BillingControlCenterCommission extends NavigationMixin(LightningElement) {
@@ -210,10 +210,6 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
 
     get refreshLabel() {
         return this.receivablesActionsByKey.REFRESH?.label || DEFAULT_REFRESH_LABEL;
-    }
-
-    get externalDateFilterKey() {
-        return this.dateFilter?.filterKey || 'Today';
     }
 
     get heroActions() {
@@ -502,14 +498,6 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         await this.handleRefresh();
     }
 
-    handleExternalDateFilterChange(event) {
-        this.dispatchEvent(
-            new CustomEvent('datefilterchange', {
-                detail: event.detail
-            })
-        );
-    }
-
     handleHeroActionClick(event) {
         if (event.detail?.key === 'refresh') {
             this.handleRefresh();
@@ -771,7 +759,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             const refreshToken = forceRefresh ? Date.now() : null;
             const data = await getReceivablesRuntimeData({
                 refreshToken,
-                dateFilter: this.dateFilter
+                dateFilter: this.dateFilter || null
             });
             receivablesRuntimeCache.set(cacheKey, cloneRuntimeData(data));
             this.applyRuntimeData(data);

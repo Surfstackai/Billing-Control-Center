@@ -35,6 +35,12 @@ public with sharing class BillingControl_Orders {
     private static final Integer QUERY_ROW_LIMIT = 501;
     private static final String ROW_LIMIT_WARNING_MESSAGE =
         'Showing first 500 records. Narrow the date filter/search for more specific results.';
+    private static final List<String> BUCKET_QUERY_ORDER = new List<String>{
+        BUCKET_UNSCHEDULED,
+        BUCKET_SCHEDULED,
+        BUCKET_SCHEDULED_TODAY,
+        BUCKET_COMPLETED_TODAY
+    };
 
     public static KpiWrapper getKpis() {
         return getKpis(null);
@@ -98,33 +104,41 @@ public with sharing class BillingControl_Orders {
             rowsByBucketKey.put(sectionRecord.bucketKey, sectionRecord.rows);
         }
 
-        for (String bucketKey : new List<String>{ BUCKET_UNSCHEDULED, BUCKET_SCHEDULED, BUCKET_SCHEDULED_TODAY, BUCKET_COMPLETED_TODAY }) {
+        for (String bucketKey : BUCKET_QUERY_ORDER) {
             String diaryStatus = getDiaryStatusForBucket(bucketKey);
-            if (String.isBlank(diaryStatus)) {
-                continue;
-            }
-
-            List<Order> diaryOrders = queryBucketOrders(diaryStatus, filterContext);
+            List<Order> diaryOrders = queryBucketOrders(bucketKey, diaryStatus, filterContext);
             Boolean isTruncated = diaryOrders.size() >= QUERY_ROW_LIMIT;
             Integer maxIndex = Math.min(diaryOrders.size(), MAX_ROWS_PER_SECTION);
+            List<WorkOrderRowWrapper> appointmentRows = new List<WorkOrderRowWrapper>();
             for (Integer index = 0; index < maxIndex; index++) {
                 Order orderRecord = diaryOrders[index];
                 if (!isActiveDiaryRecord(orderRecord)) {
                     continue;
                 }
-                rowsByBucketKey.get(bucketKey).add(buildOrderDiaryRow(orderRecord));
+                appointmentRows.add(buildOrderDiaryRow(orderRecord));
             }
 
             if (isTruncated) {
                 addRuntimeWarning(filterContext, BUCKET_LABELS.get(bucketKey) + ': ' + ROW_LIMIT_WARNING_MESSAGE);
             }
+
+            if (filterContext != null && filterContext.filters != null && !filterContext.filters.isEmpty()) {
+                appointmentRows = filterRows(appointmentRows, filterContext);
+            }
+
+            rowsByBucketKey.get(bucketKey).addAll(groupOrderDiaryRowsByWorkOrder(appointmentRows));
         }
 
         for (BucketSectionWrapper sectionRecord : sections) {
-            if (filterContext != null && filterContext.filters != null && !filterContext.filters.isEmpty()) {
-                sectionRecord.rows = filterRows(sectionRecord.rows, filterContext);
+            sectionRecord.serviceAppointmentCount = 0;
+            if (sectionRecord.rows != null) {
+                for (WorkOrderRowWrapper row : sectionRecord.rows) {
+                    sectionRecord.serviceAppointmentCount += row != null && row.serviceAppointmentCount != null
+                        ? row.serviceAppointmentCount
+                        : 0;
+                }
+                sectionRecord.rows.sort(new WorkOrderRowNumberComparator());
             }
-            sectionRecord.rows.sort(new WorkOrderRowNumberComparator());
         }
 
         return sections;
@@ -192,17 +206,6 @@ public with sharing class BillingControl_Orders {
         return null;
     }
 
-    private static Decimal sumBillableAmount(List<WorkOrderRowWrapper> rows) {
-        Decimal total = 0;
-        if (rows == null) {
-            return total;
-        }
-        for (WorkOrderRowWrapper row : rows) {
-            total += row.opportunityAmount != null ? row.opportunityAmount : 0;
-        }
-        return total;
-    }
-
     private static WorkOrderRowWrapper buildOrderDiaryRow(Order orderRecord) {
         WorkOrderRowWrapper row = new WorkOrderRowWrapper();
         row.rowKey = orderRecord != null && orderRecord.Id != null ? 'ORD-' + String.valueOf(orderRecord.Id) : null;
@@ -219,7 +222,9 @@ public with sharing class BillingControl_Orders {
         row.accountName = orderRecord != null ? (String) orderRecord.get('Account_Name__c') : null;
         row.opportunityId = orderRecord != null ? orderRecord.OpportunityId : null;
         row.opportunityName = orderRecord != null ? (String) orderRecord.get('Opportunity_Name__c') : null;
-        row.opportunityAmount = orderRecord != null ? (Decimal) orderRecord.get('Billable_Amount__c') : null;
+        row.opportunityAmount = orderRecord != null && orderRecord.OpportunityId != null && orderRecord.Opportunity != null
+            ? orderRecord.Opportunity.Amount
+            : null;
         row.opportunityStageName = orderRecord != null ? (String) orderRecord.get('Opportunity_Stage__c') : null;
         row.opportunityCloseDate = orderRecord != null && orderRecord.Opportunity != null
             ? orderRecord.Opportunity.CloseDate
@@ -244,7 +249,6 @@ public with sharing class BillingControl_Orders {
             : null;
         row.serviceAppointmentDisplay = buildServiceAppointmentDisplay(orderRecord);
         row.readyForBilling = orderRecord != null ? (Boolean) orderRecord.get('Ready_For_Billing__c') : null;
-        row.billableAmount = orderRecord != null ? (Decimal) orderRecord.get('Billable_Amount__c') : null;
         row.invoicedAmount = orderRecord != null ? (Decimal) orderRecord.get('Invoiced_Amount__c') : null;
         row.receivedAmount = orderRecord != null ? (Decimal) orderRecord.get('Received_Amount__c') : null;
         row.outstandingAmount = orderRecord != null ? (Decimal) orderRecord.get('Outstanding_Amount__c') : null;
@@ -289,6 +293,110 @@ public with sharing class BillingControl_Orders {
         return String.isNotBlank(preferredValue) ? preferredValue : fallbackValue;
     }
 
+    private static List<WorkOrderRowWrapper> groupOrderDiaryRowsByWorkOrder(List<WorkOrderRowWrapper> appointmentRows) {
+        List<WorkOrderRowWrapper> groupedRows = new List<WorkOrderRowWrapper>();
+        if (appointmentRows == null || appointmentRows.isEmpty()) {
+            return groupedRows;
+        }
+
+        Map<String, WorkOrderRowWrapper> rowByGroupingKey = new Map<String, WorkOrderRowWrapper>();
+        for (WorkOrderRowWrapper appointmentRow : appointmentRows) {
+            if (appointmentRow == null) {
+                continue;
+            }
+
+            String groupingKey = buildGroupingKey(appointmentRow);
+            WorkOrderRowWrapper groupedRow = rowByGroupingKey.get(groupingKey);
+            if (groupedRow == null) {
+                groupedRow = cloneOrderDiaryRow(appointmentRow);
+                groupedRow.rowKey = appointmentRow.workOrderId != null
+                    ? 'WO-' + String.valueOf(appointmentRow.workOrderId)
+                    : appointmentRow.rowKey;
+                groupedRow.relatedServiceAppointments = new List<WorkOrderRowWrapper>();
+                groupedRow.serviceAppointmentCount = 0;
+                rowByGroupingKey.put(groupingKey, groupedRow);
+                groupedRows.add(groupedRow);
+            }
+
+            groupedRow.relatedServiceAppointments.add(cloneOrderDiaryRow(appointmentRow));
+            groupedRow.serviceAppointmentCount++;
+        }
+
+        for (WorkOrderRowWrapper groupedRow : groupedRows) {
+            groupedRow.opportunityAmount = resolveGroupedOpportunityAmount(groupedRow.relatedServiceAppointments);
+        }
+
+        return groupedRows;
+    }
+
+    private static Decimal resolveGroupedOpportunityAmount(List<WorkOrderRowWrapper> appointmentRows) {
+        if (appointmentRows == null || appointmentRows.isEmpty()) {
+            return null;
+        }
+
+        Id resolvedOpportunityId;
+        for (WorkOrderRowWrapper appointmentRow : appointmentRows) {
+            if (appointmentRow == null || appointmentRow.opportunityId == null) {
+                return null;
+            }
+            if (resolvedOpportunityId == null) {
+                resolvedOpportunityId = appointmentRow.opportunityId;
+            } else if (resolvedOpportunityId != appointmentRow.opportunityId) {
+                return null;
+            }
+        }
+
+        return resolvedOpportunityId != null ? appointmentRows[0].opportunityAmount : null;
+    }
+
+    private static String buildGroupingKey(WorkOrderRowWrapper row) {
+        if (row == null) {
+            return null;
+        }
+        if (row.workOrderId != null) {
+            return 'WORK_ORDER:' + String.valueOf(row.workOrderId);
+        }
+        return 'ORDER:' + String.valueOf(row.orderId);
+    }
+
+    private static WorkOrderRowWrapper cloneOrderDiaryRow(WorkOrderRowWrapper source) {
+        if (source == null) {
+            return null;
+        }
+
+        WorkOrderRowWrapper clone = new WorkOrderRowWrapper();
+        clone.rowKey = source.rowKey;
+        clone.orderId = source.orderId;
+        clone.orderNumber = source.orderNumber;
+        clone.workOrderId = source.workOrderId;
+        clone.workOrderNumber = source.workOrderNumber;
+        clone.subject = source.subject;
+        clone.status = source.status;
+        clone.accountId = source.accountId;
+        clone.accountName = source.accountName;
+        clone.opportunityId = source.opportunityId;
+        clone.opportunityName = source.opportunityName;
+        clone.opportunityAmount = source.opportunityAmount;
+        clone.opportunityStageName = source.opportunityStageName;
+        clone.opportunityCloseDate = source.opportunityCloseDate;
+        clone.ownerId = source.ownerId;
+        clone.ownerName = source.ownerName;
+        clone.createdDate = source.createdDate;
+        clone.serviceAppointmentId = source.serviceAppointmentId;
+        clone.serviceAppointmentNumber = source.serviceAppointmentNumber;
+        clone.serviceAppointmentStatus = source.serviceAppointmentStatus;
+        clone.schedStartTime = source.schedStartTime;
+        clone.actualEndTime = source.actualEndTime;
+        clone.serviceAppointmentDisplay = source.serviceAppointmentDisplay;
+        clone.readyForBilling = source.readyForBilling;
+        clone.invoicedAmount = source.invoicedAmount;
+        clone.receivedAmount = source.receivedAmount;
+        clone.outstandingAmount = source.outstandingAmount;
+        clone.effectiveDate = source.effectiveDate;
+        clone.serviceAppointmentCount = source.serviceAppointmentCount;
+        return clone;
+    }
+
     private static Map<String, BillingMetricsSnapshot> queryBucketMetrics(
         BillingControl_DataProvider.BillingFilterContextDTO filterContext
     ) {
@@ -299,27 +407,43 @@ public with sharing class BillingControl_Orders {
             BUCKET_COMPLETED_TODAY => new BillingMetricsSnapshot()
         };
 
-        String queryText =
-            'SELECT Billing_Diary_Status__c diaryStatus, COUNT(Id) recordCount, SUM(Billable_Amount__c) totalAmount'
-            + ' FROM Order'
-            + buildOrdersWhereClause(filterContext, null)
-            + ' GROUP BY Billing_Diary_Status__c';
-        for (AggregateResult aggregateRow : Database.query(queryText)) {
-            String bucketKey = resolveBucketKeyFromStatus((String) aggregateRow.get('diaryStatus'));
-            if (bucketKey == null || !metricsByBucket.containsKey(bucketKey)) {
+        for (String bucketKey : BUCKET_QUERY_ORDER) {
+            String diaryStatus = getDiaryStatusForBucket(bucketKey);
+            if (!metricsByBucket.containsKey(bucketKey)) {
                 continue;
             }
 
+            Boolean useServiceAppointmentOpportunity = usesServiceAppointmentOpportunity(bucketKey);
+            String opportunityIdField = useServiceAppointmentOpportunity
+                ? 'Service_Appointment__r.Opportunity__c'
+                : 'OpportunityId';
+            String opportunityAmountField = useServiceAppointmentOpportunity
+                ? 'Service_Appointment__r.Opportunity__r.Amount'
+                : 'Opportunity.Amount';
+
+            AggregateResult[] results = Database.query(
+                'SELECT '
+                + opportunityIdField
+                + ' opportunityId, COUNT(Id) recordCount, MAX('
+                + opportunityAmountField
+                + ') opportunityAmount'
+                + ' FROM Order'
+                + buildOrdersWhereClause(filterContext, diaryStatus, bucketKey)
+                + ' GROUP BY '
+                + opportunityIdField
+            );
             BillingMetricsSnapshot snapshot = metricsByBucket.get(bucketKey);
-            snapshot.recordCount = (Integer) aggregateRow.get('recordCount');
-            snapshot.totalAmount = aggregateRow.get('totalAmount') != null
-                ? (Decimal) aggregateRow.get('totalAmount')
-                : 0;
+            for (AggregateResult aggregateRow : results) {
+                snapshot.recordCount += (Integer) aggregateRow.get('recordCount');
+                Decimal opportunityAmount = (Decimal) aggregateRow.get('opportunityAmount');
+                snapshot.totalAmount += opportunityAmount != null ? opportunityAmount : 0;
+            }
         }
         return metricsByBucket;
     }
 
     private static List<Order> queryBucketOrders(
+        String bucketKey,
         String diaryStatus,
         BillingControl_DataProvider.BillingFilterContextDTO filterContext
     ) {
@@ -330,6 +454,7 @@ public with sharing class BillingControl_Orders {
             + ' AccountId,'
             + ' Account_Name__c,'
             + ' OpportunityId,'
+            + ' Opportunity.Amount,'
             + ' Opportunity_Name__c,'
             + ' Opportunity_Stage__c,'
             + ' Opportunity.CloseDate,'
@@ -345,14 +470,13 @@ public with sharing class BillingControl_Orders {
             + ' Technician__r.Name,'
             + ' Billing_Diary_Status__c,'
             + ' Ready_For_Billing__c,'
-            + ' Billable_Amount__c,'
             + ' Invoiced_Amount__c,'
             + ' Received_Amount__c,'
             + ' Outstanding_Amount__c,'
             + ' EffectiveDate,'
             + ' CreatedDate'
             + ' FROM Order'
-            + buildOrdersWhereClause(filterContext, diaryStatus)
+            + buildOrdersWhereClause(filterContext, diaryStatus, bucketKey)
             + ' ORDER BY OrderNumber ASC NULLS LAST, EffectiveDate ASC NULLS LAST, CreatedDate ASC NULLS LAST'
             + ' LIMIT '
             + QUERY_ROW_LIMIT;
@@ -361,7 +485,8 @@ public with sharing class BillingControl_Orders {
 
     private static String buildOrdersWhereClause(
         BillingControl_DataProvider.BillingFilterContextDTO filterContext,
-        String enforcedDiaryStatus
+        String enforcedDiaryStatus,
+        String bucketKey
     ) {
         List<String> clauses = new List<String>();
         if (String.isBlank(enforcedDiaryStatus)) {
@@ -374,10 +499,45 @@ public with sharing class BillingControl_Orders {
         } else {
             clauses.add('Billing_Diary_Status__c = \'' + String.escapeSingleQuotes(enforcedDiaryStatus) + '\'');
         }
+        clauses.addAll(buildBucketSpecificClauses(bucketKey));
         clauses.addAll(
             BillingControl_DataProvider.buildQueryFilterClauses(filterContext, getOrdersFilterFieldMappings())
         );
         return ' WHERE ' + String.join(clauses, ' AND ');
+    }
+
+    private static List<String> buildBucketSpecificClauses(String bucketKey) {
+        List<String> clauses = new List<String>();
+        if (bucketKey == BUCKET_SCHEDULED_TODAY || bucketKey == BUCKET_COMPLETED_TODAY) {
+            // Date.today() and DateTime.newInstance use the running user's timezone.  The
+            // resulting UTC literals therefore represent that user's local midnight bounds.
+            Datetime yesterdayStart = Datetime.newInstance(
+                Date.today().addDays(-1),
+                Time.newInstance(0, 0, 0, 0)
+            );
+            Datetime todayStart = Datetime.newInstance(
+                Date.today(),
+                Time.newInstance(0, 0, 0, 0)
+            );
+            clauses.add(
+                'Service_Appointment__r.SchedStartTime >= '
+                + yesterdayStart.formatGmt('yyyy-MM-dd\'T\'HH:mm:ss\'Z\'')
+            );
+            clauses.add(
+                'Service_Appointment__r.SchedStartTime < '
+                + todayStart.formatGmt('yyyy-MM-dd\'T\'HH:mm:ss\'Z\'')
+            );
+            clauses.add(
+                bucketKey == BUCKET_SCHEDULED_TODAY
+                    ? 'Service_Appointment__r.Invoice_Number__c = NULL'
+                    : 'Service_Appointment__r.Invoice_Number__c != NULL'
+            );
+        }
+        return clauses;
+    }
+
+    private static Boolean usesServiceAppointmentOpportunity(String bucketKey) {
+        return bucketKey == BUCKET_SCHEDULED_TODAY || bucketKey == BUCKET_COMPLETED_TODAY;
     }
 
     private static Map<String, BillingControl_DataProvider.FilterFieldDescriptor> getOrdersFilterFieldMappings() {
@@ -415,12 +575,6 @@ public with sharing class BillingControl_Orders {
         }
         if (bucketKey == BUCKET_SCHEDULED) {
             return ORDER_DIARY_STATUS_FOR_REVIEW;
-        }
-        if (bucketKey == BUCKET_SCHEDULED_TODAY) {
-            return ORDER_DIARY_STATUS_READY_TO_BILL;
-        }
-        if (bucketKey == BUCKET_COMPLETED_TODAY) {
-            return ORDER_DIARY_STATUS_ON_HOLD;
         }
         return null;
     }
@@ -707,11 +861,13 @@ public with sharing class BillingControl_Orders {
     public class BucketSectionWrapper {
         @AuraEnabled public String bucketKey;
         @AuraEnabled public String sectionLabel;
+        @AuraEnabled public Integer serviceAppointmentCount;
         @AuraEnabled public List<WorkOrderRowWrapper> rows;
 
         public BucketSectionWrapper(String bucketKeyValue, String sectionLabelValue, List<WorkOrderRowWrapper> rowValues) {
             bucketKey = bucketKeyValue;
             sectionLabel = sectionLabelValue;
+            serviceAppointmentCount = 0;
             rows = rowValues;
         }
     }
@@ -741,11 +897,12 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Datetime actualEndTime;
         @AuraEnabled public String serviceAppointmentDisplay;
         @AuraEnabled public Boolean readyForBilling;
-        @AuraEnabled public Decimal billableAmount;
         @AuraEnabled public Decimal invoicedAmount;
         @AuraEnabled public Decimal receivedAmount;
         @AuraEnabled public Decimal outstandingAmount;
         @AuraEnabled public Date effectiveDate;
+        @AuraEnabled public Integer serviceAppointmentCount;
+        @AuraEnabled public List<WorkOrderRowWrapper> relatedServiceAppointments;
     }
 
     public class OrderRowWrapper {

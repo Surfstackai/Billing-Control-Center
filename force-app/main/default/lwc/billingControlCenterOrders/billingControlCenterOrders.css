@@ -1,5 +1,10 @@
 @import 'c/billingControlCenterStyles';
 
+:host {
+    --bcc-grouped-table-min-width: 86rem;
+    --bcc-grouped-child-line-height: 2rem;
+}
+
 .hero__controls {
     display: flex;
     align-items: center;
@@ -18,6 +23,159 @@
 
 .bucket-table-host {
     display: block;
+    overflow-x: auto;
+    overflow-y: hidden;
+}
+
+.grouped-diary-table {
+    min-width: var(--bcc-grouped-table-min-width);
+    table-layout: fixed;
+}
+
+.grouped-diary-table__col--account {
+    width: 14rem;
+}
+
+.grouped-diary-table__col--opportunity {
+    width: 16rem;
+}
+
+.grouped-diary-table__col--work-order {
+    width: 13rem;
+}
+
+.grouped-diary-table__col--service-appointment {
+    width: 16rem;
+}
+
+.grouped-diary-table__col--created-date {
+    width: 10rem;
+}
+
+.grouped-diary-table__col--subject {
+    width: 16rem;
+}
+
+.grouped-diary-table__col--status {
+    width: 10rem;
+}
+
+.grouped-diary-table__col--billable-amount {
+    width: 12rem;
+}
+
+.grouped-diary-table__col--owner {
+    width: 12rem;
+}
+
+.grouped-diary-table th,
+.grouped-diary-table td {
+    vertical-align: top;
+    overflow: hidden;
+}
+
+.grouped-diary-table__header {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+}
+
+.grouped-diary-table__header-button {
+    width: 100%;
+    min-width: 0;
+    gap: 0.35rem;
+    align-items: center;
+}
+
+.grouped-diary-table__header--billable-amount .grouped-diary-table__header-button {
+    justify-content: center;
+    position: relative;
+}
+
+.grouped-diary-table__header--billable-amount .grouped-diary-table__header-label {
+    flex: 0 1 auto;
+}
+
+.grouped-diary-table__header--billable-amount lightning-icon {
+    position: absolute;
+    right: 0;
+}
+
+.grouped-diary-table__header-label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.grouped-diary-table__cell {
+    padding-top: 0.625rem;
+    padding-bottom: 0.625rem;
+}
+
+.grouped-diary-table__single-value {
+    display: block;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.grouped-diary-table__single-link,
+.grouped-diary-table__single-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.grouped-diary-cell {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.grouped-diary-cell__line {
+    display: flex;
+    align-items: center;
+    min-height: var(--bcc-grouped-child-line-height);
+    width: 100%;
+    overflow: hidden;
+}
+
+.grouped-diary-cell__value {
+    display: block;
+    width: 100%;
+    min-width: 0;
+}
+
+.grouped-diary-cell__value--truncate,
+.grouped-diary-cell__value--service-appointment {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.grouped-diary-cell__value--nowrap {
+    white-space: nowrap;
+}
+
+.grouped-diary-cell__value--currency {
+    white-space: nowrap;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.grouped-diary-cell--currency .grouped-diary-cell__line {
+    justify-content: flex-end;
+}
+
+.grouped-diary-table__cell--billable-amount {
+    vertical-align: middle;
+}
+
+.grouped-diary-table__grouped-amount {
+    text-align: center;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
 }
 
 .bucket-empty {

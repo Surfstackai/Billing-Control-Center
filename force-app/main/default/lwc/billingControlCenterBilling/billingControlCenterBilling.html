@@ -8,11 +8,6 @@
             </div>
             <template if:true={useExternalToolbar}>
                 <div class="hero__controls">
-                    <c-billing-control-center-date-filter
-                        compact
-                        selected-filter-key={externalDateFilterKey}
-                        ondatefilterchange={handleExternalDateFilterChange}>
-                    </c-billing-control-center-date-filter>
                     <lightning-button
                         label={refreshLabel}
                         icon-name="utility:refresh"
@@ -95,17 +90,242 @@
                                         <p class="bucket-empty">No order diary records contribute to this KPI.</p>
                                     </template>
                                     <template if:false={section.isEmpty}>
-                                        <div class="bucket-table-host" data-bucket={section.categoryKey}>
-                                            <lightning-datatable
-                                                key-field="rowKey"
-                                                data={section.filteredRows}
-                                                columns={workOrderColumns}
-                                                selected-rows={section.selectedRowKeys}
-                                                sorted-by={section.sortedBy}
-                                                sorted-direction={section.sortDirection}
-                                                onsort={handleWorkOrderSort}
-                                                onrowselection={handleRowSelection}>
-                                            </lightning-datatable>
+                                        <div class="slds-scrollable_x bucket-table-host">
+                                            <table
+                                                class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout grouped-diary-table"
+                                                aria-label={section.categoryLabel}>
+                                                <colgroup>
+                                                    <col class="grouped-diary-table__col grouped-diary-table__col--select" />
+                                                    <template for:each={section.columns} for:item="column">
+                                                        <template if:true={column.isAccount}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--account" />
+                                                        </template>
+                                                        <template if:true={column.isOpportunity}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--opportunity" />
+                                                        </template>
+                                                        <template if:true={column.isWorkOrder}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--work-order" />
+                                                        </template>
+                                                        <template if:true={column.isServiceAppointment}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--service-appointment" />
+                                                        </template>
+                                                        <template if:true={column.isCreatedDate}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--created-date" />
+                                                        </template>
+                                                        <template if:true={column.isSubject}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--subject" />
+                                                        </template>
+                                                        <template if:true={column.isStatus}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--status" />
+                                                        </template>
+                                                        <template if:true={column.isBillableAmount}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--billable-amount" />
+                                                        </template>
+                                                        <template if:true={column.isOwner}>
+                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--owner" />
+                                                        </template>
+                                                    </template>
+                                                </colgroup>
+                                                <thead>
+                                                    <tr class="slds-line-height_reset">
+                                                        <th scope="col" class="grouped-diary-table__header grouped-diary-table__header--select">
+                                                            <span class="slds-truncate" title="Select">Select</span>
+                                                        </th>
+                                                        <template for:each={section.columns} for:item="column">
+                                                            <th
+                                                                key={column.key}
+                                                                scope="col"
+                                                                class={column.headerClass}
+                                                                aria-sort={column.ariaSort}>
+                                                                <button
+                                                                    class="slds-button slds-button_reset slds-grid slds-grid_align-spread grouped-diary-table__header-button"
+                                                                    type="button"
+                                                                    data-bucket={section.categoryKey}
+                                                                    data-field={column.fieldName}
+                                                                    onclick={handleHeaderSort}>
+                                                                    <span class="grouped-diary-table__header-label" title={column.label}>{column.label}</span>
+                                                                    <template if:true={column.isSorted}>
+                                                                        <lightning-icon
+                                                                            icon-name={column.sortIcon}
+                                                                            size="xx-small"
+                                                                            alternative-text={column.sortAltText}>
+                                                                        </lightning-icon>
+                                                                    </template>
+                                                                </button>
+                                                            </th>
+                                                        </template>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <template for:each={section.filteredRows} for:item="row">
+                                                        <tr key={row.rowKey} class="slds-hint-parent grouped-diary-table__row">
+                                                            <td class="grouped-diary-table__cell grouped-diary-table__cell--select" data-label="Select">
+                                                                <lightning-input
+                                                                    type="checkbox"
+                                                                    variant="label-hidden"
+                                                                    label={row.workOrderNumber}
+                                                                    data-bucket={section.categoryKey}
+                                                                    data-row-key={row.rowKey}
+                                                                    checked={row.isSelected}
+                                                                    onchange={handleGroupSelection}>
+                                                                </lightning-input>
+                                                            </td>
+                                                            <template for:each={section.columns} for:item="column">
+                                                                <td key={column.key} class={column.cellClass} data-label={column.label}>
+                                                                    <template if:true={column.isAccount}>
+                                                                        <div class="grouped-diary-table__single-value" title={row.accountName}>
+                                                                            <template if:true={row.accountUrl}>
+                                                                                <a
+                                                                                    href={row.accountUrl}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    class="slds-text-link grouped-diary-table__single-link"
+                                                                                    title={row.accountName}>
+                                                                                    {row.accountName}
+                                                                                </a>
+                                                                            </template>
+                                                                            <template if:false={row.accountUrl}>
+                                                                                <span class="grouped-diary-table__single-text">{row.accountName}</span>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isOpportunity}>
+                                                                        <div class="grouped-diary-table__single-value" title={row.opportunityName}>
+                                                                            <template if:true={row.opportunityUrl}>
+                                                                                <a
+                                                                                    href={row.opportunityUrl}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    class="slds-text-link grouped-diary-table__single-link"
+                                                                                    title={row.opportunityName}>
+                                                                                    {row.opportunityName}
+                                                                                </a>
+                                                                            </template>
+                                                                            <template if:false={row.opportunityUrl}>
+                                                                                <span class="grouped-diary-table__single-text">{row.opportunityName}</span>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isWorkOrder}>
+                                                                        <div class="grouped-diary-table__single-value" title={row.workOrderNumber}>
+                                                                            <template if:true={row.workOrderUrl}>
+                                                                                <a
+                                                                                    href={row.workOrderUrl}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    class="slds-text-link grouped-diary-table__single-link"
+                                                                                    title={row.workOrderNumber}>
+                                                                                    {row.workOrderNumber}
+                                                                                </a>
+                                                                            </template>
+                                                                            <template if:false={row.workOrderUrl}>
+                                                                                <span class="grouped-diary-table__single-text">{row.workOrderNumber}</span>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isServiceAppointment}>
+                                                                        <div class="grouped-diary-cell grouped-diary-cell--service-appointment">
+                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
+                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                                    <template if:true={appointment.serviceAppointmentUrl}>
+                                                                                        <a
+                                                                                            href={appointment.serviceAppointmentUrl}
+                                                                                            target="_blank"
+                                                                                            rel="noopener noreferrer"
+                                                                                            class="slds-text-link grouped-diary-cell__value grouped-diary-cell__value--service-appointment"
+                                                                                            title={appointment.serviceAppointmentDisplay}>
+                                                                                            {appointment.serviceAppointmentDisplay}
+                                                                                        </a>
+                                                                                    </template>
+                                                                                    <template if:false={appointment.serviceAppointmentUrl}>
+                                                                                        <span
+                                                                                            class="grouped-diary-cell__value grouped-diary-cell__value--service-appointment"
+                                                                                            title={appointment.serviceAppointmentDisplay}>
+                                                                                            {appointment.serviceAppointmentDisplay}
+                                                                                        </span>
+                                                                                    </template>
+                                                                                </div>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isCreatedDate}>
+                                                                        <div class="grouped-diary-cell grouped-diary-cell--nowrap">
+                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
+                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                                    <div class="grouped-diary-cell__value grouped-diary-cell__value--nowrap">
+                                                                                        <lightning-formatted-date-time
+                                                                                            value={appointment.createdDateValue}
+                                                                                            year="numeric"
+                                                                                            month="2-digit"
+                                                                                            day="2-digit">
+                                                                                        </lightning-formatted-date-time>
+                                                                                    </div>
+                                                                                </div>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isSubject}>
+                                                                        <div class="grouped-diary-cell grouped-diary-cell--truncate">
+                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
+                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                                    <span
+                                                                                        class="grouped-diary-cell__value grouped-diary-cell__value--truncate"
+                                                                                        title={appointment.subject}>
+                                                                                        {appointment.subject}
+                                                                                    </span>
+                                                                                </div>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isStatus}>
+                                                                        <div class="grouped-diary-cell grouped-diary-cell--nowrap">
+                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
+                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                                    <span class="grouped-diary-cell__value grouped-diary-cell__value--nowrap">
+                                                                                        {appointment.status}
+                                                                                    </span>
+                                                                                </div>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isBillableAmount}>
+                                                                        <div class="grouped-diary-table__grouped-amount">
+                                                                            <template if:true={row.hasOpportunityAmount}>
+                                                                                <lightning-formatted-number
+                                                                                    value={row.opportunityAmountValue}
+                                                                                    format-style="currency"
+                                                                                    currency-code="USD">
+                                                                                </lightning-formatted-number>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isOwner}>
+                                                                        <div class="grouped-diary-cell grouped-diary-cell--truncate">
+                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
+                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                                    <span
+                                                                                        class="grouped-diary-cell__value grouped-diary-cell__value--truncate"
+                                                                                        title={appointment.ownerName}>
+                                                                                        {appointment.ownerName}
+                                                                                    </span>
+                                                                                </div>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+                                                                </td>
+                                                            </template>
+                                                        </tr>
+                                                    </template>
+                                                </tbody>
+                                            </table>
                                         </div>
                                     </template>
                                 </div>
