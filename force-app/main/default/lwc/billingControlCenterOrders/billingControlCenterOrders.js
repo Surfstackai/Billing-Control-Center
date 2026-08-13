@@ -28,7 +28,8 @@ const BUCKET_KEYS = [
     'COMPLETED_THIS_MONTH',
     'NO_OPPORTUNITY',
     'NO_SERVICE_APPOINTMENT',
-    'MULTIPLE_OPPORTUNITIES'
+    'MULTIPLE_OPPORTUNITIES',
+    'RELATED_WORK'
 ];
 const ORDERS_DATASET_KEY = 'ORDERS_WORK_ORDERS';
 const ordersRuntimeCache = new Map();
@@ -114,6 +115,15 @@ const KPI_CONFIG_SECONDARY = [
         title: 'Multiple Opportunities',
         icon: 'utility:multi_select_checkbox',
         hint: 'Work Orders linked to more than one Opportunity.'
+    },
+    {
+        key: 'relatedWork',
+        developerKey: 'RELATED_WORK',
+        revenueKey: 'relatedWorkRevenue',
+        countKey: 'relatedWorkCount',
+        title: 'Related Work',
+        icon: 'utility:connected_apps',
+        hint: 'Work Orders pulled in by a matching Opportunity that do not fit another bucket.'
     }
 ];
 
@@ -208,7 +218,7 @@ const WORK_ORDER_COLUMNS = [
     {
         developerKey: 'OWNER',
         configFieldApiName: 'ownerName',
-        label: 'Owner',
+        label: 'Opportunity Owner',
         fieldName: 'ownerName',
         type: 'text',
         sortable: true
@@ -426,7 +436,10 @@ function normalizeAppointmentRows(row) {
         return terms;
     }, []);
 
-    const opportunitySearchTerms = relatedOpportunities.map(opportunity => opportunity.opportunityName);
+    const opportunitySearchTerms = relatedOpportunities.reduce((terms, opportunity) => {
+        terms.push(opportunity.opportunityName, opportunity.ownerName);
+        return terms;
+    }, []);
 
     const searchIndex = [
         row.accountName,
@@ -531,14 +544,26 @@ function cloneRuntimeData(value) {
     return value ? JSON.parse(JSON.stringify(value)) : value;
 }
 
-function buildRuntimeCacheKey(dateFilter) {
-    return JSON.stringify(dateFilter || null);
+function buildRuntimeCacheKey(dateFilter, opportunityOwnerId) {
+    return JSON.stringify({
+        dateFilter: dateFilter || null,
+        opportunityOwnerId: opportunityOwnerId || null
+    });
 }
 
 export default class BillingControlCenterOrders extends LightningElement {
     _dateFilter = { ...DEFAULT_DATE_FILTER };
     _dateFilterSignature = JSON.stringify(DEFAULT_DATE_FILTER);
     _isConnected = false;
+    opportunityOwnerId;
+    userPickerDisplayInfo = {
+        primaryField: 'Name',
+        additionalFields: ['Username']
+    };
+    userPickerMatchingInfo = {
+        primaryField: { fieldPath: 'Name' },
+        additionalFields: [{ fieldPath: 'Username' }]
+    };
 
     @api useExternalToolbar = false;
 
@@ -745,6 +770,17 @@ export default class BillingControlCenterOrders extends LightningElement {
         };
     }
 
+    handleOpportunityOwnerChange(event) {
+        const nextOwnerId = event.detail?.recordId || null;
+        if (nextOwnerId === this.opportunityOwnerId) {
+            return;
+        }
+        this.opportunityOwnerId = nextOwnerId;
+        if (this._isConnected) {
+            this.loadData();
+        }
+    }
+
     buildKpiTilesFromDefinitions(definitions) {
         if (this.ordersConfigLoaded && !this.ordersDatasetIsActive) {
             return [];
@@ -878,7 +914,7 @@ export default class BillingControlCenterOrders extends LightningElement {
     async loadData(forceRefresh = false) {
         this.isLoading = true;
         this.errorMessage = undefined;
-        const cacheKey = buildRuntimeCacheKey(this.dateFilter);
+        const cacheKey = buildRuntimeCacheKey(this.dateFilter, this.opportunityOwnerId);
 
         try {
             if (forceRefresh) {
@@ -891,7 +927,8 @@ export default class BillingControlCenterOrders extends LightningElement {
             const refreshToken = forceRefresh ? Date.now() : null;
             const runtimeData = await getOrdersRuntimeData({
                 refreshToken,
-                dateFilter: this.dateFilter || null
+                dateFilter: this.dateFilter || null,
+                opportunityOwnerId: this.opportunityOwnerId || null
             });
             ordersRuntimeCache.set(cacheKey, cloneRuntimeData(runtimeData));
             this.applyRuntimeData(runtimeData);

@@ -917,6 +917,8 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Integer noServiceAppointmentCount;
         @AuraEnabled public Decimal multipleOpportunitiesRevenue;
         @AuraEnabled public Integer multipleOpportunitiesCount;
+        @AuraEnabled public Decimal relatedWorkRevenue;
+        @AuraEnabled public Integer relatedWorkCount;
         @AuraEnabled public Decimal completedTodayRevenue;
         @AuraEnabled public Integer completedTodayCount;
         @AuraEnabled public Decimal inProgressRevenue;

@@ -228,6 +228,192 @@ private class BillingControl_WorkOrderLedgerTest {
     }
 
     @IsTest
+    static void dateFilterExpandsOpportunityWorkAndHonorsOwner() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        OrderDiaryAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger Expand Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Expand Type', 1);
+
+        List<User> otherUsers = [
+            SELECT Id
+            FROM User
+            WHERE Id != :UserInfo.getUserId()
+            AND IsActive = true
+            LIMIT 1
+        ];
+        System.assertEquals(false, otherUsers.isEmpty(), 'Need a second active user for owner-filter coverage.');
+        Id otherOwnerId = otherUsers[0].Id;
+
+        Opportunity opportunityA = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Expand Opp A', 1200);
+        Opportunity opportunityB = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Expand Opp B', 400);
+        Opportunity opportunityOtherOwner = insertOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'Expand Opp Other Owner',
+            800
+        );
+        opportunityOtherOwner.OwnerId = otherOwnerId;
+        update opportunityOtherOwner;
+
+        WorkOrder matchingWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Matching Completed WO');
+        WorkOrder siblingRelatedWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Sibling Related WO');
+        WorkOrder sharedWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Shared Multi Opp WO');
+        WorkOrder opportunityBOnlyWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Opp B Only WO');
+        WorkOrder billedOnlyWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Billed Only Opp WO');
+        WorkOrder noOpportunityWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'No Opp Completed WO');
+        WorkOrder otherOwnerWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Other Owner Completed WO');
+
+        insert new List<Opportunity_WorkOrder__c>{
+            new Opportunity_WorkOrder__c(Work_Order__c = matchingWorkOrder.Id, Opportunity__c = opportunityA.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = siblingRelatedWorkOrder.Id, Opportunity__c = opportunityA.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = sharedWorkOrder.Id, Opportunity__c = opportunityA.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = sharedWorkOrder.Id, Opportunity__c = opportunityB.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = opportunityBOnlyWorkOrder.Id, Opportunity__c = opportunityB.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = billedOnlyWorkOrder.Id, Opportunity__c = opportunityB.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = otherOwnerWorkOrder.Id, Opportunity__c = opportunityOtherOwner.Id)
+        };
+
+        Datetime completedToday = Datetime.newInstance(Date.today(), Time.newInstance(14, 0, 0, 0));
+        Datetime completedLastYear = Datetime.newInstance(
+            Date.newInstance(Date.today().year() - 1, 6, 15),
+            Time.newInstance(14, 0, 0, 0)
+        );
+        Datetime futureStart = Datetime.newInstance(Date.today().addDays(5), Time.newInstance(10, 0, 0, 0));
+
+        insert new List<ServiceAppointment>{
+            buildAppointment(matchingWorkOrder.Id, 'Completed', completedToday.addHours(-2), completedToday, 'Match SA'),
+            buildAppointment(
+                siblingRelatedWorkOrder.Id,
+                'Completed',
+                completedLastYear.addHours(-2),
+                completedLastYear,
+                'Old Sibling SA'
+            ),
+            buildAppointment(sharedWorkOrder.Id, 'None', null, null, 'Shared Unscheduled SA'),
+            buildAppointment(
+                opportunityBOnlyWorkOrder.Id,
+                'Scheduled',
+                futureStart,
+                null,
+                'Opp B Scheduled SA'
+            ),
+            buildAppointment(
+                billedOnlyWorkOrder.Id,
+                'Completed',
+                completedToday.addHours(-2),
+                completedToday,
+                'Billed SA'
+            ),
+            buildAppointment(
+                noOpportunityWorkOrder.Id,
+                'Completed',
+                completedToday.addHours(-2),
+                completedToday,
+                'No Opp SA'
+            ),
+            buildAppointment(
+                otherOwnerWorkOrder.Id,
+                'Completed',
+                completedToday.addHours(-2),
+                completedToday,
+                'Other Owner SA'
+            )
+        };
+        ServiceAppointment billedAppointment = [
+            SELECT Id
+            FROM ServiceAppointment
+            WHERE ParentRecordId = :billedOnlyWorkOrder.Id
+            LIMIT 1
+        ];
+        billedAppointment.Invoice_Number__c = 'INV-EXPAND-BILLED';
+        update billedAppointment;
+
+        WorkOrderLedgerService.backfillWorkOrders(
+            new Set<Id>{
+                matchingWorkOrder.Id,
+                siblingRelatedWorkOrder.Id,
+                sharedWorkOrder.Id,
+                opportunityBOnlyWorkOrder.Id,
+                billedOnlyWorkOrder.Id,
+                noOpportunityWorkOrder.Id,
+                otherOwnerWorkOrder.Id
+            }
+        );
+
+        Date todayDate = Date.today();
+        BillingControl_DataProvider.BillingFilterContextDTO thisYearContext = thisYearDateContext(todayDate);
+        BillingControl_DataProvider.BillingFilterContextDTO ownerContext = thisYearDateContext(todayDate);
+        ownerContext.filters.add(
+            buildEqualsFilter('OPPORTUNITY_OWNER', 'Opportunity', 'OwnerId', UserInfo.getUserId())
+        );
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(61L, thisYearContext);
+        BillingControl_WorkOrderLedger.RuntimeBundle ownerRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(62L, ownerContext);
+        Test.stopTest();
+
+        System.assertNotEquals(
+            null,
+            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_THIS_WEEK').rows, matchingWorkOrder.Id)
+        );
+        System.assertEquals(
+            null,
+            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_THIS_WEEK').rows, siblingRelatedWorkOrder.Id),
+            'Expanded sibling must not inherit the matching Work Order completed-week bucket.'
+        );
+        BillingControl_Orders.WorkOrderRowWrapper relatedRow = findRow(
+            findSection(thisYearRuntime.sections, 'RELATED_WORK').rows,
+            siblingRelatedWorkOrder.Id
+        );
+        System.assertNotEquals(null, relatedRow, 'Expanded sibling with no operational bucket lands in Related Work.');
+
+        BillingControl_Orders.WorkOrderRowWrapper sharedRow = findRow(
+            findSection(thisYearRuntime.sections, 'MULTIPLE_OPPORTUNITIES').rows,
+            sharedWorkOrder.Id
+        );
+        System.assertNotEquals(null, sharedRow);
+        System.assertEquals(true, sharedRow.opportunityName.contains(opportunityA.Name));
+        System.assertEquals(true, sharedRow.opportunityName.contains(opportunityB.Name));
+        System.assertEquals(true, sharedRow.ownerName.contains(UserInfo.getName()));
+
+        System.assertEquals(
+            null,
+            findAnyRow(thisYearRuntime.sections, opportunityBOnlyWorkOrder.Id),
+            'Opportunity B Work Orders stay out unless Opportunity B also matches.'
+        );
+        System.assertEquals(
+            null,
+            findAnyRow(thisYearRuntime.sections, billedOnlyWorkOrder.Id),
+            'Billed completed appointments do not qualify an Opportunity.'
+        );
+        System.assertNotEquals(
+            null,
+            findAnyRow(thisYearRuntime.sections, noOpportunityWorkOrder.Id),
+            'No-opportunity completed work stays visible when no owner filter is set.'
+        );
+        System.assertNotEquals(null, findAnyRow(thisYearRuntime.sections, otherOwnerWorkOrder.Id));
+
+        System.assertNotEquals(null, findAnyRow(ownerRuntime.sections, matchingWorkOrder.Id));
+        System.assertNotEquals(null, findAnyRow(ownerRuntime.sections, siblingRelatedWorkOrder.Id));
+        System.assertEquals(
+            null,
+            findAnyRow(ownerRuntime.sections, otherOwnerWorkOrder.Id),
+            'Owner filter drops other Opportunity owners.'
+        );
+        System.assertEquals(
+            null,
+            findAnyRow(ownerRuntime.sections, noOpportunityWorkOrder.Id),
+            'No-opportunity rows drop when an owner is selected.'
+        );
+
+        BillingControl_Orders.WorkOrderRowWrapper matchingRow = findAnyRow(thisYearRuntime.sections, matchingWorkOrder.Id);
+        System.assertEquals(UserInfo.getName(), matchingRow.ownerName);
+    }
+
+    @IsTest
     static void ledgerDetailLoadsOnDemandForOneLedger() {
         WorkOrderLedgerAutomationControl.disableForTests();
         OrderDiaryAutomationControl.disableForTests();
@@ -521,6 +707,65 @@ private class BillingControl_WorkOrderLedgerTest {
             }
         }
         return rowCount;
+    }
+
+    private static BillingControl_Orders.WorkOrderRowWrapper findAnyRow(
+        List<BillingControl_Orders.BucketSectionWrapper> sections,
+        Id workOrderId
+    ) {
+        if (sections == null) {
+            return null;
+        }
+        for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
+            BillingControl_Orders.WorkOrderRowWrapper match = findRow(sectionRecord.rows, workOrderId);
+            if (match != null) {
+                return match;
+            }
+        }
+        return null;
+    }
+
+    private static BillingControl_DataProvider.BillingFilterContextDTO thisYearDateContext(Date todayDate) {
+        BillingControl_DataProvider.BillingFilterContextDTO context =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
+        context.filters.add(
+            dateBoundFilter(
+                'DATE_FILTER_START',
+                'ServiceAppointment',
+                'ActualEndTime',
+                'Greater Or Equal',
+                Date.newInstance(todayDate.year(), 1, 1),
+                false
+            )
+        );
+        context.filters.add(
+            dateBoundFilter(
+                'DATE_FILTER_END',
+                'ServiceAppointment',
+                'ActualEndTime',
+                'Less Or Equal',
+                Date.newInstance(todayDate.year(), 12, 31),
+                true
+            )
+        );
+        return context;
+    }
+
+    private static BillingControl_DataProvider.BillingFilterDTO buildEqualsFilter(
+        String developerKey,
+        String objectApiName,
+        String fieldApiName,
+        String value
+    ) {
+        BillingControl_DataProvider.BillingFilterDTO filterRecord =
+            new BillingControl_DataProvider.BillingFilterDTO();
+        filterRecord.developerKey = developerKey;
+        filterRecord.objectApiName = objectApiName;
+        filterRecord.fieldApiName = fieldApiName;
+        filterRecord.operator = 'Equals';
+        filterRecord.valueType = 'Static';
+        filterRecord.value = value;
+        return filterRecord;
     }
 
     private static BillingControl_DataProvider.BillingFilterDTO dateBoundFilter(

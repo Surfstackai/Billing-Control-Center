@@ -47,7 +47,11 @@ public with sharing class BillingControl_DataProvider {
     };
 
     @AuraEnabled(cacheable=true)
-    public static OrdersRuntimeDataDTO getOrdersRuntimeData(Long refreshToken, BillingDateFilterDTO dateFilter) {
+    public static OrdersRuntimeDataDTO getOrdersRuntimeData(
+        Long refreshToken,
+        BillingDateFilterDTO dateFilter,
+        String opportunityOwnerId
+    ) {
         OrdersRuntimeDataDTO result = new OrdersRuntimeDataDTO();
         BillingControl_ConfigService.TabConfigDTO tabConfig = BillingControl_ConfigService.getTabConfig(ORDERS_TAB_KEY);
         BillingControl_ConfigService.DatasetConfigDTO datasetConfig = findDataset(tabConfig, ORDERS_DATASET_KEY);
@@ -55,11 +59,12 @@ public with sharing class BillingControl_DataProvider {
         applyDateFilterToContext(
             result.filterContext,
             dateFilter,
-            'Work_Order_Ledger__c',
-            'Last_Service_Date__c',
-            false,
+            'ServiceAppointment',
+            'ActualEndTime',
+            true,
             result.warnings
         );
+        applyOpportunityOwnerFilterToContext(result.filterContext, opportunityOwnerId);
 
         if (isDatasetConfiguredForHandlers(datasetConfig, ORDERS_DATASET_KEY, ORDERS_SUPPORTED_HANDLER_KEYS, result.warnings)) {
             loadOrdersRuntimeData(refreshToken, result);
@@ -142,8 +147,12 @@ public with sharing class BillingControl_DataProvider {
         return result;
     }
 
+    public static OrdersRuntimeDataDTO getOrdersRuntimeData(Long refreshToken, BillingDateFilterDTO dateFilter) {
+        return getOrdersRuntimeData(refreshToken, dateFilter, null);
+    }
+
     public static OrdersRuntimeDataDTO getOrdersRuntimeData(Long refreshToken) {
-        return getOrdersRuntimeData(refreshToken, null);
+        return getOrdersRuntimeData(refreshToken, null, null);
     }
 
     public static InvoicingRuntimeDataDTO getInvoicingRuntimeData(Long refreshToken) {
@@ -354,6 +363,24 @@ public with sharing class BillingControl_DataProvider {
         dto.valueType = record.Value_Type__c;
         dto.sequence = record.Sequence__c;
         return dto;
+    }
+
+    private static void applyOpportunityOwnerFilterToContext(
+        BillingFilterContextDTO context,
+        String opportunityOwnerId
+    ) {
+        if (context == null || String.isBlank(opportunityOwnerId)) {
+            return;
+        }
+        BillingFilterDTO dto = new BillingFilterDTO();
+        dto.developerKey = 'OPPORTUNITY_OWNER';
+        dto.objectApiName = 'Opportunity';
+        dto.fieldApiName = 'OwnerId';
+        dto.operator = 'Equals';
+        dto.valueType = 'Static';
+        dto.sequence = 9992;
+        dto.value = opportunityOwnerId;
+        context.filters.add(dto);
     }
 
     private static void applyDateFilterToContext(
@@ -908,6 +935,8 @@ public with sharing class BillingControl_DataProvider {
         result.kpis.noServiceAppointmentCount = 0;
         result.kpis.multipleOpportunitiesRevenue = 0;
         result.kpis.multipleOpportunitiesCount = 0;
+        result.kpis.relatedWorkRevenue = 0;
+        result.kpis.relatedWorkCount = 0;
         result.kpis.completedTodayRevenue = 0;
         result.kpis.completedTodayCount = 0;
         result.kpis.inProgressRevenue = 0;
@@ -931,6 +960,11 @@ public with sharing class BillingControl_DataProvider {
             new BillingControl_Orders.BucketSectionWrapper(
                 'MULTIPLE_OPPORTUNITIES',
                 'Work Orders with Multiple Opportunities',
+                new List<BillingControl_Orders.WorkOrderRowWrapper>()
+            ),
+            new BillingControl_Orders.BucketSectionWrapper(
+                'RELATED_WORK',
+                'Related Work',
                 new List<BillingControl_Orders.WorkOrderRowWrapper>()
             )
         };

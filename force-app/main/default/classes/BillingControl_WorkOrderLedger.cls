@@ -11,6 +11,7 @@ public with sharing class BillingControl_WorkOrderLedger {
     private static final String BUCKET_NO_OPPORTUNITY = 'NO_OPPORTUNITY';
     private static final String BUCKET_NO_SERVICE_APPOINTMENT = 'NO_SERVICE_APPOINTMENT';
     private static final String BUCKET_MULTIPLE_OPPORTUNITIES = 'MULTIPLE_OPPORTUNITIES';
+    private static final String BUCKET_RELATED_WORK = 'RELATED_WORK';
 
     private static final String SA_STATUS_COMPLETED = 'Completed';
     private static final Integer MAX_ROWS_PER_SECTION = 500;
@@ -26,7 +27,8 @@ public with sharing class BillingControl_WorkOrderLedger {
         BUCKET_COMPLETED_THIS_MONTH,
         BUCKET_NO_OPPORTUNITY,
         BUCKET_NO_SERVICE_APPOINTMENT,
-        BUCKET_MULTIPLE_OPPORTUNITIES
+        BUCKET_MULTIPLE_OPPORTUNITIES,
+        BUCKET_RELATED_WORK
     };
 
     private static final Map<String, String> BUCKET_LABELS = new Map<String, String>{
@@ -37,7 +39,8 @@ public with sharing class BillingControl_WorkOrderLedger {
         BUCKET_COMPLETED_THIS_MONTH => 'Completed This Month',
         BUCKET_NO_OPPORTUNITY => 'Work Orders with No Opportunities',
         BUCKET_NO_SERVICE_APPOINTMENT => 'Work Orders with No Service Appointment',
-        BUCKET_MULTIPLE_OPPORTUNITIES => 'Work Orders with Multiple Opportunities'
+        BUCKET_MULTIPLE_OPPORTUNITIES => 'Work Orders with Multiple Opportunities',
+        BUCKET_RELATED_WORK => 'Related Work'
     };
 
     private static final Map<String, String> EVENT_LABELS = new Map<String, String>{
@@ -348,6 +351,7 @@ public with sharing class BillingControl_WorkOrderLedger {
         applyKpi(result, rowsByBucket.get(BUCKET_NO_OPPORTUNITY), 'noOpportunity');
         applyKpi(result, rowsByBucket.get(BUCKET_NO_SERVICE_APPOINTMENT), 'noServiceAppointment');
         applyKpi(result, rowsByBucket.get(BUCKET_MULTIPLE_OPPORTUNITIES), 'multipleOpportunities');
+        applyKpi(result, rowsByBucket.get(BUCKET_RELATED_WORK), 'relatedWork');
         result.completedTodayCount = 0;
         result.completedTodayRevenue = 0;
         result.inProgressCount = 0;
@@ -426,6 +430,9 @@ public with sharing class BillingControl_WorkOrderLedger {
         } else if (prefix == 'multipleOpportunities') {
             result.multipleOpportunitiesCount = recordCount;
             result.multipleOpportunitiesRevenue = totalAmount;
+        } else if (prefix == 'relatedWork') {
+            result.relatedWorkCount = recordCount;
+            result.relatedWorkRevenue = totalAmount;
         }
     }
 
@@ -484,29 +491,32 @@ public with sharing class BillingControl_WorkOrderLedger {
     ) {
         Datetime rangeStart;
         Datetime rangeEnd;
+        Id opportunityOwnerId;
         if (filterContext != null && filterContext.filters != null) {
             for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
                 String fieldKey = normalizeKey(filterRecord.objectApiName) + '.' + normalizeKey(filterRecord.fieldApiName);
-                if (!isLedgerDateFilter(fieldKey)) {
+                if (isLedgerDateFilter(fieldKey)) {
+                    String operatorValue = normalizeKey(filterRecord.operator);
+                    Datetime parsed = parseFilterDatetime(filterRecord.value);
+                    if (parsed == null) {
+                        continue;
+                    }
+                    if (operatorValue == 'GREATER OR EQUAL' || operatorValue == 'GREATER THAN') {
+                        rangeStart = parsed;
+                    } else if (operatorValue == 'LESS OR EQUAL' || operatorValue == 'LESS THAN') {
+                        rangeEnd = parsed;
+                    }
                     continue;
                 }
-                String operatorValue = normalizeKey(filterRecord.operator);
-                Datetime parsed = parseFilterDatetime(filterRecord.value);
-                if (parsed == null) {
-                    continue;
-                }
-                if (operatorValue == 'GREATER OR EQUAL' || operatorValue == 'GREATER THAN') {
-                    rangeStart = parsed;
-                } else if (operatorValue == 'LESS OR EQUAL' || operatorValue == 'LESS THAN') {
-                    rangeEnd = parsed;
+                if (isOpportunityOwnerFilter(fieldKey) && normalizeKey(filterRecord.operator) == 'EQUALS') {
+                    opportunityOwnerId = tryParseId(filterRecord.value);
                 }
             }
         }
 
         Set<String> closedStatuses = WorkOrderLedgerService.getClosedWorkOrderStatusValues();
         Integer ledgerLimit = LEDGER_QUERY_LIMIT;
-        Date rangeStartDate = rangeStart == null ? null : rangeStart.date();
-        Date rangeEndDate = rangeEnd == null ? null : rangeEnd.date();
+        Set<Id> includedWorkOrderIds = new Set<Id>();
         String soql =
             'SELECT Id, Work_Order__c, Account__c, Account__r.Name, Account__r.Owner.Name,'
             + ' Reconciliation_Status__c, Attention_Required__c, Attention_Reason__c,'
@@ -518,14 +528,276 @@ public with sharing class BillingControl_WorkOrderLedger {
         if (!closedStatuses.isEmpty()) {
             soql += ' AND Work_Order__r.Status NOT IN :closedStatuses';
         }
-        if (rangeStartDate != null && rangeEndDate != null) {
-            soql += ' AND ('
-                + ' (Last_Service_Date__c >= :rangeStartDate AND Last_Service_Date__c <= :rangeEndDate)'
-                + ' OR (Last_Service_Date__c = NULL AND Work_Order__r.CreatedDate >= :rangeStart AND Work_Order__r.CreatedDate <= :rangeEnd)'
-                + ' )';
+        if (rangeStart != null && rangeEnd != null) {
+            includedWorkOrderIds = resolveIncludedWorkOrderIds(rangeStart, rangeEnd, opportunityOwnerId);
+            if (includedWorkOrderIds.isEmpty()) {
+                return new List<Work_Order_Ledger__c>();
+            }
+            soql += ' AND Work_Order__c IN :includedWorkOrderIds';
         }
         soql += ' ORDER BY Last_Service_Date__c DESC NULLS LAST, Work_Order__r.CreatedDate DESC NULLS LAST LIMIT :ledgerLimit';
         return Database.query(soql);
+    }
+
+    private static Set<Id> resolveIncludedWorkOrderIds(
+        Datetime rangeStart,
+        Datetime rangeEnd,
+        Id opportunityOwnerId
+    ) {
+        Set<Id> includedWorkOrderIds = new Set<Id>();
+        List<ServiceAppointment> candidates = queryCompletedAppointmentsInRange(rangeStart, rangeEnd);
+        if (candidates.isEmpty()) {
+            return includedWorkOrderIds;
+        }
+
+        Map<Id, Id> workOrderIdByAppointmentId = resolveWorkOrderIdsForAppointments(candidates);
+        Set<Id> candidateWorkOrderIds = new Set<Id>(workOrderIdByAppointmentId.values());
+        Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId =
+            queryJunctionsByWorkOrderId(candidateWorkOrderIds, new List<String>{ 'Work_Order__c', 'Opportunity__c' });
+
+        Set<Id> matchingOpportunityIds = new Set<Id>();
+        for (ServiceAppointment appointmentRecord : candidates) {
+            if (isBilledAppointment(appointmentRecord)) {
+                continue;
+            }
+            Id workOrderId = workOrderIdByAppointmentId.get(appointmentRecord.Id);
+            Id opportunityId = resolveAttributedOpportunityId(
+                appointmentRecord,
+                workOrderId == null ? null : junctionsByWorkOrderId.get(workOrderId)
+            );
+            if (opportunityId == null) {
+                if (opportunityOwnerId == null && workOrderId != null) {
+                    includedWorkOrderIds.add(workOrderId);
+                }
+                continue;
+            }
+            matchingOpportunityIds.add(opportunityId);
+        }
+
+        if (opportunityOwnerId != null && !matchingOpportunityIds.isEmpty()) {
+            matchingOpportunityIds = filterOpportunityIdsByOwner(matchingOpportunityIds, opportunityOwnerId);
+        }
+        if (!matchingOpportunityIds.isEmpty()) {
+            for (Opportunity_WorkOrder__c junctionRecord : [
+                SELECT Work_Order__c
+                FROM Opportunity_WorkOrder__c
+                WHERE Opportunity__c IN :matchingOpportunityIds
+                AND Work_Order__c != NULL
+            ]) {
+                includedWorkOrderIds.add(junctionRecord.Work_Order__c);
+            }
+        }
+        return includedWorkOrderIds;
+    }
+
+    private static List<ServiceAppointment> queryCompletedAppointmentsInRange(
+        Datetime rangeStart,
+        Datetime rangeEnd
+    ) {
+        List<ServiceAppointment> candidates = new List<ServiceAppointment>();
+        Set<Id> seenAppointmentIds = new Set<Id>();
+        Set<String> closedStatuses = WorkOrderLedgerService.getClosedWorkOrderStatusValues();
+        Integer queryLimit = LEDGER_QUERY_LIMIT;
+        if (closedStatuses.isEmpty()) {
+            for (ServiceAppointment appointmentRecord : [
+                SELECT Id,
+                    ParentRecordId,
+                    Status,
+                    ActualEndTime,
+                    Invoice_Number__c,
+                    WO_Inv_Status__c,
+                    Opportunity__c
+                FROM ServiceAppointment
+                WHERE Status = :SA_STATUS_COMPLETED
+                AND ActualEndTime >= :rangeStart
+                AND ActualEndTime <= :rangeEnd
+                AND ParentRecordId IN (SELECT Id FROM WorkOrder)
+                ORDER BY ActualEndTime DESC NULLS LAST
+                LIMIT :queryLimit
+            ]) {
+                if (seenAppointmentIds.add(appointmentRecord.Id)) {
+                    candidates.add(appointmentRecord);
+                }
+            }
+            for (ServiceAppointment appointmentRecord : [
+                SELECT Id,
+                    ParentRecordId,
+                    Status,
+                    ActualEndTime,
+                    Invoice_Number__c,
+                    WO_Inv_Status__c,
+                    Opportunity__c
+                FROM ServiceAppointment
+                WHERE Status = :SA_STATUS_COMPLETED
+                AND ActualEndTime >= :rangeStart
+                AND ActualEndTime <= :rangeEnd
+                AND ParentRecordId IN (SELECT Id FROM WorkOrderLineItem)
+                ORDER BY ActualEndTime DESC NULLS LAST
+                LIMIT :queryLimit
+            ]) {
+                if (seenAppointmentIds.add(appointmentRecord.Id)) {
+                    candidates.add(appointmentRecord);
+                }
+            }
+            return candidates;
+        }
+        for (ServiceAppointment appointmentRecord : [
+            SELECT Id,
+                ParentRecordId,
+                Status,
+                ActualEndTime,
+                Invoice_Number__c,
+                WO_Inv_Status__c,
+                Opportunity__c
+            FROM ServiceAppointment
+            WHERE Status = :SA_STATUS_COMPLETED
+            AND ActualEndTime >= :rangeStart
+            AND ActualEndTime <= :rangeEnd
+            AND ParentRecordId IN (
+                SELECT Id
+                FROM WorkOrder
+                WHERE Status NOT IN :closedStatuses
+            )
+            ORDER BY ActualEndTime DESC NULLS LAST
+            LIMIT :queryLimit
+        ]) {
+            if (seenAppointmentIds.add(appointmentRecord.Id)) {
+                candidates.add(appointmentRecord);
+            }
+        }
+        for (ServiceAppointment appointmentRecord : [
+            SELECT Id,
+                ParentRecordId,
+                Status,
+                ActualEndTime,
+                Invoice_Number__c,
+                WO_Inv_Status__c,
+                Opportunity__c
+            FROM ServiceAppointment
+            WHERE Status = :SA_STATUS_COMPLETED
+            AND ActualEndTime >= :rangeStart
+            AND ActualEndTime <= :rangeEnd
+            AND ParentRecordId IN (
+                SELECT Id
+                FROM WorkOrderLineItem
+                WHERE WorkOrder.Status NOT IN :closedStatuses
+            )
+            ORDER BY ActualEndTime DESC NULLS LAST
+            LIMIT :queryLimit
+        ]) {
+            if (seenAppointmentIds.add(appointmentRecord.Id)) {
+                candidates.add(appointmentRecord);
+            }
+        }
+        return candidates;
+    }
+
+    private static Map<Id, Id> resolveWorkOrderIdsForAppointments(List<ServiceAppointment> appointments) {
+        Map<Id, Id> workOrderIdByAppointmentId = new Map<Id, Id>();
+        Set<Id> parentIds = new Set<Id>();
+        for (ServiceAppointment appointmentRecord : appointments) {
+            if (appointmentRecord != null && appointmentRecord.ParentRecordId != null) {
+                parentIds.add(appointmentRecord.ParentRecordId);
+            }
+        }
+        Map<Id, Id> workOrderIdByParentId = new Map<Id, Id>();
+        Set<Id> lineItemIds = new Set<Id>();
+        for (Id parentId : parentIds) {
+            if (parentId.getSObjectType() == WorkOrder.SObjectType) {
+                workOrderIdByParentId.put(parentId, parentId);
+            } else if (parentId.getSObjectType() == WorkOrderLineItem.SObjectType) {
+                lineItemIds.add(parentId);
+            }
+        }
+        if (!lineItemIds.isEmpty()) {
+            for (WorkOrderLineItem lineItem : [
+                SELECT Id, WorkOrderId
+                FROM WorkOrderLineItem
+                WHERE Id IN :lineItemIds
+            ]) {
+                if (lineItem.WorkOrderId != null) {
+                    workOrderIdByParentId.put(lineItem.Id, lineItem.WorkOrderId);
+                }
+            }
+        }
+        for (ServiceAppointment appointmentRecord : appointments) {
+            if (appointmentRecord == null) {
+                continue;
+            }
+            workOrderIdByAppointmentId.put(
+                appointmentRecord.Id,
+                workOrderIdByParentId.get(appointmentRecord.ParentRecordId)
+            );
+        }
+        return workOrderIdByAppointmentId;
+    }
+
+    private static Id resolveAttributedOpportunityId(
+        ServiceAppointment appointmentRecord,
+        List<Opportunity_WorkOrder__c> junctions
+    ) {
+        if (appointmentRecord != null && appointmentRecord.Opportunity__c != null) {
+            return appointmentRecord.Opportunity__c;
+        }
+        Set<Id> uniqueOpportunityIds = new Set<Id>();
+        if (junctions != null) {
+            for (Opportunity_WorkOrder__c junctionRecord : junctions) {
+                if (junctionRecord != null && junctionRecord.Opportunity__c != null) {
+                    uniqueOpportunityIds.add(junctionRecord.Opportunity__c);
+                }
+            }
+        }
+        if (uniqueOpportunityIds.size() == 1) {
+            return new List<Id>(uniqueOpportunityIds)[0];
+        }
+        return null;
+    }
+
+    private static Set<Id> filterOpportunityIdsByOwner(Set<Id> opportunityIds, Id opportunityOwnerId) {
+        Set<Id> matchingIds = new Set<Id>();
+        if (opportunityIds == null || opportunityIds.isEmpty() || opportunityOwnerId == null) {
+            return matchingIds;
+        }
+        for (Opportunity opportunityRecord : [
+            SELECT Id
+            FROM Opportunity
+            WHERE Id IN :opportunityIds
+            AND OwnerId = :opportunityOwnerId
+        ]) {
+            matchingIds.add(opportunityRecord.Id);
+        }
+        return matchingIds;
+    }
+
+    private static Boolean isBilledAppointment(ServiceAppointment appointmentRecord) {
+        if (appointmentRecord == null) {
+            return false;
+        }
+        return containsBilledMarker(appointmentRecord.Invoice_Number__c)
+            || containsBilledMarker(appointmentRecord.WO_Inv_Status__c);
+    }
+
+    private static Boolean containsBilledMarker(String value) {
+        if (String.isBlank(value)) {
+            return false;
+        }
+        String normalized = value.toLowerCase();
+        return normalized.contains('inv') || normalized.contains('inspection');
+    }
+
+    private static Boolean isOpportunityOwnerFilter(String fieldKey) {
+        return fieldKey == 'OPPORTUNITY.OWNERID';
+    }
+
+    private static Id tryParseId(String rawValue) {
+        if (String.isBlank(rawValue)) {
+            return null;
+        }
+        try {
+            return Id.valueOf(rawValue);
+        } catch (Exception ex) {
+            return null;
+        }
     }
 
     private static Map<Id, List<ServiceAppointment>> queryListAppointmentsByWorkOrderId(Set<Id> workOrderIds) {
@@ -607,7 +879,9 @@ public with sharing class BillingControl_WorkOrderLedger {
                 'Work_Order__c',
                 'Opportunity__c',
                 'Opportunity__r.Name',
-                'Opportunity__r.Amount'
+                'Opportunity__r.Amount',
+                'Opportunity__r.OwnerId',
+                'Opportunity__r.Owner.Name'
             }
         );
     }
@@ -675,7 +949,6 @@ public with sharing class BillingControl_WorkOrderLedger {
         row.accountOwnerName = ledgerRecord.Account__r == null || ledgerRecord.Account__r.Owner == null
             ? null
             : ledgerRecord.Account__r.Owner.Name;
-        row.ownerName = row.accountOwnerName;
         row.reconciliationStatus = ledgerRecord.Reconciliation_Status__c;
         row.attentionRequired = ledgerRecord.Attention_Required__c == true;
         row.attentionReason = ledgerRecord.Attention_Reason__c;
@@ -715,6 +988,8 @@ public with sharing class BillingControl_WorkOrderLedger {
         List<BillingControl_Orders.WorkOrderRowWrapper> relatedOpportunities =
             new List<BillingControl_Orders.WorkOrderRowWrapper>();
         List<String> opportunityNames = new List<String>();
+        List<String> opportunityOwnerNames = new List<String>();
+        Set<Id> seenOwnerIds = new Set<Id>();
         for (Opportunity_WorkOrder__c junctionRecord : junctions) {
             if (junctionRecord.Opportunity__c == null || seenOpportunityIds.contains(junctionRecord.Opportunity__c)) {
                 continue;
@@ -726,9 +1001,19 @@ public with sharing class BillingControl_WorkOrderLedger {
             opportunityRow.opportunityName = junctionRecord.Opportunity__r == null
                 ? null
                 : junctionRecord.Opportunity__r.Name;
+            if (junctionRecord.Opportunity__r != null) {
+                opportunityRow.ownerId = junctionRecord.Opportunity__r.OwnerId;
+                opportunityRow.ownerName = junctionRecord.Opportunity__r.Owner == null
+                    ? null
+                    : junctionRecord.Opportunity__r.Owner.Name;
+            }
             relatedOpportunities.add(opportunityRow);
             if (String.isNotBlank(opportunityRow.opportunityName)) {
                 opportunityNames.add(opportunityRow.opportunityName);
+            }
+            if (opportunityRow.ownerId != null && seenOwnerIds.add(opportunityRow.ownerId)
+                && String.isNotBlank(opportunityRow.ownerName)) {
+                opportunityOwnerNames.add(opportunityRow.ownerName);
             }
             if (junctionRecord.Opportunity__r != null && junctionRecord.Opportunity__r.Amount != null) {
                 amountTotal += junctionRecord.Opportunity__r.Amount;
@@ -738,9 +1023,15 @@ public with sharing class BillingControl_WorkOrderLedger {
         if (relatedOpportunities.size() == 1) {
             row.opportunityId = relatedOpportunities[0].opportunityId;
             row.opportunityName = relatedOpportunities[0].opportunityName;
+            row.ownerId = relatedOpportunities[0].ownerId;
+            row.ownerName = relatedOpportunities[0].ownerName;
         } else if (!relatedOpportunities.isEmpty()) {
             row.opportunityId = null;
             row.opportunityName = String.join(opportunityNames, ', ');
+            row.ownerName = String.join(opportunityOwnerNames, ', ');
+            if (seenOwnerIds.size() == 1) {
+                row.ownerId = new List<Id>(seenOwnerIds)[0];
+            }
         }
         row.opportunityCount = seenOpportunityIds.size();
         row.opportunityAmount = row.opportunityCount == 0 ? null : amountTotal;
@@ -801,6 +1092,9 @@ public with sharing class BillingControl_WorkOrderLedger {
         if (opportunityCount > 1) {
             bucketKeys.add(BUCKET_MULTIPLE_OPPORTUNITIES);
         }
+        if (bucketKeys.isEmpty()) {
+            bucketKeys.add(BUCKET_RELATED_WORK);
+        }
         return bucketKeys;
     }
 
@@ -832,7 +1126,8 @@ public with sharing class BillingControl_WorkOrderLedger {
     }
 
     private static Boolean isLedgerDateFilter(String fieldKey) {
-        return fieldKey == 'WORK_ORDER_LEDGER__C.LAST_SERVICE_DATE__C'
+        return fieldKey == 'SERVICEAPPOINTMENT.ACTUALENDTIME'
+            || fieldKey == 'WORK_ORDER_LEDGER__C.LAST_SERVICE_DATE__C'
             || fieldKey == 'WORKORDER.CREATEDDATE'
             || fieldKey == 'WORK_ORDER.CREATEDDATE';
     }

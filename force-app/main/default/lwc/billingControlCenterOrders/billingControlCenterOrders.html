@@ -15,6 +15,16 @@
                         end-date={dateFilterEnd}
                         ondatefilterchange={handleDateFilterChange}>
                     </c-billing-control-center-date-filter>
+                    <lightning-record-picker
+                        class="owner-picker"
+                        label="Opportunity Owner"
+                        placeholder="Opportunity Owner"
+                        object-api-name="User"
+                        value={opportunityOwnerId}
+                        display-info={userPickerDisplayInfo}
+                        matching-info={userPickerMatchingInfo}
+                        onchange={handleOpportunityOwnerChange}>
+                    </lightning-record-picker>
                     <lightning-button
                         label={refreshLabel}
                         icon-name="utility:refresh"
@@ -33,6 +43,16 @@
                         end-date={dateFilterEnd}
                         ondatefilterchange={handleDateFilterChange}>
                     </c-billing-control-center-date-filter>
+                    <lightning-record-picker
+                        class="owner-picker"
+                        label="Opportunity Owner"
+                        placeholder="Opportunity Owner"
+                        object-api-name="User"
+                        value={opportunityOwnerId}
+                        display-info={userPickerDisplayInfo}
+                        matching-info={userPickerMatchingInfo}
+                        onchange={handleOpportunityOwnerChange}>
+                    </lightning-record-picker>
                     <c-billing-control-center-action-bar
                         actions={heroActions}
                         onactionclick={handleHeroActionClick}>
