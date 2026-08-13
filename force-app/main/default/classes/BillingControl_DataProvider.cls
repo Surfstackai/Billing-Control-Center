@@ -31,7 +31,9 @@ public with sharing class BillingControl_DataProvider {
 
     private static final Set<String> ORDERS_SUPPORTED_HANDLER_KEYS = new Set<String>{
         'BILLINGCONTROL_ORDERS.GETKPIS',
-        'BILLINGCONTROL_ORDERS.GETBUCKETWORKORDERS'
+        'BILLINGCONTROL_ORDERS.GETBUCKETWORKORDERS',
+        'BILLINGCONTROL_WORKORDERLEDGER.GETKPIS',
+        'BILLINGCONTROL_WORKORDERLEDGER.GETBUCKETWORKORDERS'
     };
     private static final Set<String> INVOICING_SUPPORTED_HANDLER_KEYS = new Set<String>{
         'BILLINGCONTROL_INVOICING.GETSERVICEAPPOINTMENTBILLINGMETRICS',
@@ -53,8 +55,8 @@ public with sharing class BillingControl_DataProvider {
         applyDateFilterToContext(
             result.filterContext,
             dateFilter,
-            'Order',
-            'EffectiveDate',
+            'Work_Order_Ledger__c',
+            'Last_Service_Date__c',
             false,
             result.warnings
         );
@@ -64,7 +66,7 @@ public with sharing class BillingControl_DataProvider {
             return result;
         }
 
-        result.warnings.add('Order diary dataset missing or invalid.');
+        result.warnings.add('Work Order Ledger dataset missing or invalid.');
         result.warnings.add('Legacy fallback disabled.');
         initializeEmptyOrdersRuntimeData(result);
         return result;
@@ -152,18 +154,30 @@ public with sharing class BillingControl_DataProvider {
         return getReceivablesRuntimeData(null, null);
     }
 
+    @AuraEnabled
+    public static BillingControl_WorkOrderLedger.LedgerDetailWrapper getWorkOrderLedgerDetail(Id ledgerId) {
+        return BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(ledgerId);
+    }
+
+    @AuraEnabled(cacheable=true)
+    public static BillingControl_WorkOrderLedger.ValidationCountsWrapper getWorkOrderLedgerValidationCounts() {
+        return BillingControl_WorkOrderLedger.getValidationCounts();
+    }
+
     private static void loadOrdersRuntimeData(Long refreshToken, OrdersRuntimeDataDTO result) {
         try {
-            result.kpis = BillingControl_Orders.getKpis(refreshToken, result.filterContext);
-            result.bucketSections = BillingControl_Orders.getBucketWorkOrders(refreshToken, result.filterContext);
+            BillingControl_WorkOrderLedger.RuntimeBundle runtime =
+                BillingControl_WorkOrderLedger.getRuntime(refreshToken, result.filterContext);
+            result.kpis = runtime.kpis;
+            result.bucketSections = runtime.sections;
             appendRuntimeWarnings(result.warnings, result.filterContext);
             if (countOrderRows(result.bucketSections) == 0) {
-                result.warnings.add('No Order diary records found.');
+                result.warnings.add('No Work Order Ledger records found.');
             }
         } catch (Exception ex) {
-            result.warnings.add('Order diary dataset missing or invalid.');
+            result.warnings.add('Work Order Ledger dataset missing or invalid.');
             result.warnings.add('Legacy fallback disabled.');
-            result.warnings.add('Orders filter application failed. ' + ex.getMessage());
+            result.warnings.add('Work Order Ledger filter application failed. ' + ex.getMessage());
             initializeEmptyOrdersRuntimeData(result);
         }
     }
@@ -204,7 +218,7 @@ public with sharing class BillingControl_DataProvider {
             appendRuntimeWarnings(result.warnings, result.invoicesFilterContext);
             appendRuntimeWarnings(result.warnings, result.commissionsFilterContext);
             if (countReceivablesRows(result.sections) == 0) {
-                result.warnings.add('No Order diary records found.');
+                result.warnings.add('No outstanding invoices or commissions found.');
             }
         } catch (Exception ex) {
             result.warnings.add('Order diary dataset missing or invalid.');
@@ -427,6 +441,13 @@ public with sharing class BillingControl_DataProvider {
         if (normalizedKey == 'THIS YEAR') {
             Date startOfYear = Date.newInstance(todayDate.year(), 1, 1);
             return new DateRangeDTO(startOfYear, Date.newInstance(todayDate.year(), 12, 31));
+        }
+        if (normalizedKey == 'LAST YEAR' || normalizedKey == 'PRIOR YEAR') {
+            Integer priorYear = todayDate.year() - 1;
+            return new DateRangeDTO(
+                Date.newInstance(priorYear, 1, 1),
+                Date.newInstance(priorYear, 12, 31)
+            );
         }
         if (normalizedKey == 'CUSTOM') {
             Date startDate = parseDateValue(dateFilter.startDate);
@@ -734,7 +755,10 @@ public with sharing class BillingControl_DataProvider {
                 'ORDER.EFFECTIVEDATE',
                 'ORDER.CREATEDDATE',
                 'OPPORTUNITY.STAGENAME',
-                'OPPORTUNITY.CLOSEDATE'
+                'OPPORTUNITY.CLOSEDATE',
+                'WORK_ORDER_LEDGER__C.LAST_MATERIAL_ACTIVITY__C',
+                'WORK_ORDER_LEDGER__C.LAST_SERVICE_DATE__C',
+                'WORKORDER.CREATEDDATE'
             }.contains(normalizedFieldKey);
         }
 
@@ -786,6 +810,9 @@ public with sharing class BillingControl_DataProvider {
             || normalizedFieldKey == 'SERVICEAPPOINTMENT.ACTUALENDTIME'
             || normalizedFieldKey == 'ORDER.RECEIVED_AMOUNT__C'
             || normalizedFieldKey == 'ORDER.OUTSTANDING_AMOUNT__C'
+            || normalizedFieldKey == 'WORK_ORDER_LEDGER__C.LAST_MATERIAL_ACTIVITY__C'
+            || normalizedFieldKey == 'WORK_ORDER_LEDGER__C.LAST_SERVICE_DATE__C'
+            || normalizedFieldKey == 'WORKORDER.CREATEDDATE'
             || normalizedFieldKey == 'ORDER.INVOICED_AMOUNT__C'
             || normalizedFieldKey == 'COMMISSION__C.COMMISSION_PAID__C'
         ) {
@@ -822,7 +849,7 @@ public with sharing class BillingControl_DataProvider {
             return false;
         }
 
-        if (new Set<String>{ 'TODAY', 'YESTERDAY', 'TOMORROW', 'THIS WEEK', 'THIS MONTH', 'THIS QUARTER', 'THIS YEAR' }.contains(normalizedValue)) {
+        if (new Set<String>{ 'TODAY', 'YESTERDAY', 'TOMORROW', 'THIS WEEK', 'THIS MONTH', 'THIS QUARTER', 'THIS YEAR', 'LAST YEAR', 'PRIOR YEAR' }.contains(normalizedValue)) {
             return true;
         }
 
@@ -871,6 +898,16 @@ public with sharing class BillingControl_DataProvider {
         result.kpis.scheduledCount = 0;
         result.kpis.scheduledTodayRevenue = 0;
         result.kpis.scheduledTodayCount = 0;
+        result.kpis.completedThisWeekRevenue = 0;
+        result.kpis.completedThisWeekCount = 0;
+        result.kpis.completedThisMonthRevenue = 0;
+        result.kpis.completedThisMonthCount = 0;
+        result.kpis.noOpportunityRevenue = 0;
+        result.kpis.noOpportunityCount = 0;
+        result.kpis.noServiceAppointmentRevenue = 0;
+        result.kpis.noServiceAppointmentCount = 0;
+        result.kpis.multipleOpportunitiesRevenue = 0;
+        result.kpis.multipleOpportunitiesCount = 0;
         result.kpis.completedTodayRevenue = 0;
         result.kpis.completedTodayCount = 0;
         result.kpis.inProgressRevenue = 0;
@@ -879,7 +916,23 @@ public with sharing class BillingControl_DataProvider {
             new BillingControl_Orders.BucketSectionWrapper('UNSCHEDULED', 'Unscheduled Work', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
             new BillingControl_Orders.BucketSectionWrapper('SCHEDULED', 'Scheduled Work', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
             new BillingControl_Orders.BucketSectionWrapper('SCHEDULED_TODAY', 'Scheduled for Today', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
-            new BillingControl_Orders.BucketSectionWrapper('COMPLETED_TODAY', 'Completed Today', new List<BillingControl_Orders.WorkOrderRowWrapper>())
+            new BillingControl_Orders.BucketSectionWrapper('COMPLETED_THIS_WEEK', 'Completed This Week', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
+            new BillingControl_Orders.BucketSectionWrapper('COMPLETED_THIS_MONTH', 'Completed This Month', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
+            new BillingControl_Orders.BucketSectionWrapper(
+                'NO_OPPORTUNITY',
+                'Work Orders with No Opportunities',
+                new List<BillingControl_Orders.WorkOrderRowWrapper>()
+            ),
+            new BillingControl_Orders.BucketSectionWrapper(
+                'NO_SERVICE_APPOINTMENT',
+                'Work Orders with No Service Appointment',
+                new List<BillingControl_Orders.WorkOrderRowWrapper>()
+            ),
+            new BillingControl_Orders.BucketSectionWrapper(
+                'MULTIPLE_OPPORTUNITIES',
+                'Work Orders with Multiple Opportunities',
+                new List<BillingControl_Orders.WorkOrderRowWrapper>()
+            )
         };
     }
 

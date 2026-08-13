@@ -12,3 +12,25 @@
     color: var(--bcc-muted);
     font-size: 0.8rem;
 }
+
+.kpi-grid_compact {
+    gap: 0.65rem;
+    padding-bottom: 0.5rem;
+}
+
+.kpi-grid_compact .kpi-tile {
+    padding: 0.7rem 0.8rem;
+}
+
+.kpi-grid_compact .kpi-tile__header {
+    margin-bottom: 0.45rem;
+}
+
+.kpi-grid_compact .kpi-tile__metric {
+    font-size: 1.35rem;
+}
+
+.kpi-grid_compact .kpi-description {
+    min-height: 0;
+    margin-top: 0.3rem;
+}

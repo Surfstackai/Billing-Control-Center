@@ -1,0 +1,207 @@
+<template>
+    <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="ledger-modal-heading" class="slds-modal slds-fade-in-open">
+        <div class="slds-modal__container ledger-modal">
+            <header class="slds-modal__header">
+                <button class="slds-button slds-button_icon slds-modal__close slds-button_icon-inverse" title="Close" onclick={handleClose}>
+                    <lightning-icon icon-name="utility:close" alternative-text="Close" size="small"></lightning-icon>
+                </button>
+                <h2 id="ledger-modal-heading" class="slds-text-heading_medium">Work Order Ledger</h2>
+                <p class="slds-m-top_xx-small slds-text-body_small modal-subtitle">Accounting Reconciliation</p>
+            </header>
+
+            <div class="slds-modal__content slds-p-around_medium">
+                <template if:true={errorMessage}>
+                    <div class="slds-notify slds-notify_alert slds-theme_error slds-m-bottom_small" role="alert">{errorMessage}</div>
+                </template>
+
+                <template if:true={isLoading}>
+                    <lightning-spinner alternative-text="Loading ledger" size="small"></lightning-spinner>
+                </template>
+
+                <template if:true={hasDetail}>
+                    <div class="ledger-header">
+                        <div>
+                            <div class="ledger-kicker">Account</div>
+                            <template if:true={accountUrl}>
+                                <a href={accountUrl} target="_blank" rel="noopener noreferrer">{detail.accountName}</a>
+                            </template>
+                            <template if:false={accountUrl}>
+                                <span>{detail.accountName}</span>
+                            </template>
+                        </div>
+                        <div>
+                            <div class="ledger-kicker">Work Order</div>
+                            <template if:true={workOrderUrl}>
+                                <a href={workOrderUrl} target="_blank" rel="noopener noreferrer">{detail.workOrderNumber}</a>
+                            </template>
+                            <template if:false={workOrderUrl}>
+                                <span>{detail.workOrderNumber}</span>
+                            </template>
+                        </div>
+                        <div>
+                            <div class="ledger-kicker">Subject</div>
+                            <span>{detail.subject}</span>
+                        </div>
+                        <div>
+                            <div class="ledger-kicker">Work Order Status</div>
+                            <span>{detail.workOrderStatus}</span>
+                        </div>
+                        <div>
+                            <div class="ledger-kicker">Reconciliation</div>
+                            <span>{detail.reconciliationStatus}</span>
+                        </div>
+                        <template if:true={detail.attentionRequired}>
+                            <div class="ledger-attention" title={detail.attentionReason}>
+                                <lightning-icon icon-name="utility:warning" size="xx-small" alternative-text="Attention"></lightning-icon>
+                                <span>{detail.attentionReason}</span>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div class="ledger-facts">
+                        <div><span class="ledger-kicker">Deposit Amount</span>
+                            <lightning-formatted-number value={detail.depositAmount} format-style="currency" currency-code="USD"></lightning-formatted-number>
+                        </div>
+                        <div><span class="ledger-kicker">Deposit / Payments</span><span>{detail.depositStatus}</span></div>
+                        <div><span class="ledger-kicker">Parts / Hardware</span><span>{detail.partsStatus}</span></div>
+                        <div><span class="ledger-kicker">Invoice Number</span><span>{detail.workOrderInvoiceNumber}</span></div>
+                    </div>
+
+                    <h3 class="slds-text-title_caps slds-m-top_medium slds-m-bottom_xx-small">Opportunities</h3>
+                    <template if:true={hasOpportunities}>
+                        <table class="slds-table slds-table_cell-buffer slds-table_bordered slds-m-bottom_small">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Opportunity</th>
+                                    <th scope="col">Amount</th>
+                                    <th scope="col">Stage</th>
+                                    <th scope="col">Billing Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template for:each={opportunityRows} for:item="opportunity">
+                                    <tr key={opportunity.opportunityId}>
+                                        <td>
+                                            <template if:true={opportunity.url}>
+                                                <a href={opportunity.url} target="_blank" rel="noopener noreferrer">{opportunity.name}</a>
+                                            </template>
+                                            <template if:false={opportunity.url}>
+                                                {opportunity.name}
+                                            </template>
+                                        </td>
+                                        <td>
+                                            <lightning-formatted-number value={opportunity.amount} format-style="currency" currency-code="USD"></lightning-formatted-number>
+                                        </td>
+                                        <td>{opportunity.stageName}</td>
+                                        <td>{opportunity.billingStatus}</td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </template>
+                    <template if:false={hasOpportunities}>
+                        <p class="slds-text-body_small slds-m-bottom_small">No Opportunities linked.</p>
+                    </template>
+
+                    <h3 class="slds-text-title_caps slds-m-bottom_xx-small">Service Appointments</h3>
+                    <template if:true={hasAppointments}>
+                        <table class="slds-table slds-table_cell-buffer slds-table_bordered slds-m-bottom_small">
+                            <thead>
+                                <tr>
+                                    <th scope="col">Appointment</th>
+                                    <th scope="col">Status</th>
+                                    <th scope="col">Scheduled Start</th>
+                                    <th scope="col">Actual Start</th>
+                                    <th scope="col">Actual End</th>
+                                    <th scope="col">Opportunity</th>
+                                    <th scope="col">Invoice Number</th>
+                                    <th scope="col">WO Inv Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template for:each={appointmentRows} for:item="appointment">
+                                    <tr key={appointment.serviceAppointmentId}>
+                                        <td>
+                                            <template if:true={appointment.url}>
+                                                <a href={appointment.url} target="_blank" rel="noopener noreferrer">{appointment.appointmentNumber}</a>
+                                            </template>
+                                            <template if:false={appointment.url}>
+                                                {appointment.appointmentNumber}
+                                            </template>
+                                        </td>
+                                        <td>{appointment.status}</td>
+                                        <td>
+                                            <template if:true={appointment.hasSchedStartTime}>
+                                                <lightning-formatted-date-time value={appointment.schedStartTime} year="numeric" month="short" day="numeric" hour="numeric" minute="2-digit"></lightning-formatted-date-time>
+                                            </template>
+                                        </td>
+                                        <td>
+                                            <template if:true={appointment.hasActualStartTime}>
+                                                <lightning-formatted-date-time value={appointment.actualStartTime} year="numeric" month="short" day="numeric" hour="numeric" minute="2-digit"></lightning-formatted-date-time>
+                                            </template>
+                                        </td>
+                                        <td>
+                                            <template if:true={appointment.hasActualEndTime}>
+                                                <lightning-formatted-date-time value={appointment.actualEndTime} year="numeric" month="short" day="numeric" hour="numeric" minute="2-digit"></lightning-formatted-date-time>
+                                            </template>
+                                        </td>
+                                        <td>{appointment.opportunityName}</td>
+                                        <td>{appointment.invoiceNumber}</td>
+                                        <td>{appointment.woInvStatus}</td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </template>
+                    <template if:false={hasAppointments}>
+                        <p class="slds-text-body_small slds-m-bottom_small">No Service Appointments.</p>
+                    </template>
+
+                    <h3 class="slds-text-title_caps slds-m-bottom_xx-small">Timeline</h3>
+                    <template if:true={hasTimeline}>
+                        <table class="slds-table slds-table_cell-buffer slds-table_bordered timeline-table">
+                            <thead>
+                                <tr>
+                                    <th scope="col" class="timeline-col-datetime">Date/Time</th>
+                                    <th scope="col" class="timeline-col-description">Description</th>
+                                    <th scope="col" class="timeline-col-old">Old</th>
+                                    <th scope="col" class="timeline-col-new">New</th>
+                                    <th scope="col" class="timeline-col-changed">Changed By</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template for:each={timelineRows} for:item="entry">
+                                    <tr key={entry.entryKey}>
+                                        <td>
+                                            <template if:true={entry.hasEventDatetime}>
+                                                <lightning-formatted-date-time value={entry.eventDatetime} year="numeric" month="short" day="numeric" hour="numeric" minute="2-digit"></lightning-formatted-date-time>
+                                            </template>
+                                        </td>
+                                        <td>
+                                            <div class="timeline-description">{entry.descriptionText}</div>
+                                            <template if:true={entry.eventLabel}>
+                                                <div class="timeline-event-type">{entry.eventLabel}</div>
+                                            </template>
+                                        </td>
+                                        <td class="timeline-value">{entry.oldValue}</td>
+                                        <td class="timeline-value">{entry.newValue}</td>
+                                        <td>{entry.changedByName}</td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </template>
+                    <template if:false={hasTimeline}>
+                        <p class="slds-text-body_small">No ledger events for this Work Order.</p>
+                    </template>
+                </template>
+            </div>
+
+            <footer class="slds-modal__footer">
+                <lightning-button label="Close" onclick={handleClose}></lightning-button>
+                <lightning-button class="slds-m-left_small" label="Open Full Ledger" variant="brand" onclick={handleOpenFullLedger} disabled={isOpenDisabled}></lightning-button>
+            </footer>
+        </div>
+    </section>
+    <div class="slds-backdrop slds-backdrop_open"></div>
+</template>

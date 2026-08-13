@@ -3,6 +3,14 @@ import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Bil
 
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
 import getOrdersRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getOrdersRuntimeData';
+import {
+    MIN_COLUMN_WIDTH,
+    ORDERS_COLUMN_WIDTHS_KEY,
+    columnWidthStyle,
+    loadColumnWidths,
+    saveColumnWidths
+} from 'c/billingControlCenterColumnResize';
+import { decorateAccountGroups, sortRowsWithAccountGroup } from 'c/billingControlCenterAccountGroup';
 
 const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -12,18 +20,26 @@ const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US');
 
-const BUCKET_KEYS = ['UNSCHEDULED', 'SCHEDULED', 'SCHEDULED_TODAY', 'COMPLETED_TODAY'];
+const BUCKET_KEYS = [
+    'UNSCHEDULED',
+    'SCHEDULED',
+    'SCHEDULED_TODAY',
+    'COMPLETED_THIS_WEEK',
+    'COMPLETED_THIS_MONTH',
+    'NO_OPPORTUNITY',
+    'NO_SERVICE_APPOINTMENT',
+    'MULTIPLE_OPPORTUNITIES'
+];
 const ORDERS_DATASET_KEY = 'ORDERS_WORK_ORDERS';
 const ordersRuntimeCache = new Map();
 
-const DEFAULT_SORT_FIELD = 'workOrderUrl';
-const DEFAULT_HERO_TITLE = 'Work Orders Pending Scheduling or Completion';
-const DEFAULT_HERO_SUBTITLE =
-    'Closed Won pipeline: unscheduled work, scheduled work, scheduled for today, and completed today.';
-const DEFAULT_TABLE_TITLE = 'Pipeline work orders by bucket';
+const DEFAULT_SORT_FIELD = 'accountUrl';
+const DEFAULT_HERO_TITLE = 'Work Order Ledger';
+const DEFAULT_HERO_SUBTITLE = 'Accounting Reconciliation';
+const DEFAULT_TABLE_TITLE = 'Work Order Ledger by bucket';
 const DEFAULT_REFRESH_LABEL = 'Refresh';
 
-const KPI_CONFIG = [
+const KPI_CONFIG_PRIMARY = [
     {
         key: 'unscheduled',
         developerKey: 'UNSCHEDULED',
@@ -31,7 +47,7 @@ const KPI_CONFIG = [
         countKey: 'unscheduledCount',
         title: 'Unscheduled Work',
         icon: 'utility:date_input',
-        hint: 'Work orders in For Clearance or For Appointment Booking.'
+        hint: 'Service appointments with a blank Scheduled Start.'
     },
     {
         key: 'scheduled',
@@ -40,7 +56,7 @@ const KPI_CONFIG = [
         countKey: 'scheduledCount',
         title: 'Scheduled Work',
         icon: 'utility:clock',
-        hint: 'Work orders with at least one Scheduled or In Progress service appointment.'
+        hint: 'Service appointments with a Scheduled Start that is not today.'
     },
     {
         key: 'scheduledToday',
@@ -49,18 +65,60 @@ const KPI_CONFIG = [
         countKey: 'scheduledTodayCount',
         title: 'Scheduled for Today',
         icon: 'utility:sync',
-        hint: 'Service appointments scheduled or in progress today.'
+        hint: 'Service appointments whose Scheduled Start is today.'
     },
     {
-        key: 'completedToday',
-        developerKey: 'COMPLETED_TODAY',
-        revenueKey: 'completedTodayRevenue',
-        countKey: 'completedTodayCount',
-        title: 'Completed Today',
+        key: 'completedThisWeek',
+        developerKey: 'COMPLETED_THIS_WEEK',
+        revenueKey: 'completedThisWeekRevenue',
+        countKey: 'completedThisWeekCount',
+        title: 'Completed This Week',
         icon: 'utility:check',
-        hint: 'Service appointments completed today.'
+        hint: 'Service appointments completed this week (by Actual End).'
     }
 ];
+
+const KPI_CONFIG_SECONDARY = [
+    {
+        key: 'completedThisMonth',
+        developerKey: 'COMPLETED_THIS_MONTH',
+        revenueKey: 'completedThisMonthRevenue',
+        countKey: 'completedThisMonthCount',
+        title: 'Completed This Month',
+        icon: 'utility:monthlyview',
+        hint: 'Service appointments completed this calendar month (by Actual End).'
+    },
+    {
+        key: 'noOpportunity',
+        developerKey: 'NO_OPPORTUNITY',
+        revenueKey: 'noOpportunityRevenue',
+        countKey: 'noOpportunityCount',
+        title: 'Work Orders with No Opportunities',
+        icon: 'utility:warning',
+        hint: 'Work Orders with no Opportunity_WorkOrder junction.'
+    },
+    {
+        key: 'noServiceAppointment',
+        developerKey: 'NO_SERVICE_APPOINTMENT',
+        revenueKey: 'noServiceAppointmentRevenue',
+        countKey: 'noServiceAppointmentCount',
+        title: 'No Service Appointment',
+        icon: 'utility:ban',
+        hint: 'Work Orders with no Service Appointment.'
+    },
+    {
+        key: 'multipleOpportunities',
+        developerKey: 'MULTIPLE_OPPORTUNITIES',
+        revenueKey: 'multipleOpportunitiesRevenue',
+        countKey: 'multipleOpportunitiesCount',
+        title: 'Multiple Opportunities',
+        icon: 'utility:multi_select_checkbox',
+        hint: 'Work Orders linked to more than one Opportunity.'
+    }
+];
+
+const KPI_CONFIGS = [...KPI_CONFIG_PRIMARY, ...KPI_CONFIG_SECONDARY];
+const DEFAULT_DATE_FILTER = { filterKey: 'This Year' };
 
 const WORK_ORDER_COLUMNS = [
     {
@@ -131,17 +189,17 @@ const WORK_ORDER_COLUMNS = [
         wrapText: true
     },
     {
-        developerKey: 'WORK_ORDER_STATUS',
-        configFieldApiName: 'status',
-        label: 'Work Order Status',
-        fieldName: 'status',
+        developerKey: 'RECONCILIATION',
+        configFieldApiName: 'reconciliationStatus',
+        label: 'Reconciliation Status',
+        fieldName: 'reconciliationStatus',
         type: 'text',
         sortable: true
     },
     {
         developerKey: 'OPPORTUNITY_AMOUNT',
         configFieldApiName: 'opportunityAmount',
-        label: 'Billable Amount',
+        label: 'Opportunity Amount',
         fieldName: 'opportunityAmount',
         type: 'currency',
         sortable: true,
@@ -154,8 +212,39 @@ const WORK_ORDER_COLUMNS = [
         fieldName: 'ownerName',
         type: 'text',
         sortable: true
+    },
+    {
+        developerKey: 'VIEW_LEDGER',
+        configFieldApiName: 'viewLedger',
+        label: 'Ledger',
+        fieldName: 'ledgerId',
+        type: 'action',
+        sortable: false
     }
 ];
+
+const COL_MODIFIER_BY_KEY = {
+    ACCOUNT: 'account',
+    OPPORTUNITY: 'opportunity',
+    WORK_ORDER: 'work-order',
+    SERVICE_APPOINTMENTS: 'service-appointment',
+    CREATED_DATE: 'created-date',
+    SUBJECT: 'subject',
+    RECONCILIATION: 'reconciliation',
+    OPPORTUNITY_AMOUNT: 'opportunity-amount',
+    OWNER: 'owner',
+    VIEW_LEDGER: 'view-ledger'
+};
+
+const SKIP_CONFIG_COLUMN_KEYS = new Set([
+    'EXPAND',
+    'DEPOSIT',
+    'PARTS',
+    'INVOICE',
+    'ATTENTION',
+    'WORK_ORDER_STATUS'
+]);
+const RECONCILIATION_CONFIG_ALIASES = new Set(['STATUS', 'DIARY_STATUS', 'WORK_ORDER_STATUS']);
 
 function normalizeConfigKey(value) {
     return value ? String(value).trim().toUpperCase() : '';
@@ -177,51 +266,50 @@ function buildConfiguredColumns(configColumns) {
         return WORK_ORDER_COLUMNS;
     }
 
-    const defaultColumnsByKey = new Map();
-    const defaultColumnsByField = new Map();
-    WORK_ORDER_COLUMNS.forEach(column => {
-        if (column.developerKey) {
-            defaultColumnsByKey.set(normalizeConfigKey(column.developerKey), column);
-        }
-        if (column.configFieldApiName) {
-            defaultColumnsByField.set(column.configFieldApiName, column);
-        }
-    });
-
-    const matchedColumns = [];
+    const configByKey = new Map();
+    const configByField = new Map();
     configColumns.forEach(configColumn => {
         const developerKey = normalizeConfigKey(configColumn?.developerKey);
-        const matchedColumn =
-            defaultColumnsByKey.get(developerKey) ||
-            defaultColumnsByField.get(configColumn?.fieldApiName);
-
-        if (!matchedColumn) {
-            console.warn(
-                `Skipping unsupported Orders column config: ${configColumn?.developerKey || configColumn?.fieldApiName || 'unknown'}`
-            );
-            return;
+        if (developerKey && !SKIP_CONFIG_COLUMN_KEYS.has(developerKey)) {
+            configByKey.set(developerKey, configColumn);
         }
-
-        matchedColumns.push({
-            ...matchedColumn,
-            label: configColumn.label || matchedColumn.label
-        });
+        if (RECONCILIATION_CONFIG_ALIASES.has(developerKey)) {
+            configByKey.set('RECONCILIATION', configColumn);
+        }
+        if (configColumn?.fieldApiName) {
+            configByField.set(configColumn.fieldApiName, configColumn);
+        }
     });
 
-    if (matchedColumns.length === 0) {
-        return WORK_ORDER_COLUMNS;
-    }
-    return matchedColumns;
+    return WORK_ORDER_COLUMNS.map(column => {
+        const developerKey = normalizeConfigKey(column.developerKey);
+        const configRecord =
+            configByKey.get(developerKey) || configByField.get(column.configFieldApiName);
+        const lockedLabel =
+            developerKey === 'RECONCILIATION'
+                ? 'Reconciliation Status'
+                : developerKey === 'VIEW_LEDGER'
+                  ? 'Ledger'
+                  : developerKey === 'OPPORTUNITY_AMOUNT'
+                    ? 'Opportunity Amount'
+                    : null;
+        return {
+            ...column,
+            label: lockedLabel || configRecord?.label || column.label
+        };
+    });
 }
 
-function buildRenderableColumns(columns, sortedBy, sortDirection) {
+function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) {
     return (columns || []).map((column, index) => {
         const developerKey = normalizeConfigKey(column.developerKey);
         const fieldName = column.fieldName || column.configFieldApiName;
         const isSorted = sortedBy === fieldName;
         const isAscending = sortDirection === 'asc';
 
-        const isBillableAmount = developerKey === 'OPPORTUNITY_AMOUNT';
+        const isOpportunityAmount = developerKey === 'OPPORTUNITY_AMOUNT';
+        const colModifier = COL_MODIFIER_BY_KEY[developerKey] || 'default';
+        const widthStyle = columnWidthStyle(columnWidths?.[developerKey]);
 
         return {
             ...column,
@@ -238,11 +326,15 @@ function buildRenderableColumns(columns, sortedBy, sortDirection) {
             isServiceAppointment: developerKey === 'SERVICE_APPOINTMENTS',
             isCreatedDate: developerKey === 'CREATED_DATE',
             isSubject: developerKey === 'SUBJECT',
-            isStatus: developerKey === 'WORK_ORDER_STATUS',
-            isBillableAmount,
+            isOpportunityAmount,
             isOwner: developerKey === 'OWNER',
-            headerClass: `grouped-diary-table__header${isBillableAmount ? ' grouped-diary-table__header--billable-amount' : ''}`,
-            cellClass: `grouped-diary-table__cell${isBillableAmount ? ' grouped-diary-table__cell--billable-amount' : ''}`
+            isReconciliation: developerKey === 'RECONCILIATION',
+            isLedgerAction: developerKey === 'VIEW_LEDGER',
+            colClass: `grouped-diary-table__col grouped-diary-table__col--${colModifier}`,
+            colStyle: widthStyle,
+            headerStyle: widthStyle,
+            headerClass: `grouped-diary-table__header bcc-resizable-header${isOpportunityAmount ? ' grouped-diary-table__header--opportunity-amount' : ''}`,
+            cellClass: `grouped-diary-table__cell${isOpportunityAmount ? ' grouped-diary-table__cell--opportunity-amount' : ''}`
         };
     });
 }
@@ -303,6 +395,26 @@ function normalizeAppointmentRows(row) {
         };
     });
 
+    const relatedOpportunities = (
+        row.relatedOpportunities && row.relatedOpportunities.length
+            ? row.relatedOpportunities
+            : row.opportunityId || row.opportunityName
+              ? [{ opportunityId: row.opportunityId, opportunityName: row.opportunityName }]
+              : []
+    ).map((opportunity, index) => {
+        const lineKey =
+            opportunity.rowKey ||
+            opportunity.opportunityId ||
+            `${row.rowKey || row.workOrderId || 'opportunity'}-${index}`;
+        return {
+            ...opportunity,
+            lineKey,
+            opportunityUrl: opportunity.opportunityId
+                ? `/lightning/r/Opportunity/${opportunity.opportunityId}/view`
+                : null
+        };
+    });
+
     const appointmentSearchTerms = relatedServiceAppointments.reduce((terms, appointment) => {
         terms.push(
             appointment.serviceAppointmentDisplay,
@@ -314,11 +426,18 @@ function normalizeAppointmentRows(row) {
         return terms;
     }, []);
 
+    const opportunitySearchTerms = relatedOpportunities.map(opportunity => opportunity.opportunityName);
+
     const searchIndex = [
         row.accountName,
         row.opportunityName,
         row.workOrderNumber,
-        ...appointmentSearchTerms
+        row.subject,
+        row.reconciliationStatus,
+        row.accountOwnerName,
+        row.ownerName,
+        ...appointmentSearchTerms,
+        ...opportunitySearchTerms
     ]
         .filter(Boolean)
         .join(' ')
@@ -327,6 +446,7 @@ function normalizeAppointmentRows(row) {
     return {
         ...row,
         relatedServiceAppointments,
+        relatedOpportunities,
         opportunityAmountValue: row.opportunityAmount,
         hasOpportunityAmount: row.opportunityAmount !== undefined && row.opportunityAmount !== null,
         serviceAppointmentCount: row.serviceAppointmentCount || relatedServiceAppointments.length,
@@ -396,16 +516,7 @@ function compareRowValues(left, right, fieldName, directionMultiplier) {
 }
 
 function sortWorkOrderRows(rows, fieldName, direction) {
-    const directionMultiplier = direction === 'desc' ? -1 : 1;
-    return [...rows].sort((left, right) => {
-        const primary = compareRowValues(left, right, fieldName, directionMultiplier);
-        if (primary !== 0) {
-            return primary;
-        }
-        const tieLeft = left.rowKey != null ? String(left.rowKey) : '';
-        const tieRight = right.rowKey != null ? String(right.rowKey) : '';
-        return tieLeft.localeCompare(tieRight) * directionMultiplier;
-    });
+    return sortRowsWithAccountGroup(rows, fieldName, direction, compareRowValues);
 }
 
 function defaultSortState() {
@@ -425,8 +536,8 @@ function buildRuntimeCacheKey(dateFilter) {
 }
 
 export default class BillingControlCenterOrders extends LightningElement {
-    _dateFilter;
-    _dateFilterSignature = '';
+    _dateFilter = { ...DEFAULT_DATE_FILTER };
+    _dateFilterSignature = JSON.stringify(DEFAULT_DATE_FILTER);
     _isConnected = false;
 
     @api useExternalToolbar = false;
@@ -448,6 +559,12 @@ export default class BillingControlCenterOrders extends LightningElement {
     ordersKpisByKey = {};
     ordersSectionsByKey = {};
     ordersActionsByKey = {};
+    columnWidths = {};
+    selectedLedgerId;
+    showLedgerModal = false;
+    _resizeState;
+    _boundResizeMove;
+    _boundResizeEnd;
 
     @api
     get dateFilter() {
@@ -471,8 +588,13 @@ export default class BillingControlCenterOrders extends LightningElement {
 
     connectedCallback() {
         this._isConnected = true;
+        this.columnWidths = loadColumnWidths(ORDERS_COLUMN_WIDTHS_KEY);
         this.loadOrdersConfig();
         this.loadData();
+    }
+
+    disconnectedCallback() {
+        this.teardownColumnResize();
     }
 
     get heroTitle() {
@@ -518,26 +640,24 @@ export default class BillingControlCenterOrders extends LightningElement {
         ];
     }
 
-    get kpiTiles() {
-        if (!this.ordersConfigLoaded) {
-            return KPI_CONFIG.map(tile => this.buildKpiTile(tile, undefined));
-        }
+    get dateFilterKey() {
+        return this.dateFilter?.filterKey || DEFAULT_DATE_FILTER.filterKey;
+    }
 
-        if (!this.ordersDatasetIsActive) {
-            return [];
-        }
+    get dateFilterStart() {
+        return this.dateFilter?.startDate || '';
+    }
 
-        const tiles = [];
-        for (const configRecord of this.ordersTabConfig?.kpis || []) {
-            const normalizedKey = normalizeConfigKey(configRecord?.developerKey);
-            const definition = KPI_CONFIG.find(tile => normalizeConfigKey(tile.developerKey) === normalizedKey);
-            if (!definition) {
-                console.warn(`Skipping unsupported Orders KPI config: ${configRecord?.developerKey || 'unknown'}`);
-                continue;
-            }
-            tiles.push(this.buildKpiTile(definition, configRecord));
-        }
-        return tiles;
+    get dateFilterEnd() {
+        return this.dateFilter?.endDate || '';
+    }
+
+    get kpiTilesPrimary() {
+        return this.buildKpiTilesFromDefinitions(KPI_CONFIG_PRIMARY);
+    }
+
+    get kpiTilesSecondary() {
+        return this.buildKpiTilesFromDefinitions(KPI_CONFIG_SECONDARY);
     }
 
     get accordionSections() {
@@ -546,39 +666,25 @@ export default class BillingControlCenterOrders extends LightningElement {
             (this.sections || []).map(section => [normalizeConfigKey(section.bucketKey), section])
         );
 
-        if (!this.ordersConfigLoaded) {
-            return (this.sections || []).map((section, index) =>
-                this.buildAccordionSection(section, section.sectionLabel, q, 1000 + index)
-            );
-        }
-
-        if (!this.ordersDatasetIsActive) {
+        if (this.ordersConfigLoaded && !this.ordersDatasetIsActive) {
             return [];
         }
 
-        const configuredSections = [];
-        for (const configRecord of this.ordersTabConfig?.sections || []) {
-            const developerKey = normalizeConfigKey(configRecord?.developerKey);
-            if (!BUCKET_KEYS.includes(developerKey)) {
-                console.warn(`Skipping unsupported Orders section config: ${configRecord?.developerKey || 'unknown'}`);
-                continue;
-            }
-            const runtimeSection = sectionsByKey.get(developerKey) || {
-                bucketKey: developerKey,
-                sectionLabel: configRecord?.label || developerKey,
+        return BUCKET_KEYS.map((bucketKey, index) => {
+            const configRecord = this.ordersSectionsByKey[bucketKey];
+            const runtimeSection = sectionsByKey.get(bucketKey) || {
+                bucketKey,
+                sectionLabel: configRecord?.label || bucketKey,
                 rows: []
             };
-            configuredSections.push(
-                this.buildAccordionSection(
-                    runtimeSection,
-                    configRecord?.label || runtimeSection.sectionLabel,
-                    q,
-                    Number(configRecord?.displayOrder || 0)
-                )
+            const definition = KPI_CONFIGS.find(tile => tile.developerKey === bucketKey);
+            return this.buildAccordionSection(
+                runtimeSection,
+                configRecord?.label || runtimeSection.sectionLabel || definition?.title || bucketKey,
+                q,
+                Number(configRecord?.displayOrder || (index + 1) * 10)
             );
-        }
-
-        return configuredSections;
+        });
     }
 
     get totalWorkOrderRows() {
@@ -597,6 +703,23 @@ export default class BillingControlCenterOrders extends LightningElement {
         this.searchKey = event.target.value || '';
     }
 
+    handleViewLedger(event) {
+        const host =
+            event.currentTarget?.closest?.('[data-ledger-id]') ||
+            event.target?.closest?.('[data-ledger-id]');
+        const ledgerId = host?.dataset?.ledgerId;
+        if (!ledgerId) {
+            return;
+        }
+        this.selectedLedgerId = ledgerId;
+        this.showLedgerModal = true;
+    }
+
+    handleCloseLedgerModal() {
+        this.showLedgerModal = false;
+        this.selectedLedgerId = undefined;
+    }
+
     async handleRefresh() {
         await this.loadData(true);
     }
@@ -610,6 +733,27 @@ export default class BillingControlCenterOrders extends LightningElement {
         if (event.detail?.key === 'refresh') {
             this.handleRefresh();
         }
+    }
+
+    handleDateFilterChange(event) {
+        const detail = event.detail || {};
+        const filterKey = detail.filterKey || DEFAULT_DATE_FILTER.filterKey;
+        this.dateFilter = {
+            filterKey,
+            startDate: filterKey === 'Custom' ? detail.startDate || null : null,
+            endDate: filterKey === 'Custom' ? detail.endDate || null : null
+        };
+    }
+
+    buildKpiTilesFromDefinitions(definitions) {
+        if (this.ordersConfigLoaded && !this.ordersDatasetIsActive) {
+            return [];
+        }
+
+        return definitions.map(definition => {
+            const configRecord = this.ordersKpisByKey[normalizeConfigKey(definition.developerKey)];
+            return this.buildKpiTile(definition, configRecord);
+        });
     }
 
     buildKpiTile(definition, configRecord) {
@@ -634,16 +778,30 @@ export default class BillingControlCenterOrders extends LightningElement {
         };
         rows = sortWorkOrderRows(rows, bucketSort.sortedBy, bucketSort.sortDirection);
         const visibleAppointmentCount = countAppointments(rows);
+        const columns = buildRenderableColumns(
+            this.workOrderColumns,
+            bucketSort.sortedBy,
+            bucketSort.sortDirection,
+            this.columnWidths
+        );
+        const displayRows = decorateAccountGroups(
+            rows.map(row => ({
+                ...row,
+                displayKey: row.rowKey,
+                reconciliationStatus: row.reconciliationStatus || row.status,
+                isLedgerActionDisabled: !row.ledgerId
+            }))
+        );
 
         return {
             bucketKey: section.bucketKey,
             sectionLabel: label,
             titleWithCount: `${label} (${visibleAppointmentCount})`,
-            filteredRows: rows,
+            filteredRows: displayRows,
             isEmpty: rows.length === 0,
             sortedBy: bucketSort.sortedBy,
             sortDirection: bucketSort.sortDirection,
-            columns: buildRenderableColumns(this.workOrderColumns, bucketSort.sortedBy, bucketSort.sortDirection),
+            columns: columns,
             visibleAppointmentCount,
             sectionOrder
         };
@@ -652,7 +810,7 @@ export default class BillingControlCenterOrders extends LightningElement {
     handleHeaderSort(event) {
         const bucketKey = event.currentTarget?.dataset?.bucket;
         const fieldName = event.currentTarget?.dataset?.field;
-        if (!bucketKey || !fieldName || !this.sortState[bucketKey]) {
+        if (!bucketKey || !fieldName || fieldName === 'ledgerId' || !this.sortState[bucketKey]) {
             return;
         }
 
@@ -663,6 +821,58 @@ export default class BillingControlCenterOrders extends LightningElement {
             ...this.sortState,
             [bucketKey]: { sortedBy: fieldName, sortDirection }
         };
+    }
+
+    handleColumnResizeStart(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const columnKey = event.currentTarget?.dataset?.columnKey;
+        if (!columnKey) {
+            return;
+        }
+        const header = event.currentTarget.closest('th');
+        const startWidth = header ? header.getBoundingClientRect().width : MIN_COLUMN_WIDTH;
+        this.teardownColumnResize();
+        this._resizeState = {
+            columnKey,
+            startX: event.clientX,
+            startWidth
+        };
+        this._boundResizeMove = this.handleColumnResizeMove.bind(this);
+        this._boundResizeEnd = this.handleColumnResizeEnd.bind(this);
+        window.addEventListener('mousemove', this._boundResizeMove);
+        window.addEventListener('mouseup', this._boundResizeEnd);
+    }
+
+    handleColumnResizeMove(event) {
+        if (!this._resizeState) {
+            return;
+        }
+        const nextWidth = Math.max(
+            MIN_COLUMN_WIDTH,
+            this._resizeState.startWidth + (event.clientX - this._resizeState.startX)
+        );
+        this.columnWidths = {
+            ...this.columnWidths,
+            [this._resizeState.columnKey]: nextWidth
+        };
+    }
+
+    handleColumnResizeEnd() {
+        saveColumnWidths(ORDERS_COLUMN_WIDTHS_KEY, this.columnWidths);
+        this.teardownColumnResize();
+    }
+
+    teardownColumnResize() {
+        if (this._boundResizeMove) {
+            window.removeEventListener('mousemove', this._boundResizeMove);
+        }
+        if (this._boundResizeEnd) {
+            window.removeEventListener('mouseup', this._boundResizeEnd);
+        }
+        this._boundResizeMove = undefined;
+        this._boundResizeEnd = undefined;
+        this._resizeState = undefined;
     }
 
     async loadData(forceRefresh = false) {
@@ -752,7 +962,7 @@ export default class BillingControlCenterOrders extends LightningElement {
 
             if (this.ordersKpisByKey.IN_PROGRESS && !this.ordersKpisByKey.SCHEDULED_TODAY) {
                 console.warn(
-                    'Orders config includes IN_PROGRESS, but the current runtime still renders SCHEDULED_TODAY and COMPLETED_TODAY buckets. Using default labels for unmatched buckets.'
+                    'Orders config includes IN_PROGRESS, but the current runtime still renders SCHEDULED_TODAY. Using default labels for unmatched buckets.'
                 );
             }
         } catch (error) {

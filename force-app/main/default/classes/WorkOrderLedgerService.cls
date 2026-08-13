@@ -224,7 +224,7 @@ public without sharing class WorkOrderLedgerService {
                         newRecord.CreatedDate,
                         newRecord.CreatedById,
                         null,
-                        toText(newRecord.Status),
+                        appointmentDisplayValue(newRecord),
                         'Service Appointment created.'
                     )
                 );
@@ -263,7 +263,7 @@ public without sharing class WorkOrderLedgerService {
                             newRecord.CreatedDate,
                             newRecord.CreatedById,
                             null,
-                            toText(newRecord.SchedStartTime),
+                            formatDatetime(newRecord.SchedStartTime),
                             'Service Appointment scheduled for ' + newRecord.SchedStartTime.date() + '.'
                         )
                     );
@@ -336,8 +336,10 @@ public without sharing class WorkOrderLedgerService {
                         EVENT_SA_SCHEDULED,
                         newRecord.LastModifiedDate,
                         newRecord.LastModifiedById,
-                        toText(oldRecord.SchedStartTime),
-                        toText(newRecord.SchedStartTime),
+                        toText(oldRecord.SchedStartTime) == null
+                            ? null
+                            : formatDatetime(oldRecord.SchedStartTime),
+                        newRecord.SchedStartTime == null ? null : formatDatetime(newRecord.SchedStartTime),
                         newRecord.SchedStartTime == null
                             ? 'Service Appointment schedule cleared.'
                             : 'Service Appointment scheduled for ' + newRecord.SchedStartTime.date() + '.'
@@ -526,11 +528,17 @@ public without sharing class WorkOrderLedgerService {
             if (changedById == null && eventRecord.IsBackfill != true) {
                 changedById = UserInfo.getUserId();
             }
+            String opportunityName = opportunityNameById.get(eventRecord.OpportunityId);
+            if (String.isBlank(eventRecord.NewValue)
+                && eventRecord.EventType == EVENT_OPPORTUNITY_LINKED
+                && String.isNotBlank(opportunityName)) {
+                eventRecord.NewValue = opportunityName;
+            }
             String description = eventRecord.Description;
             if (String.isBlank(description)) {
                 description = buildDefaultDescription(
                     eventRecord,
-                    opportunityNameById.get(eventRecord.OpportunityId),
+                    opportunityName,
                     opportunityCountByWorkOrderId.get(eventRecord.WorkOrderId)
                 );
             }
@@ -708,7 +716,7 @@ public without sharing class WorkOrderLedgerService {
                     workOrderRecord.CreatedDate,
                     workOrderRecord.CreatedById,
                     null,
-                    toText(workOrderRecord.Status),
+                    null,
                     SOURCE_WORK_ORDER,
                     'Work Order created.',
                     true
@@ -730,7 +738,7 @@ public without sharing class WorkOrderLedgerService {
                 depositEvent.Amount = workOrderRecord.Deposit_Amount__c;
                 events.add(depositEvent);
             }
-            if (String.isNotBlank(workOrderRecord.Deposit_Payments__c)) {
+            if (isMaterialDepositStatus(workOrderRecord.Deposit_Payments__c)) {
                 events.add(
                     buildEvent(
                         workOrderRecord.Id,
@@ -741,12 +749,12 @@ public without sharing class WorkOrderLedgerService {
                         null,
                         toText(workOrderRecord.Deposit_Payments__c),
                         SOURCE_WORK_ORDER,
-                        'Deposit / Payments changed from  to ' + workOrderRecord.Deposit_Payments__c + '.',
+                        'Deposit / Payments set to ' + workOrderRecord.Deposit_Payments__c + '.',
                         true
                     )
                 );
             }
-            if (String.isNotBlank(workOrderRecord.Parts_Hardware__c)) {
+            if (isMaterialPartsStatus(workOrderRecord.Parts_Hardware__c)) {
                 events.add(
                     buildEvent(
                         workOrderRecord.Id,
@@ -757,7 +765,7 @@ public without sharing class WorkOrderLedgerService {
                         null,
                         toText(workOrderRecord.Parts_Hardware__c),
                         SOURCE_WORK_ORDER,
-                        'Parts / Hardware changed from  to ' + workOrderRecord.Parts_Hardware__c + '.',
+                        'Parts / Hardware set to ' + workOrderRecord.Parts_Hardware__c + '.',
                         true
                     )
                 );
@@ -790,7 +798,7 @@ public without sharing class WorkOrderLedgerService {
                         appointmentRecord.CreatedDate,
                         appointmentRecord.CreatedById,
                         null,
-                        toText(appointmentRecord.Status),
+                        appointmentDisplayValue(appointmentRecord),
                         'Service Appointment created.'
                     )
                 );
@@ -829,7 +837,7 @@ public without sharing class WorkOrderLedgerService {
                         appointmentRecord.CreatedDate,
                         appointmentRecord.CreatedById,
                         null,
-                        toText(appointmentRecord.SchedStartTime),
+                        formatDatetime(appointmentRecord.SchedStartTime),
                         'Service Appointment scheduled for ' + appointmentRecord.SchedStartTime.date() + '.'
                     );
                     scheduledEvent.IsBackfill = true;
@@ -912,7 +920,6 @@ public without sharing class WorkOrderLedgerService {
             || newRecord.SchedStartTime != oldRecord.SchedStartTime
             || newRecord.ActualEndTime != oldRecord.ActualEndTime
             || newRecord.Invoice_Number__c != oldRecord.Invoice_Number__c
-            || newRecord.WO_Inv_Status__c != oldRecord.WO_Inv_Status__c
             || newRecord.Opportunity__c != oldRecord.Opportunity__c;
     }
 
@@ -1060,7 +1067,7 @@ public without sharing class WorkOrderLedgerService {
                 ActualEndTime,
                 Opportunity__c,
                 Invoice_Number__c,
-                WO_Inv_Status__c
+                AppointmentNumber
             FROM ServiceAppointment
             WHERE ParentRecordId IN :parentIds
         ]) {
@@ -1133,49 +1140,21 @@ public without sharing class WorkOrderLedgerService {
                 invoiceEvent.FieldApiName = 'Invoice_Number__c';
                 events.add(invoiceEvent);
             }
-            if (String.isNotBlank(newRecord.WO_Inv_Status__c)) {
-                LedgerEvent statusEvent = buildServiceAppointmentEvent(
+        } else {
+            if (newRecord.Invoice_Number__c != oldRecord.Invoice_Number__c) {
+                LedgerEvent invoiceEvent = buildServiceAppointmentEvent(
                     workOrderId,
                     newRecord,
                     EVENT_INVOICE_NUMBER_CHANGED,
-                    newRecord.CreatedDate == null ? newRecord.LastModifiedDate : newRecord.CreatedDate,
-                    newRecord.CreatedById == null ? newRecord.LastModifiedById : newRecord.CreatedById,
-                    null,
-                    toText(newRecord.WO_Inv_Status__c),
-                    'WO Inv Status changed.'
+                    newRecord.LastModifiedDate,
+                    newRecord.LastModifiedById,
+                    toText(oldRecord.Invoice_Number__c),
+                    toText(newRecord.Invoice_Number__c),
+                    'Invoice Number changed.'
                 );
-                statusEvent.FieldApiName = 'WO_Inv_Status__c';
-                events.add(statusEvent);
+                invoiceEvent.FieldApiName = 'Invoice_Number__c';
+                events.add(invoiceEvent);
             }
-        } else {
-        if (newRecord.Invoice_Number__c != oldRecord.Invoice_Number__c) {
-            LedgerEvent invoiceEvent = buildServiceAppointmentEvent(
-                workOrderId,
-                newRecord,
-                EVENT_INVOICE_NUMBER_CHANGED,
-                newRecord.LastModifiedDate,
-                newRecord.LastModifiedById,
-                toText(oldRecord.Invoice_Number__c),
-                toText(newRecord.Invoice_Number__c),
-                'Invoice Number changed.'
-            );
-            invoiceEvent.FieldApiName = 'Invoice_Number__c';
-            events.add(invoiceEvent);
-        }
-        if (newRecord.WO_Inv_Status__c != oldRecord.WO_Inv_Status__c) {
-            LedgerEvent statusEvent = buildServiceAppointmentEvent(
-                workOrderId,
-                newRecord,
-                EVENT_INVOICE_NUMBER_CHANGED,
-                newRecord.LastModifiedDate,
-                newRecord.LastModifiedById,
-                toText(oldRecord.WO_Inv_Status__c),
-                toText(newRecord.WO_Inv_Status__c),
-                'WO Inv Status changed.'
-            );
-            statusEvent.FieldApiName = 'WO_Inv_Status__c';
-            events.add(statusEvent);
-        }
         }
         if (isBackfill == true) {
             for (Integer indexValue = 0; indexValue < events.size(); indexValue++) {
@@ -1356,6 +1335,30 @@ public without sharing class WorkOrderLedgerService {
 
     private static String normalize(String value) {
         return String.isBlank(value) ? null : value.trim().toUpperCase();
+    }
+
+    private static String appointmentDisplayValue(ServiceAppointment appointmentRecord) {
+        if (appointmentRecord == null) {
+            return null;
+        }
+        if (String.isNotBlank(appointmentRecord.AppointmentNumber)) {
+            return appointmentRecord.AppointmentNumber;
+        }
+        return toText(appointmentRecord.Id);
+    }
+
+    private static String formatDatetime(Datetime value) {
+        return value == null ? null : value.format('MMM d h:mm a');
+    }
+
+    private static Boolean isMaterialDepositStatus(String value) {
+        String normalized = normalize(value);
+        return normalized != null && normalized != 'NO DEPOSIT REQUIRED';
+    }
+
+    private static Boolean isMaterialPartsStatus(String value) {
+        String normalized = normalize(value);
+        return normalized != null && normalized != 'NO PARTS REQUIRED';
     }
 
     private static Datetime coalesce(Datetime firstValue, Datetime secondValue) {

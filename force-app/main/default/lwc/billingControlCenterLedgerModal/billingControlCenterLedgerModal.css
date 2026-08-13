@@ -1,0 +1,71 @@
+@import 'c/billingControlCenterStyles';
+
+.ledger-modal {
+    max-width: 95vw;
+    width: 95vw;
+}
+
+.modal-subtitle {
+    color: var(--bcc-text-soft, #54698d);
+}
+
+.ledger-header,
+.ledger-facts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+    gap: 0.75rem 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.ledger-kicker {
+    display: block;
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--bcc-text-soft, #54698d);
+}
+
+.ledger-attention {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.35rem;
+    color: #8a6d3b;
+}
+
+.timeline-table {
+    table-layout: fixed;
+    width: 100%;
+}
+
+.timeline-col-datetime {
+    width: 11rem;
+}
+
+.timeline-col-description {
+    width: 28%;
+}
+
+.timeline-col-old,
+.timeline-col-new {
+    width: 18%;
+}
+
+.timeline-col-changed {
+    width: 11rem;
+}
+
+.timeline-description {
+    max-width: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.timeline-event-type {
+    font-size: 0.7rem;
+    color: var(--bcc-text-soft, #54698d);
+}
+
+.timeline-value {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}

@@ -104,19 +104,50 @@
                                             </span>
                                         </div>
                                         <div class="slds-scrollable_x bucket-table-host">
-                                            <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout" aria-label="Receivables by salesperson">
+                                            <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout grouped-diary-table" aria-label="Receivables by salesperson">
+                                                <colgroup>
+                                                    <col style="width:4.5rem;" />
+                                                    <col style={receivableColumnStyles.salesperson} />
+                                                    <col style={receivableColumnStyles.account} />
+                                                    <col style={receivableColumnStyles.opportunities} />
+                                                    <col style={receivableColumnStyles.invoiceAmount} />
+                                                    <col style={receivableColumnStyles.commissionAmount} />
+                                                    <col style={receivableColumnStyles.commissionPaid} />
+                                                    <col style={receivableColumnStyles.outstandingCommission} />
+                                                </colgroup>
                                                 <thead>
                                                     <tr class="slds-line-height_reset">
                                                         <th scope="col" style="width:4.5rem;">
                                                             <span class="slds-assistive-text">Selection and expansion</span>
                                                         </th>
-                                                        <th scope="col"><strong>Sales Person / Opportunity</strong></th>
-                                                        <th scope="col"><strong>Account Name</strong></th>
-                                                        <th scope="col"><strong>Opportunities</strong></th>
-                                                        <th scope="col"><strong>Invoice Amount</strong></th>
-                                                        <th scope="col"><strong>Commission Amount</strong></th>
-                                                        <th scope="col"><strong>Commission Paid</strong></th>
-                                                        <th scope="col"><strong>Outstanding Commission</strong></th>
+                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.salesperson}>
+                                                            <strong>Sales Person / Opportunity</strong>
+                                                            <span class="bcc-column-resize-handle" data-column-key="salesperson" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                        </th>
+                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.account}>
+                                                            <strong>Account Name</strong>
+                                                            <span class="bcc-column-resize-handle" data-column-key="account" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                        </th>
+                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.opportunities}>
+                                                            <strong>Opportunities</strong>
+                                                            <span class="bcc-column-resize-handle" data-column-key="opportunities" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                        </th>
+                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.invoiceAmount}>
+                                                            <strong>Invoice Amount</strong>
+                                                            <span class="bcc-column-resize-handle" data-column-key="invoiceAmount" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                        </th>
+                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.commissionAmount}>
+                                                            <strong>Commission Amount</strong>
+                                                            <span class="bcc-column-resize-handle" data-column-key="commissionAmount" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                        </th>
+                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.commissionPaid}>
+                                                            <strong>Commission Paid</strong>
+                                                            <span class="bcc-column-resize-handle" data-column-key="commissionPaid" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                        </th>
+                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.outstandingCommission}>
+                                                            <strong>Outstanding Commission</strong>
+                                                            <span class="bcc-column-resize-handle" data-column-key="outstandingCommission" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                        </th>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
@@ -187,7 +218,7 @@
 
                                                         <template if:true={salesperson.isExpanded}>
                                                             <template for:each={salesperson.opportunities} for:item="opportunity">
-                                                                <tr key={opportunity.key} class="slds-theme_shade">
+                                                                <tr key={opportunity.key} class={opportunity.rowClass}>
                                                                     <td>
                                                                         <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
                                                                             <div class="slds-p-left_large">
@@ -213,7 +244,11 @@
                                                                             </button>
                                                                         </div>
                                                                     </td>
-                                                                    <td data-label="Account Name">{opportunity.accountName}</td>
+                                                                    <td data-label="Account Name">
+                                                                        <template if:true={opportunity.showAccountName}>
+                                                                            {opportunity.accountName}
+                                                                        </template>
+                                                                    </td>
                                                                     <td data-label="Opportunities"></td>
                                                                     <td data-label="Invoice Amount">
                                                                         <lightning-formatted-number

@@ -1,26 +1,16 @@
 @import 'c/billingControlCenterStyles';
 
 .bcc-date-filter {
-    min-width: 12rem;
-}
-
-.bcc-date-filter__header {
-    margin-bottom: 0.65rem;
-}
-
-.bcc-date-filter__eyebrow {
-    color: var(--bcc-text-muted, #5c6f91);
-    font-size: 0.72rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    margin: 0;
-    text-transform: uppercase;
-}
-
-.bcc-date-filter__controls {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .bcc-date-filter_compact {
-    min-width: 12rem;
+    min-width: 0;
+}
+
+.bcc-date-filter__date {
+    width: 9.5rem;
 }

@@ -1,7 +1,7 @@
 @import 'c/billingControlCenterStyles';
 
 :host {
-    --bcc-grouped-table-min-width: 89.5rem;
+    --bcc-grouped-table-min-width: 99.5rem;
     --bcc-grouped-child-line-height: 2rem;
 }
 
@@ -59,6 +59,10 @@
     width: 16rem;
 }
 
+.grouped-diary-table__col--invoice-number {
+    width: 10rem;
+}
+
 .grouped-diary-table__col--work-order {
     width: 13rem;
 }
@@ -79,7 +83,7 @@
     width: 10rem;
 }
 
-.grouped-diary-table__col--billable-amount {
+.grouped-diary-table__col--opportunity-amount {
     width: 12rem;
 }
 
@@ -105,16 +109,16 @@
     align-items: center;
 }
 
-.grouped-diary-table__header--billable-amount .grouped-diary-table__header-button {
+.grouped-diary-table__header--opportunity-amount .grouped-diary-table__header-button {
     justify-content: center;
     position: relative;
 }
 
-.grouped-diary-table__header--billable-amount .grouped-diary-table__header-label {
+.grouped-diary-table__header--opportunity-amount .grouped-diary-table__header-label {
     flex: 0 1 auto;
 }
 
-.grouped-diary-table__header--billable-amount lightning-icon {
+.grouped-diary-table__header--opportunity-amount lightning-icon {
     position: absolute;
     right: 0;
 }
@@ -181,7 +185,7 @@
     white-space: nowrap;
 }
 
-.grouped-diary-table__cell--billable-amount {
+.grouped-diary-table__cell--opportunity-amount {
     vertical-align: middle;
 }
 

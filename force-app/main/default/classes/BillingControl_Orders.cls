@@ -22,15 +22,21 @@ public with sharing class BillingControl_Orders {
         ORDER_DIARY_STATUS_CANCELLED
     };
 
+    private static final String SERVICE_APPOINTMENT_STATUS_COMPLETED = 'Completed';
+
     private static final String BUCKET_UNSCHEDULED = 'UNSCHEDULED';
     private static final String BUCKET_SCHEDULED = 'SCHEDULED';
     private static final String BUCKET_SCHEDULED_TODAY = 'SCHEDULED_TODAY';
-    private static final String BUCKET_COMPLETED_TODAY = 'COMPLETED_TODAY';
+    private static final String BUCKET_COMPLETED_THIS_WEEK = 'COMPLETED_THIS_WEEK';
+    private static final String BUCKET_COMPLETED_THIS_MONTH = 'COMPLETED_THIS_MONTH';
+    private static final String BUCKET_NO_OPPORTUNITY = 'NO_OPPORTUNITY';
 
     private static final String BUCKET_LABEL_UNSCHEDULED = 'Unscheduled Work';
     private static final String BUCKET_LABEL_SCHEDULED = 'Scheduled Work';
     private static final String BUCKET_LABEL_SCHEDULED_TODAY = 'Scheduled for Today';
-    private static final String BUCKET_LABEL_COMPLETED_TODAY = 'Completed Today';
+    private static final String BUCKET_LABEL_COMPLETED_THIS_WEEK = 'Completed This Week';
+    private static final String BUCKET_LABEL_COMPLETED_THIS_MONTH = 'Completed This Month';
+    private static final String BUCKET_LABEL_NO_OPPORTUNITY = 'Work Orders with No Opportunities';
     private static final Integer MAX_ROWS_PER_SECTION = 500;
     private static final Integer QUERY_ROW_LIMIT = 501;
     private static final String ROW_LIMIT_WARNING_MESSAGE =
@@ -39,7 +45,9 @@ public with sharing class BillingControl_Orders {
         BUCKET_UNSCHEDULED,
         BUCKET_SCHEDULED,
         BUCKET_SCHEDULED_TODAY,
-        BUCKET_COMPLETED_TODAY
+        BUCKET_COMPLETED_THIS_WEEK,
+        BUCKET_COMPLETED_THIS_MONTH,
+        BUCKET_NO_OPPORTUNITY
     };
 
     public static KpiWrapper getKpis() {
@@ -61,7 +69,9 @@ public with sharing class BillingControl_Orders {
         BillingMetricsSnapshot unscheduled = metricsByBucket.get(BUCKET_UNSCHEDULED);
         BillingMetricsSnapshot scheduled = metricsByBucket.get(BUCKET_SCHEDULED);
         BillingMetricsSnapshot scheduledToday = metricsByBucket.get(BUCKET_SCHEDULED_TODAY);
-        BillingMetricsSnapshot completedToday = metricsByBucket.get(BUCKET_COMPLETED_TODAY);
+        BillingMetricsSnapshot completedThisWeek = metricsByBucket.get(BUCKET_COMPLETED_THIS_WEEK);
+        BillingMetricsSnapshot completedThisMonth = metricsByBucket.get(BUCKET_COMPLETED_THIS_MONTH);
+        BillingMetricsSnapshot noOpportunity = metricsByBucket.get(BUCKET_NO_OPPORTUNITY);
 
         result.unscheduledCount = unscheduled != null ? unscheduled.recordCount : 0;
         result.unscheduledRevenue = unscheduled != null ? unscheduled.totalAmount : 0;
@@ -72,9 +82,17 @@ public with sharing class BillingControl_Orders {
         result.scheduledTodayCount = scheduledToday != null ? scheduledToday.recordCount : 0;
         result.scheduledTodayRevenue = scheduledToday != null ? scheduledToday.totalAmount : 0;
 
-        result.completedTodayCount = completedToday != null ? completedToday.recordCount : 0;
-        result.completedTodayRevenue = completedToday != null ? completedToday.totalAmount : 0;
+        result.completedThisWeekCount = completedThisWeek != null ? completedThisWeek.recordCount : 0;
+        result.completedThisWeekRevenue = completedThisWeek != null ? completedThisWeek.totalAmount : 0;
 
+        result.completedThisMonthCount = completedThisMonth != null ? completedThisMonth.recordCount : 0;
+        result.completedThisMonthRevenue = completedThisMonth != null ? completedThisMonth.totalAmount : 0;
+
+        result.noOpportunityCount = noOpportunity != null ? noOpportunity.recordCount : 0;
+        result.noOpportunityRevenue = noOpportunity != null ? noOpportunity.totalAmount : 0;
+
+        result.completedTodayCount = 0;
+        result.completedTodayRevenue = 0;
         result.inProgressCount = 0;
         result.inProgressRevenue = 0;
         return result;
@@ -105,8 +123,7 @@ public with sharing class BillingControl_Orders {
         }
 
         for (String bucketKey : BUCKET_QUERY_ORDER) {
-            String diaryStatus = getDiaryStatusForBucket(bucketKey);
-            List<Order> diaryOrders = queryBucketOrders(bucketKey, diaryStatus, filterContext);
+            List<Order> diaryOrders = queryBucketOrders(bucketKey, null, filterContext);
             Boolean isTruncated = diaryOrders.size() >= QUERY_ROW_LIMIT;
             Integer maxIndex = Math.min(diaryOrders.size(), MAX_ROWS_PER_SECTION);
             List<WorkOrderRowWrapper> appointmentRows = new List<WorkOrderRowWrapper>();
@@ -126,7 +143,18 @@ public with sharing class BillingControl_Orders {
                 appointmentRows = filterRows(appointmentRows, filterContext);
             }
 
-            rowsByBucketKey.get(bucketKey).addAll(groupOrderDiaryRowsByWorkOrder(appointmentRows));
+            List<WorkOrderRowWrapper> groupedRows = groupOrderDiaryRowsByWorkOrder(appointmentRows);
+            if (bucketKey == BUCKET_NO_OPPORTUNITY) {
+                for (WorkOrderRowWrapper groupedRow : groupedRows) {
+                    groupedRow.opportunityAmount = null;
+                    if (groupedRow.relatedServiceAppointments != null) {
+                        for (WorkOrderRowWrapper appointmentRow : groupedRow.relatedServiceAppointments) {
+                            appointmentRow.opportunityAmount = null;
+                        }
+                    }
+                }
+            }
+            rowsByBucketKey.get(bucketKey).addAll(groupedRows);
         }
 
         for (BucketSectionWrapper sectionRecord : sections) {
@@ -160,23 +188,6 @@ public with sharing class BillingControl_Orders {
         return ACTIVE_ORDER_DIARY_STATUSES.contains(diaryStatus);
     }
 
-    private static String resolveBucketKey(Order orderRecord) {
-        String diaryStatus = orderRecord != null ? (String) orderRecord.get('Billing_Diary_Status__c') : null;
-        if (diaryStatus == ORDER_DIARY_STATUS_DRAFT) {
-            return BUCKET_UNSCHEDULED;
-        }
-        if (diaryStatus == ORDER_DIARY_STATUS_FOR_REVIEW) {
-            return BUCKET_SCHEDULED;
-        }
-        if (diaryStatus == ORDER_DIARY_STATUS_READY_TO_BILL) {
-            return BUCKET_SCHEDULED_TODAY;
-        }
-        if (diaryStatus == ORDER_DIARY_STATUS_ON_HOLD) {
-            return BUCKET_COMPLETED_TODAY;
-        }
-        return null;
-    }
-
     private static List<BucketSectionWrapper> buildDefaultBucketSections() {
         return new List<BucketSectionWrapper>{
             new BucketSectionWrapper(BUCKET_UNSCHEDULED, BUCKET_LABEL_UNSCHEDULED, new List<WorkOrderRowWrapper>()),
@@ -187,23 +198,21 @@ public with sharing class BillingControl_Orders {
                 new List<WorkOrderRowWrapper>()
             ),
             new BucketSectionWrapper(
-                BUCKET_COMPLETED_TODAY,
-                BUCKET_LABEL_COMPLETED_TODAY,
+                BUCKET_COMPLETED_THIS_WEEK,
+                BUCKET_LABEL_COMPLETED_THIS_WEEK,
+                new List<WorkOrderRowWrapper>()
+            ),
+            new BucketSectionWrapper(
+                BUCKET_COMPLETED_THIS_MONTH,
+                BUCKET_LABEL_COMPLETED_THIS_MONTH,
+                new List<WorkOrderRowWrapper>()
+            ),
+            new BucketSectionWrapper(
+                BUCKET_NO_OPPORTUNITY,
+                BUCKET_LABEL_NO_OPPORTUNITY,
                 new List<WorkOrderRowWrapper>()
             )
         };
-    }
-
-    private static BucketSectionWrapper findSectionByKey(List<BucketSectionWrapper> sections, String sectionKey) {
-        if (sections == null || String.isBlank(sectionKey)) {
-            return null;
-        }
-        for (BucketSectionWrapper sectionRecord : sections) {
-            if (sectionRecord.bucketKey == sectionKey) {
-                return sectionRecord;
-            }
-        }
-        return null;
     }
 
     private static WorkOrderRowWrapper buildOrderDiaryRow(Order orderRecord) {
@@ -241,6 +250,9 @@ public with sharing class BillingControl_Orders {
         row.serviceAppointmentStatus = orderRecord != null && orderRecord.Service_Appointment__r != null
             ? orderRecord.Service_Appointment__r.Status
             : null;
+        row.earliestStartTime = orderRecord != null && orderRecord.Service_Appointment__r != null
+            ? orderRecord.Service_Appointment__r.EarliestStartTime
+            : null;
         row.schedStartTime = orderRecord != null && orderRecord.Service_Appointment__r != null
             ? orderRecord.Service_Appointment__r.SchedStartTime
             : null;
@@ -267,12 +279,16 @@ public with sharing class BillingControl_Orders {
         String appointmentStatus = String.isNotBlank(orderRecord.Service_Appointment__r.Status)
             ? orderRecord.Service_Appointment__r.Status
             : '';
-        Date referenceDate = orderRecord.Service_Appointment__r.ActualEndTime != null
-            ? orderRecord.Service_Appointment__r.ActualEndTime.date()
+        Date referenceDate = orderRecord.Service_Appointment__r.EarliestStartTime != null
+            ? orderRecord.Service_Appointment__r.EarliestStartTime.date()
             : (
                 orderRecord.Service_Appointment__r.SchedStartTime != null
                     ? orderRecord.Service_Appointment__r.SchedStartTime.date()
-                    : null
+                    : (
+                        orderRecord.Service_Appointment__r.ActualEndTime != null
+                            ? orderRecord.Service_Appointment__r.ActualEndTime.date()
+                            : null
+                    )
             );
         String scheduledDate = referenceDate != null ? formatDateAsIso(referenceDate) : '';
         return String.join(new List<String>{ appointmentName, appointmentStatus, scheduledDate }, ': ');
@@ -385,6 +401,7 @@ public with sharing class BillingControl_Orders {
         clone.serviceAppointmentId = source.serviceAppointmentId;
         clone.serviceAppointmentNumber = source.serviceAppointmentNumber;
         clone.serviceAppointmentStatus = source.serviceAppointmentStatus;
+        clone.earliestStartTime = source.earliestStartTime;
         clone.schedStartTime = source.schedStartTime;
         clone.actualEndTime = source.actualEndTime;
         clone.serviceAppointmentDisplay = source.serviceAppointmentDisplay;
@@ -404,11 +421,12 @@ public with sharing class BillingControl_Orders {
             BUCKET_UNSCHEDULED => new BillingMetricsSnapshot(),
             BUCKET_SCHEDULED => new BillingMetricsSnapshot(),
             BUCKET_SCHEDULED_TODAY => new BillingMetricsSnapshot(),
-            BUCKET_COMPLETED_TODAY => new BillingMetricsSnapshot()
+            BUCKET_COMPLETED_THIS_WEEK => new BillingMetricsSnapshot(),
+            BUCKET_COMPLETED_THIS_MONTH => new BillingMetricsSnapshot(),
+            BUCKET_NO_OPPORTUNITY => new BillingMetricsSnapshot()
         };
 
         for (String bucketKey : BUCKET_QUERY_ORDER) {
-            String diaryStatus = getDiaryStatusForBucket(bucketKey);
             if (!metricsByBucket.containsKey(bucketKey)) {
                 continue;
             }
@@ -428,7 +446,7 @@ public with sharing class BillingControl_Orders {
                 + opportunityAmountField
                 + ') opportunityAmount'
                 + ' FROM Order'
-                + buildOrdersWhereClause(filterContext, diaryStatus, bucketKey)
+                + buildOrdersWhereClause(filterContext, null, bucketKey)
                 + ' GROUP BY '
                 + opportunityIdField
             );
@@ -464,6 +482,7 @@ public with sharing class BillingControl_Orders {
             + ' Service_Appointment__c,'
             + ' Service_Appointment__r.AppointmentNumber,'
             + ' Service_Appointment__r.Status,'
+            + ' Service_Appointment__r.EarliestStartTime,'
             + ' Service_Appointment__r.SchedStartTime,'
             + ' Service_Appointment__r.ActualEndTime,'
             + ' Technician__c,'
@@ -507,37 +526,99 @@ public with sharing class BillingControl_Orders {
     }
 
     private static List<String> buildBucketSpecificClauses(String bucketKey) {
-        List<String> clauses = new List<String>();
-        if (bucketKey == BUCKET_SCHEDULED_TODAY || bucketKey == BUCKET_COMPLETED_TODAY) {
-            // Date.today() and DateTime.newInstance use the running user's timezone.  The
-            // resulting UTC literals therefore represent that user's local midnight bounds.
-            Datetime yesterdayStart = Datetime.newInstance(
-                Date.today().addDays(-1),
-                Time.newInstance(0, 0, 0, 0)
-            );
-            Datetime todayStart = Datetime.newInstance(
-                Date.today(),
-                Time.newInstance(0, 0, 0, 0)
-            );
+        List<String> clauses = new List<String>{ 'Service_Appointment__c != NULL' };
+
+        Boolean isCompletedBucket =
+            bucketKey == BUCKET_COMPLETED_THIS_WEEK || bucketKey == BUCKET_COMPLETED_THIS_MONTH;
+        if (isCompletedBucket) {
             clauses.add(
-                'Service_Appointment__r.SchedStartTime >= '
-                + yesterdayStart.formatGmt('yyyy-MM-dd\'T\'HH:mm:ss\'Z\'')
+                'Service_Appointment__r.Status = \''
+                    + String.escapeSingleQuotes(SERVICE_APPOINTMENT_STATUS_COMPLETED)
+                    + '\''
             );
+        } else {
             clauses.add(
-                'Service_Appointment__r.SchedStartTime < '
-                + todayStart.formatGmt('yyyy-MM-dd\'T\'HH:mm:ss\'Z\'')
+                'Service_Appointment__r.Status != \''
+                    + String.escapeSingleQuotes(SERVICE_APPOINTMENT_STATUS_COMPLETED)
+                    + '\''
             );
-            clauses.add(
-                bucketKey == BUCKET_SCHEDULED_TODAY
-                    ? 'Service_Appointment__r.Invoice_Number__c = NULL'
-                    : 'Service_Appointment__r.Invoice_Number__c != NULL'
-            );
+        }
+
+        String todayWindowClause = buildSchedStartWindowClause(resolveTodayBound());
+        String outsideTodayWindowClause = buildOutsideSchedStartWindowClause(resolveTodayBound());
+        if (bucketKey == BUCKET_UNSCHEDULED) {
+            clauses.add('Service_Appointment__r.SchedStartTime = NULL');
+        } else if (bucketKey == BUCKET_SCHEDULED) {
+            clauses.add('Service_Appointment__r.SchedStartTime != NULL');
+            clauses.add(outsideTodayWindowClause);
+        } else if (bucketKey == BUCKET_SCHEDULED_TODAY) {
+            clauses.add('Service_Appointment__r.SchedStartTime != NULL');
+            clauses.add(todayWindowClause);
+        } else if (bucketKey == BUCKET_COMPLETED_THIS_WEEK) {
+            clauses.add(buildActualEndWindowClause(resolveThisWeekBound()));
+        } else if (bucketKey == BUCKET_COMPLETED_THIS_MONTH) {
+            clauses.add(buildActualEndWindowClause(resolveThisMonthBound()));
+        } else if (bucketKey == BUCKET_NO_OPPORTUNITY) {
+            clauses.add('OpportunityId = NULL');
         }
         return clauses;
     }
 
+    private static String buildSchedStartWindowClause(DatetimeBound bound) {
+        return '(Service_Appointment__r.SchedStartTime >= '
+            + bound.startLiteral
+            + ' AND Service_Appointment__r.SchedStartTime < '
+            + bound.endLiteral
+            + ')';
+    }
+
+    private static String buildOutsideSchedStartWindowClause(DatetimeBound bound) {
+        return '(Service_Appointment__r.SchedStartTime < '
+            + bound.startLiteral
+            + ' OR Service_Appointment__r.SchedStartTime >= '
+            + bound.endLiteral
+            + ')';
+    }
+
+    private static String buildActualEndWindowClause(DatetimeBound bound) {
+        return '(Service_Appointment__r.ActualEndTime >= '
+            + bound.startLiteral
+            + ' AND Service_Appointment__r.ActualEndTime < '
+            + bound.endLiteral
+            + ')';
+    }
+
+    private static DatetimeBound resolveTodayBound() {
+        return resolveDateBound(Date.today(), Date.today().addDays(1));
+    }
+
+    private static DatetimeBound resolveThisWeekBound() {
+        Date weekStart = Date.today().toStartOfWeek();
+        return resolveDateBound(weekStart, weekStart.addDays(7));
+    }
+
+    private static DatetimeBound resolveThisMonthBound() {
+        Date monthStart = Date.today().toStartOfMonth();
+        return resolveDateBound(monthStart, monthStart.addMonths(1));
+    }
+
+    private static DatetimeBound resolveDateBound(Date startDate, Date endDate) {
+        // Date and Datetime.newInstance use the running user's timezone.
+        Datetime startDateTime = Datetime.newInstance(startDate, Time.newInstance(0, 0, 0, 0));
+        Datetime endDateTime = Datetime.newInstance(endDate, Time.newInstance(0, 0, 0, 0));
+        DatetimeBound bound = new DatetimeBound();
+        bound.startLiteral = startDateTime.formatGmt('yyyy-MM-dd\'T\'HH:mm:ss\'Z\'');
+        bound.endLiteral = endDateTime.formatGmt('yyyy-MM-dd\'T\'HH:mm:ss\'Z\'');
+        return bound;
+    }
+
+    private class DatetimeBound {
+        public String startLiteral;
+        public String endLiteral;
+    }
+
     private static Boolean usesServiceAppointmentOpportunity(String bucketKey) {
-        return bucketKey == BUCKET_SCHEDULED_TODAY || bucketKey == BUCKET_COMPLETED_TODAY;
+        return bucketKey == BUCKET_SCHEDULED_TODAY;
     }
 
     private static Map<String, BillingControl_DataProvider.FilterFieldDescriptor> getOrdersFilterFieldMappings() {
@@ -567,32 +648,6 @@ public with sharing class BillingControl_Orders {
                 BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
             )
         };
-    }
-
-    private static String getDiaryStatusForBucket(String bucketKey) {
-        if (bucketKey == BUCKET_UNSCHEDULED) {
-            return ORDER_DIARY_STATUS_DRAFT;
-        }
-        if (bucketKey == BUCKET_SCHEDULED) {
-            return ORDER_DIARY_STATUS_FOR_REVIEW;
-        }
-        return null;
-    }
-
-    private static String resolveBucketKeyFromStatus(String diaryStatus) {
-        if (diaryStatus == ORDER_DIARY_STATUS_DRAFT) {
-            return BUCKET_UNSCHEDULED;
-        }
-        if (diaryStatus == ORDER_DIARY_STATUS_FOR_REVIEW) {
-            return BUCKET_SCHEDULED;
-        }
-        if (diaryStatus == ORDER_DIARY_STATUS_READY_TO_BILL) {
-            return BUCKET_SCHEDULED_TODAY;
-        }
-        if (diaryStatus == ORDER_DIARY_STATUS_ON_HOLD) {
-            return BUCKET_COMPLETED_TODAY;
-        }
-        return null;
     }
 
     private static void addRuntimeWarning(
@@ -852,6 +907,16 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Integer scheduledCount;
         @AuraEnabled public Decimal scheduledTodayRevenue;
         @AuraEnabled public Integer scheduledTodayCount;
+        @AuraEnabled public Decimal completedThisWeekRevenue;
+        @AuraEnabled public Integer completedThisWeekCount;
+        @AuraEnabled public Decimal completedThisMonthRevenue;
+        @AuraEnabled public Integer completedThisMonthCount;
+        @AuraEnabled public Decimal noOpportunityRevenue;
+        @AuraEnabled public Integer noOpportunityCount;
+        @AuraEnabled public Decimal noServiceAppointmentRevenue;
+        @AuraEnabled public Integer noServiceAppointmentCount;
+        @AuraEnabled public Decimal multipleOpportunitiesRevenue;
+        @AuraEnabled public Integer multipleOpportunitiesCount;
         @AuraEnabled public Decimal completedTodayRevenue;
         @AuraEnabled public Integer completedTodayCount;
         @AuraEnabled public Decimal inProgressRevenue;
@@ -893,6 +958,7 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Id serviceAppointmentId;
         @AuraEnabled public String serviceAppointmentNumber;
         @AuraEnabled public String serviceAppointmentStatus;
+        @AuraEnabled public Datetime earliestStartTime;
         @AuraEnabled public Datetime schedStartTime;
         @AuraEnabled public Datetime actualEndTime;
         @AuraEnabled public String serviceAppointmentDisplay;
@@ -903,6 +969,32 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Date effectiveDate;
         @AuraEnabled public Integer serviceAppointmentCount;
         @AuraEnabled public List<WorkOrderRowWrapper> relatedServiceAppointments;
+        @AuraEnabled public Id ledgerId;
+        @AuraEnabled public String workOrderStatus;
+        @AuraEnabled public String reconciliationStatus;
+        @AuraEnabled public Boolean attentionRequired;
+        @AuraEnabled public String attentionReason;
+        @AuraEnabled public Decimal depositAmount;
+        @AuraEnabled public String depositStatus;
+        @AuraEnabled public String partsStatus;
+        @AuraEnabled public String invoiceNumbers;
+        @AuraEnabled public Boolean billedBadge;
+        @AuraEnabled public Integer opportunityCount;
+        @AuraEnabled public Date lastServiceDate;
+        @AuraEnabled public Date nextServiceDate;
+        @AuraEnabled public String accountOwnerName;
+        @AuraEnabled public List<WorkOrderRowWrapper> relatedOpportunities;
+    }
+
+    public class TimelineEntryWrapper {
+        @AuraEnabled public Datetime eventDatetime;
+        @AuraEnabled public String eventType;
+        @AuraEnabled public String eventLabel;
+        @AuraEnabled public String oldValue;
+        @AuraEnabled public String newValue;
+        @AuraEnabled public String changedByName;
+        @AuraEnabled public String sourceObject;
+        @AuraEnabled public String description;
     }
 
     public class OrderRowWrapper {
@@ -933,6 +1025,8 @@ public with sharing class BillingControl_Orders {
         BUCKET_UNSCHEDULED => BUCKET_LABEL_UNSCHEDULED,
         BUCKET_SCHEDULED => BUCKET_LABEL_SCHEDULED,
         BUCKET_SCHEDULED_TODAY => BUCKET_LABEL_SCHEDULED_TODAY,
-        BUCKET_COMPLETED_TODAY => BUCKET_LABEL_COMPLETED_TODAY
+        BUCKET_COMPLETED_THIS_WEEK => BUCKET_LABEL_COMPLETED_THIS_WEEK,
+        BUCKET_COMPLETED_THIS_MONTH => BUCKET_LABEL_COMPLETED_THIS_MONTH,
+        BUCKET_NO_OPPORTUNITY => BUCKET_LABEL_NO_OPPORTUNITY
     };
 }

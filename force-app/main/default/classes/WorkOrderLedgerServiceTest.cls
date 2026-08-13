@@ -87,6 +87,15 @@ private class WorkOrderLedgerServiceTest {
                 AND Service_Appointment__c = :appointmentRecord.Id
             ]
         );
+        Work_Order_Ledger_Entry__c createdEntry = [
+            SELECT New_Value__c
+            FROM Work_Order_Ledger_Entry__c
+            WHERE Event_Type__c = :WorkOrderLedgerService.EVENT_SA_CREATED
+            AND Service_Appointment__c = :appointmentRecord.Id
+            LIMIT 1
+        ];
+        System.assertEquals(true, String.isNotBlank(createdEntry.New_Value__c));
+        System.assertEquals(true, createdEntry.New_Value__c.startsWith('SA-') || createdEntry.New_Value__c == String.valueOf(appointmentRecord.Id));
     }
 
     @IsTest
@@ -306,8 +315,9 @@ private class WorkOrderLedgerServiceTest {
         System.assertEquals(2, ledgerAfterLinks.Opportunity_Count__c);
 
         Boolean sawLinkedDescription = false;
+        Boolean sawOpportunityNewValue = false;
         for (Work_Order_Ledger_Entry__c linkEntry : [
-            SELECT Description__c
+            SELECT Description__c, New_Value__c
             FROM Work_Order_Ledger_Entry__c
             WHERE Event_Type__c = :WorkOrderLedgerService.EVENT_OPPORTUNITY_LINKED
         ]) {
@@ -318,8 +328,12 @@ private class WorkOrderLedgerServiceTest {
             if (linkEntry.Description__c != null && linkEntry.Description__c.contains('linked to Work Order')) {
                 sawLinkedDescription = true;
             }
+            if (String.isNotBlank(linkEntry.New_Value__c)) {
+                sawOpportunityNewValue = true;
+            }
         }
         System.assertEquals(true, sawLinkedDescription);
+        System.assertEquals(true, sawOpportunityNewValue);
 
         Opportunity thirdOpportunity = insertOpportunity('Ledger Opp Three');
         firstJunction.Opportunity__c = thirdOpportunity.Id;
@@ -453,6 +467,37 @@ private class WorkOrderLedgerServiceTest {
         WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
         System.assertEquals(entryCount, [SELECT COUNT() FROM Work_Order_Ledger_Entry__c]);
         System.assertEquals(1, [SELECT COUNT() FROM Work_Order_Ledger__c WHERE Work_Order__c = :workOrderRecord.Id]);
+    }
+
+    @IsTest
+    static void resetBatchDeletesLedgersWithoutChainingBackfill() {
+        WorkOrder workOrderRecord = insertWorkOrder('Ledger Reset WO');
+        WorkOrderLedgerService.LedgerEvent createdEvent = newEvent(
+            workOrderRecord.Id,
+            WorkOrderLedgerService.EVENT_WORK_ORDER_CREATED,
+            workOrderRecord.CreatedDate,
+            workOrderRecord.CreatedById,
+            false
+        );
+        WorkOrderLedgerService.persistEvents(
+            new List<WorkOrderLedgerService.LedgerEvent>{ createdEvent }
+        );
+        System.assertEquals(1, [SELECT COUNT() FROM Work_Order_Ledger__c WHERE Work_Order__c = :workOrderRecord.Id]);
+
+        Test.startTest();
+        Database.executeBatch(new WorkOrderLedgerResetBatch(false), 50);
+        Test.stopTest();
+
+        System.assertEquals(0, [SELECT COUNT() FROM Work_Order_Ledger__c WHERE Work_Order__c = :workOrderRecord.Id]);
+    }
+
+    @IsTest
+    static void resetBatchDefaultConstructorEnqueuesBackfill() {
+        insertWorkOrder('Ledger Reset Chain WO');
+        Test.startTest();
+        new WorkOrderLedgerResetBatch().finish(null);
+        Test.stopTest();
+        System.assertNotEquals(null, new WorkOrderLedgerResetBatch(true));
     }
 
     @IsTest
@@ -663,7 +708,7 @@ private class WorkOrderLedgerServiceTest {
                 ActualEndTime,
                 Opportunity__c,
                 Invoice_Number__c,
-                WO_Inv_Status__c
+                AppointmentNumber
             FROM ServiceAppointment
             WHERE Id = :appointmentRecord.Id
         ];

@@ -97,33 +97,7 @@
                                                 <colgroup>
                                                     <col class="grouped-diary-table__col grouped-diary-table__col--select" />
                                                     <template for:each={section.columns} for:item="column">
-                                                        <template if:true={column.isAccount}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--account" />
-                                                        </template>
-                                                        <template if:true={column.isOpportunity}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--opportunity" />
-                                                        </template>
-                                                        <template if:true={column.isWorkOrder}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--work-order" />
-                                                        </template>
-                                                        <template if:true={column.isServiceAppointment}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--service-appointment" />
-                                                        </template>
-                                                        <template if:true={column.isCreatedDate}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--created-date" />
-                                                        </template>
-                                                        <template if:true={column.isSubject}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--subject" />
-                                                        </template>
-                                                        <template if:true={column.isStatus}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--status" />
-                                                        </template>
-                                                        <template if:true={column.isBillableAmount}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--billable-amount" />
-                                                        </template>
-                                                        <template if:true={column.isOwner}>
-                                                            <col key={column.key} class="grouped-diary-table__col grouped-diary-table__col--owner" />
-                                                        </template>
+                                                        <col key={column.key} class={column.colClass} style={column.colStyle} />
                                                     </template>
                                                 </colgroup>
                                                 <thead>
@@ -136,6 +110,7 @@
                                                                 key={column.key}
                                                                 scope="col"
                                                                 class={column.headerClass}
+                                                                style={column.headerStyle}
                                                                 aria-sort={column.ariaSort}>
                                                                 <button
                                                                     class="slds-button slds-button_reset slds-grid slds-grid_align-spread grouped-diary-table__header-button"
@@ -152,13 +127,18 @@
                                                                         </lightning-icon>
                                                                     </template>
                                                                 </button>
+                                                                <span
+                                                                    class="bcc-column-resize-handle"
+                                                                    data-column-key={column.developerKey}
+                                                                    onmousedown={handleColumnResizeStart}
+                                                                    title="Resize column"></span>
                                                             </th>
                                                         </template>
                                                     </tr>
                                                 </thead>
                                                 <tbody>
                                                     <template for:each={section.filteredRows} for:item="row">
-                                                        <tr key={row.rowKey} class="slds-hint-parent grouped-diary-table__row">
+                                                        <tr key={row.rowKey} class={row.rowClass}>
                                                             <td class="grouped-diary-table__cell grouped-diary-table__cell--select" data-label="Select">
                                                                 <lightning-input
                                                                     type="checkbox"
@@ -173,21 +153,23 @@
                                                             <template for:each={section.columns} for:item="column">
                                                                 <td key={column.key} class={column.cellClass} data-label={column.label}>
                                                                     <template if:true={column.isAccount}>
-                                                                        <div class="grouped-diary-table__single-value" title={row.accountName}>
-                                                                            <template if:true={row.accountUrl}>
-                                                                                <a
-                                                                                    href={row.accountUrl}
-                                                                                    target="_blank"
-                                                                                    rel="noopener noreferrer"
-                                                                                    class="slds-text-link grouped-diary-table__single-link"
-                                                                                    title={row.accountName}>
-                                                                                    {row.accountName}
-                                                                                </a>
-                                                                            </template>
-                                                                            <template if:false={row.accountUrl}>
-                                                                                <span class="grouped-diary-table__single-text">{row.accountName}</span>
-                                                                            </template>
-                                                                        </div>
+                                                                        <template if:true={row.showAccountName}>
+                                                                            <div class="grouped-diary-table__single-value" title={row.accountName}>
+                                                                                <template if:true={row.accountUrl}>
+                                                                                    <a
+                                                                                        href={row.accountUrl}
+                                                                                        target="_blank"
+                                                                                        rel="noopener noreferrer"
+                                                                                        class="slds-text-link grouped-diary-table__single-link"
+                                                                                        title={row.accountName}>
+                                                                                        {row.accountName}
+                                                                                    </a>
+                                                                                </template>
+                                                                                <template if:false={row.accountUrl}>
+                                                                                    <span class="grouped-diary-table__single-text">{row.accountName}</span>
+                                                                                </template>
+                                                                            </div>
+                                                                        </template>
                                                                     </template>
 
                                                                     <template if:true={column.isOpportunity}>
@@ -204,6 +186,20 @@
                                                                             </template>
                                                                             <template if:false={row.opportunityUrl}>
                                                                                 <span class="grouped-diary-table__single-text">{row.opportunityName}</span>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isInvoiceNumber}>
+                                                                        <div class="grouped-diary-cell grouped-diary-cell--invoice-number">
+                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
+                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                                    <span
+                                                                                        class="grouped-diary-cell__value grouped-diary-cell__value--truncate"
+                                                                                        title={appointment.invoiceNumber}>
+                                                                                        {appointment.invoiceNumber}
+                                                                                    </span>
+                                                                                </div>
                                                                             </template>
                                                                         </div>
                                                                     </template>
@@ -295,7 +291,7 @@
                                                                         </div>
                                                                     </template>
 
-                                                                    <template if:true={column.isBillableAmount}>
+                                                                    <template if:true={column.isOpportunityAmount}>
                                                                         <div class="grouped-diary-table__grouped-amount">
                                                                             <template if:true={row.hasOpportunityAmount}>
                                                                                 <lightning-formatted-number

@@ -240,6 +240,31 @@
     }
 }
 
+.bcc-resizable-header,
+.grouped-diary-table__header {
+    position: relative;
+}
+
+.bcc-column-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 6px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 2;
+    user-select: none;
+}
+
+.bcc-column-resize-handle:hover,
+.bcc-column-resize-handle:active {
+    background: rgba(20, 91, 219, 0.35);
+}
+
+.grouped-diary-table__row--account-continue {
+    box-shadow: inset 3px 0 0 rgba(20, 91, 219, 0.28);
+}
+
 @media (max-width: 640px) {
     .hero {
         flex-direction: column;

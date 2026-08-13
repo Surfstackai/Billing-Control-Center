@@ -12,7 +12,8 @@ private class BillingControl_DataProviderTest {
             buildOpportunity(accountRecord.Id, workTypeRecord.Id, 'Provider Draft Opportunity', 100, Date.today()),
             buildOpportunity(accountRecord.Id, workTypeRecord.Id, 'Provider Ready Opportunity', 200, Date.today().addDays(1)),
             buildOpportunity(accountRecord.Id, workTypeRecord.Id, 'Provider Receivable Opportunity', 300, Date.today().addDays(2)),
-            buildOpportunity(accountRecord.Id, workTypeRecord.Id, 'Provider Paid Opportunity', 400, Date.today().addDays(3))
+            buildOpportunity(accountRecord.Id, workTypeRecord.Id, 'Provider Paid Opportunity', 400, Date.today().addDays(3)),
+            buildOpportunity(accountRecord.Id, workTypeRecord.Id, 'Provider Unscheduled Opportunity', 150, Date.today().addDays(4))
         };
         insert opportunities;
 
@@ -28,7 +29,7 @@ private class BillingControl_DataProviderTest {
         insert workOrders;
 
         List<ServiceAppointment> appointments = new List<ServiceAppointment>();
-        for (Integer indexValue = 0; indexValue < opportunities.size(); indexValue++) {
+        for (Integer indexValue = 0; indexValue < 4; indexValue++) {
             Datetime startTime = System.now().addDays(-indexValue - 1);
             appointments.add(new ServiceAppointment(
                 ParentRecordId = workOrders[indexValue].Id,
@@ -40,13 +41,34 @@ private class BillingControl_DataProviderTest {
                 Opportunity__c = opportunities[indexValue].Id
             ));
         }
+        appointments.add(new ServiceAppointment(
+            ParentRecordId = workOrders[4].Id,
+            Status = 'None',
+            Subject = 'Provider Unscheduled SA',
+            Opportunity__c = opportunities[4].Id
+        ));
         insert appointments;
+
+        List<Opportunity_WorkOrder__c> junctions = new List<Opportunity_WorkOrder__c>();
+        for (Integer indexValue = 0; indexValue < opportunities.size(); indexValue++) {
+            junctions.add(new Opportunity_WorkOrder__c(
+                Opportunity__c = opportunities[indexValue].Id,
+                Work_Order__c = workOrders[indexValue].Id
+            ));
+        }
+        insert junctions;
+        Set<Id> setupWorkOrderIds = new Set<Id>();
+        for (WorkOrder workOrderRecord : workOrders) {
+            setupWorkOrderIds.add(workOrderRecord.Id);
+        }
+        WorkOrderLedgerService.backfillWorkOrders(setupWorkOrderIds);
 
         List<Order> orders = new List<Order>{
             buildOrder(accountRecord.Id, opportunities[0].Id, standardPricebookId, workOrders[0].Id, appointments[0].Id, 'Draft', false, 100, 0, 0, Date.today()),
             buildOrder(accountRecord.Id, opportunities[1].Id, standardPricebookId, workOrders[1].Id, appointments[1].Id, 'Ready to Bill', true, 200, 0, 0, Date.today().addDays(1)),
             buildOrder(accountRecord.Id, opportunities[2].Id, standardPricebookId, workOrders[2].Id, appointments[2].Id, 'Ready to Bill', false, 300, 300, 0, Date.today().addDays(2)),
-            buildOrder(accountRecord.Id, opportunities[3].Id, standardPricebookId, workOrders[3].Id, appointments[3].Id, 'Paid', false, 400, 400, 400, Date.today().addDays(3))
+            buildOrder(accountRecord.Id, opportunities[3].Id, standardPricebookId, workOrders[3].Id, appointments[3].Id, 'Paid', false, 400, 400, 400, Date.today().addDays(3)),
+            buildOrder(accountRecord.Id, opportunities[4].Id, standardPricebookId, workOrders[4].Id, appointments[4].Id, 'Draft', false, 150, 0, 0, Date.today().addDays(4))
         };
         insert orders;
 
@@ -111,17 +133,26 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(1L);
         BillingControl_DataProvider.ReceivablesRuntimeDataDTO receivablesData =
             BillingControl_DataProvider.getReceivablesRuntimeData();
+        BillingControl_Orders.KpiWrapper kpiData = BillingControl_Orders.getOrdersKpiData();
+        List<BillingControl_Orders.OrderRowWrapper> emptyOrders = BillingControl_Orders.getOrders();
         Integer dmlAfter = Limits.getDmlStatements();
         Test.stopTest();
 
         System.assertEquals(dmlBefore, dmlAfter);
         System.assertEquals(2, ordersData.filterContext.filters.size());
         System.assertEquals(4, invoicingData.filterContext.filters.size());
-        System.assertEquals(
-            2,
-            countOrderRows(ordersData.bucketSections),
-            'The draft diary appears in Unscheduled and in Scheduled for Today because its Service Appointment is yesterday.'
+        System.assertEquals(0, emptyOrders.size());
+        System.assertEquals(1, kpiData.unscheduledCount);
+        System.assertEquals(1, findOrdersSection(ordersData.bucketSections, 'UNSCHEDULED').rows.size());
+        System.assert(
+            kpiData.completedThisWeekCount >= 1,
+            'Completed appointments with active diary statuses appear in Completed This Week.'
         );
+        System.assert(
+            kpiData.completedThisMonthCount >= kpiData.completedThisWeekCount,
+            'Completed This Month includes Completed This Week when both fall in the current month.'
+        );
+        System.assertEquals(0, kpiData.noOpportunityCount);
         System.assertEquals(4, invoicingData.metrics.readyToBill, 'Eligibility is driven by related SA/WO values, not legacy diary flags.');
         System.assertEquals(1, receivablesData.metrics.revenueUnderCollectionCount);
     }
@@ -164,7 +195,7 @@ private class BillingControl_DataProviderTest {
         Test.stopTest();
 
         System.assertEquals(0, countOrderRows(ordersData.bucketSections));
-        System.assert(String.join(ordersData.warnings, ' ').contains('Order diary dataset missing or invalid.'));
+        System.assert(String.join(ordersData.warnings, ' ').contains('Work Order Ledger dataset missing or invalid.'));
         System.assert(String.join(ordersData.warnings, ' ').contains('Legacy fallback disabled.'));
     }
 
@@ -284,7 +315,7 @@ private class BillingControl_DataProviderTest {
 
         for (BillingControl_Orders.BucketSectionWrapper sectionRecord : ordersData.bucketSections) {
             for (BillingControl_Orders.WorkOrderRowWrapper row : sectionRecord.rows) {
-                System.assertEquals(Date.today(), row.effectiveDate);
+                System.assertEquals(Date.today(), row.createdDate == null ? null : row.createdDate.date());
             }
         }
         System.assertEquals(4, invoicingData.metrics.readyToBill, 'Invoicing does not apply the page date filter.');
@@ -306,6 +337,19 @@ private class BillingControl_DataProviderTest {
     }
 
     @IsTest
+    static void lastYearDateFilterIsSupported() {
+        Test.startTest();
+        BillingControl_DataProvider.OrdersRuntimeDataDTO lastYearData =
+            BillingControl_DataProvider.getOrdersRuntimeData(33L, buildDateFilter('Last Year', null, null));
+        Test.stopTest();
+
+        System.assertEquals(
+            false,
+            String.join(lastYearData.warnings, ' ').contains('Unsupported date filter key')
+        );
+    }
+
+    @IsTest
     static void directOrdersFilterOverloadsApplySupportedFilters() {
         BillingControl_DataProvider.BillingFilterContextDTO filterContext =
             new BillingControl_DataProvider.BillingFilterContextDTO();
@@ -320,9 +364,732 @@ private class BillingControl_DataProviderTest {
         BillingControl_Orders.KpiWrapper filteredKpis = BillingControl_Orders.getKpis(21L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(2, countOrderRows(sections),
-            'The filtered draft diary is also eligible for the yesterday-based Scheduled for Today bucket.');
+        System.assertEquals(
+            1,
+            findOrdersSection(sections, 'UNSCHEDULED').rows.size(),
+            'Draft diary with blank Scheduled Start lands in Unscheduled Work.'
+        );
         System.assertEquals(1, filteredKpis.unscheduledCount);
+        System.assert(
+            filteredKpis.completedThisWeekCount >= 1,
+            'Draft completed appointments still surface in Completed This Week.'
+        );
+    }
+
+    @IsTest
+    static void ordersKpisAndFiltersCoverSchedStartBuckets() {
+        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
+        filterContext.tabKey = 'ORDERS';
+        filterContext.datasetKey = 'ORDERS_WORK_ORDERS';
+        filterContext.filters.add(
+            buildFilter('READY_PRESENT', 'Order', 'Ready_For_Billing__c', 'Equals', 'FALSE', 'Static', 10)
+        );
+        filterContext.filters.add(
+            buildFilter('STAGE_PRESENT', 'Opportunity', 'StageName', 'Equals', 'Closed Won', 'Static', 20)
+        );
+
+        Test.startTest();
+        BillingControl_Orders.KpiWrapper noFilterKpis = BillingControl_Orders.getKpis();
+        BillingControl_Orders.KpiWrapper filteredKpis = BillingControl_Orders.getKpis(91L, filterContext);
+        List<BillingControl_Orders.BucketSectionWrapper> sections =
+            BillingControl_Orders.getBucketWorkOrders();
+        Test.stopTest();
+
+        System.assert(noFilterKpis.unscheduledCount >= 1);
+        System.assert(filteredKpis.unscheduledCount >= 1);
+        System.assertEquals(1, findOrdersSection(sections, 'UNSCHEDULED').rows.size());
+        System.assertNotEquals(null, findOrdersSection(sections, 'COMPLETED_THIS_WEEK'));
+        System.assertNotEquals(null, findOrdersSection(sections, 'COMPLETED_THIS_MONTH'));
+        System.assertNotEquals(null, findOrdersSection(sections, 'NO_OPPORTUNITY'));
+        System.assert(noFilterKpis.completedThisWeekCount >= 1);
+        System.assert(noFilterKpis.completedThisMonthCount >= 1);
+        System.assertEquals(0, noFilterKpis.noOpportunityCount);
+    }
+
+    @IsTest
+    static void ordersBucketsFollowEarliestStartAndExcludeCompleted() {
+        Account accountRecord = [
+            SELECT Id
+            FROM Account
+            WHERE Name = 'Billing Control Provider Test Account'
+            LIMIT 1
+        ];
+        WorkType workTypeRecord = [SELECT Id FROM WorkType LIMIT 1];
+        Id standardPricebookId = Test.getStandardPricebookId();
+
+        Opportunity scheduledOpportunity = buildOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'Provider Scheduled Opportunity',
+            175,
+            Date.today().addDays(10)
+        );
+        Opportunity todayOpportunity = buildOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'Provider Scheduled Today Opportunity',
+            185,
+            Date.today()
+        );
+        insert new List<Opportunity>{ scheduledOpportunity, todayOpportunity };
+
+        WorkOrder scheduledWorkOrder = new WorkOrder(
+            Subject = 'Provider Scheduled WO',
+            Status = 'New',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id
+        );
+        WorkOrder todayWorkOrder = new WorkOrder(
+            Subject = 'Provider Scheduled Today WO',
+            Status = 'New',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id
+        );
+        insert new List<WorkOrder>{ scheduledWorkOrder, todayWorkOrder };
+
+        Datetime nextWeekStart = Datetime.newInstance(Date.today().addDays(7), Time.newInstance(9, 0, 0, 0));
+        Datetime todayStart = Datetime.newInstance(Date.today(), Time.newInstance(10, 0, 0, 0));
+        ServiceAppointment scheduledAppointment = new ServiceAppointment(
+            ParentRecordId = scheduledWorkOrder.Id,
+            Status = 'Scheduled',
+            EarliestStartTime = nextWeekStart,
+            DueDate = nextWeekStart.addDays(1),
+            SchedStartTime = nextWeekStart,
+            SchedEndTime = nextWeekStart.addHours(1),
+            Subject = 'Provider Scheduled SA',
+            Opportunity__c = scheduledOpportunity.Id
+        );
+        ServiceAppointment todayAppointment = new ServiceAppointment(
+            ParentRecordId = todayWorkOrder.Id,
+            Status = 'Scheduled',
+            EarliestStartTime = todayStart,
+            DueDate = todayStart.addDays(1),
+            SchedStartTime = todayStart,
+            SchedEndTime = todayStart.addHours(1),
+            Subject = 'Provider Scheduled Today SA',
+            Opportunity__c = todayOpportunity.Id
+        );
+        insert new List<ServiceAppointment>{ scheduledAppointment, todayAppointment };
+
+        insert new List<Opportunity_WorkOrder__c>{
+            new Opportunity_WorkOrder__c(
+                Work_Order__c = scheduledWorkOrder.Id,
+                Opportunity__c = scheduledOpportunity.Id
+            ),
+            new Opportunity_WorkOrder__c(
+                Work_Order__c = todayWorkOrder.Id,
+                Opportunity__c = todayOpportunity.Id
+            )
+        };
+        WorkOrderLedgerService.backfillWorkOrders(
+            new Set<Id>{ scheduledWorkOrder.Id, todayWorkOrder.Id }
+        );
+
+        insert new List<Order>{
+            buildOrder(
+                accountRecord.Id,
+                scheduledOpportunity.Id,
+                standardPricebookId,
+                scheduledWorkOrder.Id,
+                scheduledAppointment.Id,
+                'Draft',
+                false,
+                175,
+                0,
+                0,
+                Date.today().addDays(10)
+            ),
+            buildOrder(
+                accountRecord.Id,
+                todayOpportunity.Id,
+                standardPricebookId,
+                todayWorkOrder.Id,
+                todayAppointment.Id,
+                'Draft',
+                false,
+                185,
+                0,
+                0,
+                Date.today()
+            )
+        };
+
+        Test.startTest();
+        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
+            BillingControl_DataProvider.getOrdersRuntimeData(77L);
+        BillingControl_DataProvider.InvoicingRuntimeDataDTO invoicingData =
+            BillingControl_DataProvider.getInvoicingRuntimeData(77L);
+        Test.stopTest();
+
+        BillingControl_Orders.BucketSectionWrapper unscheduledSection = findOrdersSection(
+            ordersData.bucketSections,
+            'UNSCHEDULED'
+        );
+        BillingControl_Orders.BucketSectionWrapper scheduledSection = findOrdersSection(
+            ordersData.bucketSections,
+            'SCHEDULED'
+        );
+        BillingControl_Orders.BucketSectionWrapper scheduledTodaySection = findOrdersSection(
+            ordersData.bucketSections,
+            'SCHEDULED_TODAY'
+        );
+        BillingControl_Orders.BucketSectionWrapper completedThisWeekSection = findOrdersSection(
+            ordersData.bucketSections,
+            'COMPLETED_THIS_WEEK'
+        );
+        BillingControl_Orders.BucketSectionWrapper noOpportunitySection = findOrdersSection(
+            ordersData.bucketSections,
+            'NO_OPPORTUNITY'
+        );
+
+        System.assertEquals(1, unscheduledSection.rows.size());
+        System.assertEquals(1, scheduledSection.rows.size());
+        System.assertEquals(1, scheduledTodaySection.rows.size());
+        System.assertNotEquals(null, completedThisWeekSection);
+        System.assertEquals(0, noOpportunitySection.rows.size());
+        System.assertEquals(scheduledWorkOrder.Id, scheduledSection.rows[0].workOrderId);
+        System.assertEquals(todayWorkOrder.Id, scheduledTodaySection.rows[0].workOrderId);
+        System.assertEquals(4, invoicingData.metrics.readyToBill);
+
+        Set<Id> scheduledAppointmentIds = new Set<Id>{
+            scheduledAppointment.Id,
+            todayAppointment.Id
+        };
+        for (Order orderRecord : [
+            SELECT Status
+            FROM Order
+            WHERE Service_Appointment__c IN :scheduledAppointmentIds
+        ]) {
+            System.assertEquals('Draft', orderRecord.Status);
+        }
+    }
+
+    @IsTest
+    static void ordersBucketsCoverCompletedWindowsAndNoOpportunity() {
+        Account accountRecord = [
+            SELECT Id
+            FROM Account
+            WHERE Name = 'Billing Control Provider Test Account'
+            LIMIT 1
+        ];
+        WorkType workTypeRecord = [SELECT Id FROM WorkType LIMIT 1];
+        Id standardPricebookId = Test.getStandardPricebookId();
+
+        WorkOrder noOpportunityWorkOrder = new WorkOrder(
+            Subject = 'No Opportunity WO',
+            Status = 'New',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id
+        );
+        insert noOpportunityWorkOrder;
+
+        Datetime weekActualEnd = Datetime.newInstance(Date.today(), Time.newInstance(10, 0, 0, 0));
+        ServiceAppointment noOpportunityAppointment = new ServiceAppointment(
+            ParentRecordId = noOpportunityWorkOrder.Id,
+            Status = 'None',
+            Subject = 'No Opportunity SA'
+        );
+        insert noOpportunityAppointment;
+
+        Order noOpportunityOrder = buildOrder(
+            accountRecord.Id,
+            null,
+            standardPricebookId,
+            noOpportunityWorkOrder.Id,
+            noOpportunityAppointment.Id,
+            'Draft',
+            false,
+            0,
+            0,
+            0,
+            Date.today()
+        );
+        insert noOpportunityOrder;
+
+        Opportunity completedOpportunity = buildOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'Completed Window Opportunity',
+            225,
+            Date.today()
+        );
+        insert completedOpportunity;
+
+        WorkOrder completedWorkOrder = new WorkOrder(
+            Subject = 'Completed Window WO',
+            Status = 'Completed',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id
+        );
+        insert completedWorkOrder;
+
+        ServiceAppointment completedAppointment = new ServiceAppointment(
+            ParentRecordId = completedWorkOrder.Id,
+            Status = 'Completed',
+            SchedStartTime = weekActualEnd.addHours(-2),
+            SchedEndTime = weekActualEnd.addHours(-1),
+            ActualEndTime = weekActualEnd,
+            Subject = 'Completed Window SA'
+        );
+        insert completedAppointment;
+
+        insert new Opportunity_WorkOrder__c(
+            Work_Order__c = completedWorkOrder.Id,
+            Opportunity__c = completedOpportunity.Id
+        );
+        WorkOrderLedgerService.backfillWorkOrders(
+            new Set<Id>{ noOpportunityWorkOrder.Id, completedWorkOrder.Id }
+        );
+
+        insert buildOrder(
+            accountRecord.Id,
+            completedOpportunity.Id,
+            standardPricebookId,
+            completedWorkOrder.Id,
+            completedAppointment.Id,
+            'Ready to Bill',
+            true,
+            225,
+            0,
+            0,
+            Date.today()
+        );
+
+        Test.startTest();
+        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
+            BillingControl_DataProvider.getOrdersRuntimeData(88L);
+        Test.stopTest();
+
+        BillingControl_Orders.BucketSectionWrapper completedThisWeekSection = findOrdersSection(
+            ordersData.bucketSections,
+            'COMPLETED_THIS_WEEK'
+        );
+        BillingControl_Orders.BucketSectionWrapper completedThisMonthSection = findOrdersSection(
+            ordersData.bucketSections,
+            'COMPLETED_THIS_MONTH'
+        );
+        BillingControl_Orders.BucketSectionWrapper noOpportunitySection = findOrdersSection(
+            ordersData.bucketSections,
+            'NO_OPPORTUNITY'
+        );
+
+        System.assert(ordersData.kpis.completedThisWeekCount >= 1);
+        System.assert(ordersData.kpis.completedThisMonthCount >= 1);
+        System.assert(
+            ordersData.kpis.completedThisWeekRevenue >= 225,
+            'Completed KPI revenue uses Opportunity Amount.'
+        );
+        System.assertEquals(1, noOpportunitySection.rows.size());
+        System.assertEquals(noOpportunityWorkOrder.Id, noOpportunitySection.rows[0].workOrderId);
+        System.assertEquals(null, noOpportunitySection.rows[0].opportunityAmount);
+        System.assertEquals(0, ordersData.kpis.noOpportunityRevenue);
+        System.assert(
+            completedThisWeekSection.rows.size() >= 1,
+            'Completed This Week should include appointments with Actual End in the current week.'
+        );
+        System.assert(
+            completedThisMonthSection.rows.size() >= completedThisWeekSection.rows.size(),
+            'Completed This Month should at least cover Completed This Week within the same month.'
+        );
+    }
+
+    @IsTest
+    static void invoicingInvMarkersAreCaseInsensitive() {
+        System.assertEquals(true, BillingControl_Invoicing.containsExcludedInvoicingMarker('INV-90033'));
+        System.assertEquals(true, BillingControl_Invoicing.containsExcludedInvoicingMarker('Inv 90033'));
+        System.assertEquals(true, BillingControl_Invoicing.containsExcludedInvoicingMarker('inspection'));
+        System.assertEquals(false, BillingControl_Invoicing.containsExcludedInvoicingMarker('Overhaul'));
+        System.assertEquals(false, BillingControl_Invoicing.containsExcludedInvoicingMarker(null));
+        System.assertEquals(false, BillingControl_Invoicing.containsExcludedInvoicingMarker(''));
+    }
+
+    @IsTest
+    static void invoicingKeepsPartiallyMarkedWorkOrdersUninvoiced() {
+        Account accountRecord = [
+            SELECT Id
+            FROM Account
+            WHERE Name = 'Billing Control Provider Test Account'
+            LIMIT 1
+        ];
+        WorkType workTypeRecord = [SELECT Id FROM WorkType LIMIT 1];
+        Id standardPricebookId = Test.getStandardPricebookId();
+        Datetime completionTime = System.now().addHours(-3);
+
+        Opportunity mixedOpportunity = buildOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'Mixed INV Opportunity',
+            500,
+            Date.today()
+        );
+        insert mixedOpportunity;
+
+        WorkOrder mixedWorkOrder = new WorkOrder(
+            Subject = 'Mixed INV WO',
+            Status = 'New',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id
+        );
+        insert mixedWorkOrder;
+
+        ServiceAppointment markedAppointment = new ServiceAppointment(
+            ParentRecordId = mixedWorkOrder.Id,
+            Status = 'Completed',
+            SchedStartTime = completionTime.addHours(-2),
+            SchedEndTime = completionTime.addHours(-1),
+            ActualEndTime = completionTime,
+            Subject = 'Marked INV SA',
+            Invoice_Number__c = 'Inv 90033',
+            Opportunity__c = mixedOpportunity.Id
+        );
+        ServiceAppointment blankAppointment = new ServiceAppointment(
+            ParentRecordId = mixedWorkOrder.Id,
+            Status = 'Completed',
+            SchedStartTime = completionTime.addHours(-2),
+            SchedEndTime = completionTime.addHours(-1),
+            ActualEndTime = completionTime.addMinutes(-10),
+            Subject = 'Blank INV SA',
+            Opportunity__c = mixedOpportunity.Id
+        );
+        insert new List<ServiceAppointment>{ markedAppointment, blankAppointment };
+
+        insert new List<Order>{
+            buildOrder(
+                accountRecord.Id,
+                mixedOpportunity.Id,
+                standardPricebookId,
+                mixedWorkOrder.Id,
+                markedAppointment.Id,
+                'Ready to Bill',
+                true,
+                500,
+                0,
+                0,
+                Date.today()
+            ),
+            buildOrder(
+                accountRecord.Id,
+                mixedOpportunity.Id,
+                standardPricebookId,
+                mixedWorkOrder.Id,
+                blankAppointment.Id,
+                'Ready to Bill',
+                true,
+                500,
+                0,
+                0,
+                Date.today()
+            )
+        };
+
+        Test.startTest();
+        BillingControl_DataProvider.InvoicingRuntimeDataDTO mixedData =
+            BillingControl_DataProvider.getInvoicingRuntimeData(201L);
+        Test.stopTest();
+
+        Set<Id> mixedAppointmentIds = new Set<Id>();
+        Set<String> mixedInvoiceNumbers = new Set<String>();
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : mixedData.groups) {
+            if (groupRecord.categoryKey != 'READY_TO_BILL') {
+                continue;
+            }
+            for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
+                if (row.workOrderId == mixedWorkOrder.Id) {
+                    System.assertEquals(UserInfo.getName(), row.ownerName);
+                    if (row.relatedServiceAppointments != null) {
+                        for (BillingControl_Invoicing.ServiceAppointmentRowWrapper child : row.relatedServiceAppointments) {
+                            mixedAppointmentIds.add(child.serviceAppointmentId);
+                            if (String.isNotBlank(child.invoiceNumber)) {
+                                mixedInvoiceNumbers.add(child.invoiceNumber);
+                            }
+                        }
+                    } else {
+                        mixedAppointmentIds.add(row.serviceAppointmentId);
+                        if (String.isNotBlank(row.invoiceNumber)) {
+                            mixedInvoiceNumbers.add(row.invoiceNumber);
+                        }
+                    }
+                }
+            }
+        }
+        System.assert(
+            mixedAppointmentIds.contains(markedAppointment.Id) && mixedAppointmentIds.contains(blankAppointment.Id),
+            'A work order stays uninvoiced until every completed service appointment has an INV value.'
+        );
+        System.assert(
+            mixedInvoiceNumbers.contains('Inv 90033'),
+            'Invoice Number column should surface the Service Appointment INV value.'
+        );
+    }
+
+    @IsTest
+    static void invoicingExcludesFullyMarkedAndWorkOrderInv() {
+        Account accountRecord = [
+            SELECT Id
+            FROM Account
+            WHERE Name = 'Billing Control Provider Test Account'
+            LIMIT 1
+        ];
+        WorkType workTypeRecord = [SELECT Id FROM WorkType LIMIT 1];
+        Id standardPricebookId = Test.getStandardPricebookId();
+        Datetime completionTime = System.now().addHours(-4);
+
+        Opportunity billedOpportunity = buildOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'Fully Billed INV Opportunity',
+            275,
+            Date.today()
+        );
+        Opportunity workOrderInvOpportunity = buildOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'WO INV Opportunity',
+            325,
+            Date.today()
+        );
+        insert new List<Opportunity>{ billedOpportunity, workOrderInvOpportunity };
+
+        WorkOrder billedWorkOrder = new WorkOrder(
+            Subject = 'Fully Billed INV WO',
+            Status = 'New',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id
+        );
+        WorkOrder workOrderInvWorkOrder = new WorkOrder(
+            Subject = 'WO INV Number WO',
+            Status = 'New',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id,
+            Invoice_Number__c = 'INV-90069'
+        );
+        insert new List<WorkOrder>{ billedWorkOrder, workOrderInvWorkOrder };
+
+        ServiceAppointment billedAppointmentOne = new ServiceAppointment(
+            ParentRecordId = billedWorkOrder.Id,
+            Status = 'Completed',
+            SchedStartTime = completionTime.addHours(-2),
+            SchedEndTime = completionTime.addHours(-1),
+            ActualEndTime = completionTime,
+            Subject = 'Fully Billed SA 1',
+            Invoice_Number__c = 'Inv 90001',
+            Opportunity__c = billedOpportunity.Id
+        );
+        ServiceAppointment billedAppointmentTwo = new ServiceAppointment(
+            ParentRecordId = billedWorkOrder.Id,
+            Status = 'Completed',
+            SchedStartTime = completionTime.addHours(-2),
+            SchedEndTime = completionTime.addHours(-1),
+            ActualEndTime = completionTime.addMinutes(-5),
+            Subject = 'Fully Billed SA 2',
+            Invoice_Number__c = 'INV-90002',
+            Opportunity__c = billedOpportunity.Id
+        );
+        ServiceAppointment workOrderInvAppointment = new ServiceAppointment(
+            ParentRecordId = workOrderInvWorkOrder.Id,
+            Status = 'Completed',
+            SchedStartTime = completionTime.addHours(-2),
+            SchedEndTime = completionTime.addHours(-1),
+            ActualEndTime = completionTime.addMinutes(-8),
+            Subject = 'WO INV SA',
+            Opportunity__c = workOrderInvOpportunity.Id
+        );
+        insert new List<ServiceAppointment>{
+            billedAppointmentOne,
+            billedAppointmentTwo,
+            workOrderInvAppointment
+        };
+
+        insert new List<Order>{
+            buildOrder(
+                accountRecord.Id,
+                billedOpportunity.Id,
+                standardPricebookId,
+                billedWorkOrder.Id,
+                billedAppointmentOne.Id,
+                'Ready to Bill',
+                true,
+                275,
+                0,
+                0,
+                Date.today()
+            ),
+            buildOrder(
+                accountRecord.Id,
+                billedOpportunity.Id,
+                standardPricebookId,
+                billedWorkOrder.Id,
+                billedAppointmentTwo.Id,
+                'Ready to Bill',
+                true,
+                275,
+                0,
+                0,
+                Date.today()
+            ),
+            buildOrder(
+                accountRecord.Id,
+                workOrderInvOpportunity.Id,
+                standardPricebookId,
+                workOrderInvWorkOrder.Id,
+                workOrderInvAppointment.Id,
+                'Ready to Bill',
+                true,
+                325,
+                0,
+                0,
+                Date.today()
+            )
+        };
+
+        Test.startTest();
+        BillingControl_DataProvider.InvoicingRuntimeDataDTO invoicingData =
+            BillingControl_DataProvider.getInvoicingRuntimeData(202L);
+        Test.stopTest();
+
+        Set<Id> readyAppointmentIds = new Set<Id>();
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : invoicingData.groups) {
+            if (groupRecord.categoryKey != 'READY_TO_BILL') {
+                continue;
+            }
+            for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
+                if (row.relatedServiceAppointments != null) {
+                    for (BillingControl_Invoicing.ServiceAppointmentRowWrapper child : row.relatedServiceAppointments) {
+                        readyAppointmentIds.add(child.serviceAppointmentId);
+                    }
+                } else {
+                    readyAppointmentIds.add(row.serviceAppointmentId);
+                }
+            }
+        }
+
+        System.assertEquals(
+            false,
+            readyAppointmentIds.contains(billedAppointmentOne.Id) || readyAppointmentIds.contains(billedAppointmentTwo.Id),
+            'Work orders with INV on every completed service appointment are billed.'
+        );
+        System.assertEquals(
+            false,
+            readyAppointmentIds.contains(workOrderInvAppointment.Id),
+            'A work order Invoice Number containing INV bills the whole work order.'
+        );
+    }
+
+    @IsTest
+    static void invoicingEligibilityCoversMissingWorkOrderAndBlankSiblings() {
+        Account accountRecord = [
+            SELECT Id
+            FROM Account
+            WHERE Name = 'Billing Control Provider Test Account'
+            LIMIT 1
+        ];
+        WorkType workTypeRecord = [SELECT Id FROM WorkType LIMIT 1];
+        Id standardPricebookId = Test.getStandardPricebookId();
+        Datetime completionTime = System.now().addHours(-5);
+
+        Opportunity orphanOpportunity = buildOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'Orphan WO Opportunity',
+            180,
+            Date.today()
+        );
+        insert orphanOpportunity;
+
+        WorkOrder unusedWorkOrder = new WorkOrder(
+            Subject = 'Unused Parent WO',
+            Status = 'New',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id
+        );
+        WorkOrder appointmentWorkOrder = new WorkOrder(
+            Subject = 'Appointment Parent WO',
+            Status = 'New',
+            AccountId = accountRecord.Id,
+            WorkTypeId = workTypeRecord.Id,
+            Invoice_Number__c = 'Overhaul'
+        );
+        insert new List<WorkOrder>{ unusedWorkOrder, appointmentWorkOrder };
+
+        ServiceAppointment orphanAppointment = new ServiceAppointment(
+            ParentRecordId = appointmentWorkOrder.Id,
+            Status = 'Completed',
+            SchedStartTime = completionTime.addHours(-2),
+            SchedEndTime = completionTime.addHours(-1),
+            ActualEndTime = completionTime,
+            Subject = 'No Order WO SA',
+            Opportunity__c = orphanOpportunity.Id
+        );
+        ServiceAppointment mismatchedAppointment = new ServiceAppointment(
+            ParentRecordId = appointmentWorkOrder.Id,
+            Status = 'Completed',
+            SchedStartTime = completionTime.addHours(-2),
+            SchedEndTime = completionTime.addHours(-1),
+            ActualEndTime = completionTime.addMinutes(-4),
+            Subject = 'Mismatched WO SA',
+            Opportunity__c = orphanOpportunity.Id
+        );
+        insert new List<ServiceAppointment>{ orphanAppointment, mismatchedAppointment };
+
+        insert new List<Order>{
+            buildOrder(
+                accountRecord.Id,
+                orphanOpportunity.Id,
+                standardPricebookId,
+                null,
+                orphanAppointment.Id,
+                'Ready to Bill',
+                true,
+                180,
+                0,
+                0,
+                Date.today()
+            ),
+            buildOrder(
+                accountRecord.Id,
+                orphanOpportunity.Id,
+                standardPricebookId,
+                unusedWorkOrder.Id,
+                mismatchedAppointment.Id,
+                'Ready to Bill',
+                true,
+                180,
+                0,
+                0,
+                Date.today()
+            )
+        };
+
+        Test.startTest();
+        BillingControl_DataProvider.InvoicingRuntimeDataDTO invoicingData =
+            BillingControl_DataProvider.getInvoicingRuntimeData(203L);
+        Test.stopTest();
+
+        Set<Id> readyAppointmentIds = new Set<Id>();
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : invoicingData.groups) {
+            if (groupRecord.categoryKey != 'READY_TO_BILL') {
+                continue;
+            }
+            for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
+                if (row.relatedServiceAppointments != null) {
+                    for (BillingControl_Invoicing.ServiceAppointmentRowWrapper child : row.relatedServiceAppointments) {
+                        readyAppointmentIds.add(child.serviceAppointmentId);
+                    }
+                } else {
+                    readyAppointmentIds.add(row.serviceAppointmentId);
+                }
+            }
+        }
+
+        System.assert(
+            readyAppointmentIds.contains(orphanAppointment.Id),
+            'Completed appointments without a work order stay uninvoiced when they have no INV marker.'
+        );
+        System.assert(
+            readyAppointmentIds.contains(mismatchedAppointment.Id),
+            'Orders whose work order has no completed siblings stay uninvoiced.'
+        );
     }
 
     @IsTest
@@ -485,6 +1252,7 @@ private class BillingControl_DataProviderTest {
         System.assertNotEquals(null, groupedWorkOrderRow);
         System.assertEquals(3, groupedWorkOrderRow.relatedServiceAppointments.size());
         System.assertEquals(3, groupedWorkOrderRow.serviceAppointmentCount);
+        System.assertEquals(UserInfo.getName(), groupedWorkOrderRow.ownerName);
     }
 
     @IsTest
@@ -731,7 +1499,7 @@ private class BillingControl_DataProviderTest {
     private static void insertRuntimeConfig() {
         Billing_Center_Tab_Config__c ordersTab = new Billing_Center_Tab_Config__c(
             Developer_Key__c = 'ORDERS',
-            Label__c = 'Orders',
+            Label__c = 'Work Order Ledger',
             Is_Active__c = true,
             Display_Order__c = 10,
             View_Type__c = 'Grouped Table',
@@ -761,8 +1529,8 @@ private class BillingControl_DataProviderTest {
                 Label__c = 'Orders Work Orders',
                 Is_Active__c = true,
                 Data_Source_Type__c = 'Apex Handler',
-                Apex_Handler_Key__c = 'BillingControl_Orders.getBucketWorkOrders',
-                Source_Object_API_Name__c = 'Order'
+                Apex_Handler_Key__c = 'BillingControl_WorkOrderLedger.getBucketWorkOrders',
+                Source_Object_API_Name__c = 'Work_Order_Ledger__c'
             ),
             new Billing_Center_Dataset_Config__c(
                 Developer_Key__c = 'INVOICING_SERVICE_APPOINTMENTS',
@@ -1094,15 +1862,9 @@ private class BillingControl_DataProviderTest {
 
         List<ServiceAppointment> appointments = new List<ServiceAppointment>();
         for (Integer indexValue = 0; indexValue < opportunities.size(); indexValue++) {
-            Datetime scheduledDateTime = Datetime.newInstance(
-                effectiveDate,
-                Time.newInstance(8, 0, 0, 0)
-            );
             appointments.add(new ServiceAppointment(
                 ParentRecordId = workOrders[indexValue].Id,
-                Status = 'Scheduled',
-                SchedStartTime = scheduledDateTime,
-                SchedEndTime = scheduledDateTime.addHours(1),
+                Status = 'None',
                 Subject = prefix + ' SA ' + indexValue,
                 Opportunity__c = opportunities[indexValue].Id
             ));

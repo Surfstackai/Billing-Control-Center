@@ -6,6 +6,14 @@ import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Bil
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
 import getReceivablesRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getReceivablesRuntimeData';
 import updateCommissionPaid from '@salesforce/apex/BillingControl_Invoicing.updateCommissionPaid';
+import {
+    MIN_COLUMN_WIDTH,
+    RECEIVABLES_COLUMN_WIDTHS_KEY,
+    columnWidthStyle,
+    loadColumnWidths,
+    saveColumnWidths
+} from 'c/billingControlCenterColumnResize';
+import { compareAccountGroup, decorateAccountGroups } from 'c/billingControlCenterAccountGroup';
 
 const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -118,6 +126,10 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     receivablesKpisByKey = {};
     receivablesSectionsByKey = {};
     receivablesActionsByKey = {};
+    columnWidths = {};
+    _resizeState;
+    _boundResizeMove;
+    _boundResizeEnd;
 
     @api
     get dateFilter() {
@@ -141,8 +153,25 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
 
     connectedCallback() {
         this._isConnected = true;
+        this.columnWidths = loadColumnWidths(RECEIVABLES_COLUMN_WIDTHS_KEY);
         this.loadReceivablesConfig();
         this.loadData();
+    }
+
+    disconnectedCallback() {
+        this.teardownColumnResize();
+    }
+
+    get receivableColumnStyles() {
+        return {
+            salesperson: columnWidthStyle(this.columnWidths.salesperson),
+            account: columnWidthStyle(this.columnWidths.account),
+            opportunities: columnWidthStyle(this.columnWidths.opportunities),
+            invoiceAmount: columnWidthStyle(this.columnWidths.invoiceAmount),
+            commissionAmount: columnWidthStyle(this.columnWidths.commissionAmount),
+            commissionPaid: columnWidthStyle(this.columnWidths.commissionPaid),
+            outstandingCommission: columnWidthStyle(this.columnWidths.outstandingCommission)
+        };
     }
 
     get isLoading() {
@@ -645,12 +674,16 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                 const datasetKey = RECEIVABLES_DATASET_KEYS[sectionKey];
                 return Boolean(this.receivablesDatasetsByKey[datasetKey]);
             })
-            .map(section => ({
-                ...section,
-                categoryLabel:
-                    this.receivablesSectionsByKey[RECEIVABLES_SECTION_KEY_BY_CATEGORY[section.categoryKey]]?.label ||
-                    section.categoryLabel
-            }));
+            .map(section => {
+                const sectionKey = RECEIVABLES_SECTION_KEY_BY_CATEGORY[section.categoryKey];
+                if (sectionKey === 'INVOICES') {
+                    return {
+                        ...section,
+                        categoryLabel: this.receivablesSectionsByKey.INVOICES?.label || section.categoryLabel
+                    };
+                }
+                return section;
+            });
     }
 
     normalizeSections(data) {
@@ -659,20 +692,25 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             const salespeople = (section.salespersonGroups || []).map((salesperson, salespersonIndex) => {
                 const salespersonKey =
                     `${categoryKey}-salesperson-${salesperson.salespersonId || 'unassigned'}-${salespersonIndex}`;
-                const opportunities = (salesperson.opportunities || []).map((opportunity, opportunityIndex) => {
-                    const commissionAmount = opportunity.commissionAmount || 0;
-                    const commissionPaid = opportunity.commissionPaid || 0;
-                    return {
-                        ...opportunity,
-                        key:
-                            `${categoryKey}-opportunity-${opportunity.opportunityId || 'missing'}-` +
-                            `${opportunity.commissionId || opportunityIndex}`,
-                        opportunityName: opportunity.opportunityName || opportunity.name,
-                        commissionAmount,
-                        commissionPaid,
-                        outstandingCommission: commissionAmount - commissionPaid
-                    };
-                });
+                const opportunities = decorateAccountGroups(
+                    [...(salesperson.opportunities || [])]
+                        .sort((left, right) => compareAccountGroup(left, right, 1))
+                        .map((opportunity, opportunityIndex) => {
+                            const commissionAmount = opportunity.commissionAmount || 0;
+                            const commissionPaid = opportunity.commissionPaid || 0;
+                            return {
+                                ...opportunity,
+                                key:
+                                    `${categoryKey}-opportunity-${opportunity.opportunityId || 'missing'}-` +
+                                    `${opportunity.commissionId || opportunityIndex}`,
+                                opportunityName: opportunity.opportunityName || opportunity.name,
+                                commissionAmount,
+                                commissionPaid,
+                                outstandingCommission: commissionAmount - commissionPaid
+                            };
+                        }),
+                    'slds-theme_shade grouped-diary-table__row'
+                );
 
                 const totalCommission = salesperson.totalCommission || 0;
                 const totalPaid = salesperson.totalPaid || 0;
@@ -784,6 +822,58 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this.reconcileActiveState();
     }
 
+    handleColumnResizeStart(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const columnKey = event.currentTarget?.dataset?.columnKey;
+        if (!columnKey) {
+            return;
+        }
+        const header = event.currentTarget.closest('th');
+        const startWidth = header ? header.getBoundingClientRect().width : MIN_COLUMN_WIDTH;
+        this.teardownColumnResize();
+        this._resizeState = {
+            columnKey,
+            startX: event.clientX,
+            startWidth
+        };
+        this._boundResizeMove = this.handleColumnResizeMove.bind(this);
+        this._boundResizeEnd = this.handleColumnResizeEnd.bind(this);
+        window.addEventListener('mousemove', this._boundResizeMove);
+        window.addEventListener('mouseup', this._boundResizeEnd);
+    }
+
+    handleColumnResizeMove(event) {
+        if (!this._resizeState) {
+            return;
+        }
+        const nextWidth = Math.max(
+            MIN_COLUMN_WIDTH,
+            this._resizeState.startWidth + (event.clientX - this._resizeState.startX)
+        );
+        this.columnWidths = {
+            ...this.columnWidths,
+            [this._resizeState.columnKey]: nextWidth
+        };
+    }
+
+    handleColumnResizeEnd() {
+        saveColumnWidths(RECEIVABLES_COLUMN_WIDTHS_KEY, this.columnWidths);
+        this.teardownColumnResize();
+    }
+
+    teardownColumnResize() {
+        if (this._boundResizeMove) {
+            window.removeEventListener('mousemove', this._boundResizeMove);
+        }
+        if (this._boundResizeEnd) {
+            window.removeEventListener('mouseup', this._boundResizeEnd);
+        }
+        this._boundResizeMove = undefined;
+        this._boundResizeEnd = undefined;
+        this._resizeState = undefined;
+    }
+
     reduceError(error) {
         if (!error) {
             return 'Unknown error';
@@ -803,10 +893,10 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     buildKpiCountText(countKey) {
         const countValue = Number(this.metrics[countKey] || 0);
         const normalizedCount = Number.isFinite(countValue) ? countValue : 0;
-        const noun = countKey === 'commissionEarnedCount' || countKey === 'commissionPayableCount'
-            ? 'Commission'
-            : 'Opportunity';
-        return `${normalizedCount} ${noun}${normalizedCount === 1 ? '' : 's'}`;
+        if (countKey === 'commissionEarnedCount' || countKey === 'commissionPayableCount') {
+            return `${normalizedCount} ${normalizedCount === 1 ? 'Commission' : 'Commissions'}`;
+        }
+        return `${normalizedCount} ${normalizedCount === 1 ? 'Opportunity' : 'Opportunities'}`;
     }
 
     async loadReceivablesConfig() {

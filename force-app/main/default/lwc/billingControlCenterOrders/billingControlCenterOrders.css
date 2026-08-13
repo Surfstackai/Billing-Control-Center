@@ -1,8 +1,14 @@
 @import 'c/billingControlCenterStyles';
 
 :host {
-    --bcc-grouped-table-min-width: 86rem;
+    --bcc-grouped-table-min-width: 78rem;
     --bcc-grouped-child-line-height: 2rem;
+}
+
+.billing-kpi-container {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
 }
 
 .hero__controls {
@@ -32,8 +38,16 @@
     table-layout: fixed;
 }
 
-.grouped-diary-table__col--account {
-    width: 14rem;
+.grouped-diary-table__col--reconciliation {
+    width: 10rem;
+}
+
+.grouped-diary-table__col--view-ledger {
+    width: 8.5rem;
+}
+
+.ledger-action {
+    display: inline-flex;
 }
 
 .grouped-diary-table__col--opportunity {
@@ -56,11 +70,7 @@
     width: 16rem;
 }
 
-.grouped-diary-table__col--status {
-    width: 10rem;
-}
-
-.grouped-diary-table__col--billable-amount {
+.grouped-diary-table__col--opportunity-amount {
     width: 12rem;
 }
 
@@ -86,16 +96,16 @@
     align-items: center;
 }
 
-.grouped-diary-table__header--billable-amount .grouped-diary-table__header-button {
+.grouped-diary-table__header--opportunity-amount .grouped-diary-table__header-button {
     justify-content: center;
     position: relative;
 }
 
-.grouped-diary-table__header--billable-amount .grouped-diary-table__header-label {
+.grouped-diary-table__header--opportunity-amount .grouped-diary-table__header-label {
     flex: 0 1 auto;
 }
 
-.grouped-diary-table__header--billable-amount lightning-icon {
+.grouped-diary-table__header--opportunity-amount lightning-icon {
     position: absolute;
     right: 0;
 }
@@ -117,6 +127,17 @@
     display: block;
     min-width: 0;
     overflow: hidden;
+}
+
+.grouped-diary-table__work-order {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    min-width: 0;
+}
+
+.grouped-diary-table__attention {
+    flex: 0 0 auto;
 }
 
 .grouped-diary-table__single-link,
@@ -158,17 +179,7 @@
     white-space: nowrap;
 }
 
-.grouped-diary-cell__value--currency {
-    white-space: nowrap;
-    text-align: right;
-    font-variant-numeric: tabular-nums;
-}
-
-.grouped-diary-cell--currency .grouped-diary-cell__line {
-    justify-content: flex-end;
-}
-
-.grouped-diary-table__cell--billable-amount {
+.grouped-diary-table__cell--opportunity-amount {
     vertical-align: middle;
 }
 

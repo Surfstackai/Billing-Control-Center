@@ -36,11 +36,14 @@ export default class BillingControlCenterCompleteBillingModal extends LightningE
                     count: 0,
                     totalBillableAmount: 0,
                     appointments: [],
-                    invoiceNumber: ''
+                    invoiceNumber: row.invoiceNumber || ''
                 });
             }
             const group = mapByOpportunity.get(key);
             group.count += 1;
+            if (!group.invoiceNumber && row.invoiceNumber) {
+                group.invoiceNumber = row.invoiceNumber;
+            }
             if (group.count === 1) {
                 group.totalBillableAmount = row.invoiceableOpportunityAmount || 0;
             }

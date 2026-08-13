@@ -386,6 +386,7 @@ public with sharing class BillingControl_Invoicing {
         clone.technicianName = source.technicianName;
         clone.billingStatus = source.billingStatus;
         clone.invoiceNumber = source.invoiceNumber;
+        clone.woInvoiceNumber = source.woInvoiceNumber;
         clone.readyForBilling = source.readyForBilling;
         clone.invoicedAmount = source.invoicedAmount;
         clone.receivedAmount = source.receivedAmount;
@@ -1408,6 +1409,27 @@ public with sharing class BillingControl_Invoicing {
         return String.isNotBlank(preferredValue) ? preferredValue : fallbackValue;
     }
 
+    private static String coalesceInvoiceNumber(Order orderRecord) {
+        if (orderRecord == null) {
+            return null;
+        }
+        String serviceAppointmentInvoiceNumber = orderRecord.Service_Appointment__r != null
+            ? orderRecord.Service_Appointment__r.Invoice_Number__c
+            : null;
+        if (String.isNotBlank(serviceAppointmentInvoiceNumber)) {
+            return serviceAppointmentInvoiceNumber;
+        }
+        String workOrderInvoiceNumber = orderRecord.Work_Order__r != null
+            ? orderRecord.Work_Order__r.Invoice_Number__c
+            : null;
+        if (String.isNotBlank(workOrderInvoiceNumber)) {
+            return workOrderInvoiceNumber;
+        }
+        return orderRecord.Service_Appointment__r != null
+            ? orderRecord.Service_Appointment__r.WO_Inv_Status__c
+            : null;
+    }
+
     private static OpportunityWrapper buildOpportunityFromOpportunity(Opportunity opportunityRecord) {
         OpportunityWrapper opportunity = new OpportunityWrapper();
         opportunity.opportunityId = opportunityRecord != null ? opportunityRecord.Id : null;
@@ -1910,17 +1932,24 @@ public with sharing class BillingControl_Invoicing {
             row.createdDate = orderRecord.CreatedDate;
             row.subject = coalesceText((String) orderRecord.get('Work_Order_Subject__c'), orderRecord.Name);
             row.status = (String) orderRecord.get('Billing_Diary_Status__c');
-            row.ownerId = (Id) orderRecord.get('Technician__c');
-            row.ownerName = orderRecord.Technician__r != null ? orderRecord.Technician__r.Name : null;
+            row.ownerId = orderRecord.Account != null ? orderRecord.Account.OwnerId : null;
+            row.ownerName = orderRecord.Account != null && orderRecord.Account.Owner != null
+                ? orderRecord.Account.Owner.Name
+                : null;
             row.completionDateTime = orderRecord.Service_Appointment__r != null
                 ? orderRecord.Service_Appointment__r.ActualEndTime
                 : null;
             row.technicianId = (Id) orderRecord.get('Technician__c');
             row.technicianName = orderRecord.Technician__r != null ? orderRecord.Technician__r.Name : null;
             row.billingStatus = (String) orderRecord.get('Billing_Diary_Status__c');
-            row.invoiceNumber = orderRecord.Service_Appointment__r != null
-                ? orderRecord.Service_Appointment__r.Invoice_Number__c
-                : null;
+            row.invoiceNumber = coalesceInvoiceNumber(orderRecord);
+            row.woInvoiceNumber = orderRecord.Work_Order__r != null
+                ? orderRecord.Work_Order__r.Invoice_Number__c
+                : (
+                    orderRecord.Service_Appointment__r != null
+                        ? orderRecord.Service_Appointment__r.WO_Inv_Status__c
+                        : null
+                );
             row.readyForBilling = (Boolean) orderRecord.get('Ready_For_Billing__c');
             row.invoicedAmount = (Decimal) orderRecord.get('Invoiced_Amount__c');
             row.receivedAmount = (Decimal) orderRecord.get('Received_Amount__c');
@@ -2108,22 +2137,28 @@ public with sharing class BillingControl_Invoicing {
         BillingControl_DataProvider.BillingFilterContextDTO filterContext,
         Integer rowLimit
     ) {
-        String queryText = 'SELECT Id, Name, OrderNumber, AccountId, Account_Name__c, OpportunityId, Opportunity.Amount, Opportunity_Name__c,'
-            + ' Work_Order__c, Work_Order_Number__c, Work_Order_Subject__c, Work_Order__r.Status, Work_Order__r.Parent_Account__r.Name,'
+        String queryText = 'SELECT Id, Name, OrderNumber, AccountId, Account.OwnerId, Account.Owner.Name, Account_Name__c, OpportunityId, Opportunity.Amount, Opportunity_Name__c,'
+            + ' Work_Order__c, Work_Order_Number__c, Work_Order_Subject__c, Work_Order__r.Status, Work_Order__r.Invoice_Number__c,'
+            + ' Work_Order__r.Parent_Account__r.Name,'
             + ' Service_Appointment__c, Service_Appointment__r.AppointmentNumber, Service_Appointment__r.Status,'
             + ' Service_Appointment__r.SchedStartTime, Service_Appointment__r.ActualEndTime, Service_Appointment__r.Invoice_Number__c,'
             + ' Service_Appointment__r.WO_Inv_Status__c, Technician__c, Technician__r.Name, Billing_Diary_Status__c,'
             + ' Ready_For_Billing__c, Invoiced_Amount__c, Received_Amount__c, Outstanding_Amount__c, EffectiveDate, CreatedDate'
             + ' FROM Order' + buildReadyToInvoiceWhereClause(filterContext, false)
             + ' ORDER BY Service_Appointment__r.ActualEndTime DESC NULLS LAST, OrderNumber ASC NULLS LAST';
-        List<Order> eligible = new List<Order>();
+        List<Order> candidates = new List<Order>();
         for (Order orderRecord : Database.query(queryText)) {
             if (isEligibleInvoicingOrder(orderRecord)) {
-                eligible.add(orderRecord);
-                if (rowLimit != null && eligible.size() >= rowLimit) {
-                    break;
-                }
+                candidates.add(orderRecord);
             }
+        }
+        List<Order> eligible = excludeFullyBilledWorkOrders(candidates);
+        if (rowLimit != null && eligible.size() > rowLimit) {
+            List<Order> limited = new List<Order>();
+            for (Integer index = 0; index < rowLimit; index++) {
+                limited.add(eligible[index]);
+            }
+            return limited;
         }
         return eligible;
     }
@@ -2131,19 +2166,118 @@ public with sharing class BillingControl_Invoicing {
     private static Boolean isEligibleInvoicingOrder(Order orderRecord) {
         ServiceAppointment appointment = orderRecord.Service_Appointment__r;
         if (appointment == null || appointment.Status != SERVICE_APPOINTMENT_STATUS_COMPLETED) return false;
-        if (containsExcludedInvoicingMarker(appointment.Invoice_Number__c)
-            || containsExcludedInvoicingMarker(appointment.WO_Inv_Status__c)) return false;
         WorkOrder workOrder = orderRecord.Work_Order__r;
         if (workOrder == null) return true;
         if (EXCLUDED_INVOICING_WORK_ORDER_STATUSES.contains(workOrder.Status)) return false;
         return workOrder.Parent_Account__r == null || !containsExcludedInvoicingMarkerForAccount(workOrder.Parent_Account__r.Name);
     }
 
+    private static List<Order> excludeFullyBilledWorkOrders(List<Order> candidates) {
+        if (candidates == null || candidates.isEmpty()) {
+            return new List<Order>();
+        }
+
+        Set<Id> workOrderIds = new Set<Id>();
+        Map<Id, String> workOrderInvoiceNumberById = new Map<Id, String>();
+        for (Order orderRecord : candidates) {
+            Id workOrderId = (Id) orderRecord.get('Work_Order__c');
+            if (workOrderId == null) {
+                continue;
+            }
+            workOrderIds.add(workOrderId);
+            if (orderRecord.Work_Order__r != null && !workOrderInvoiceNumberById.containsKey(workOrderId)) {
+                workOrderInvoiceNumberById.put(workOrderId, orderRecord.Work_Order__r.Invoice_Number__c);
+            }
+        }
+
+        Map<Id, List<ServiceAppointment>> completedAppointmentsByWorkOrderId =
+            queryCompletedAppointmentsByWorkOrderId(workOrderIds);
+        Set<Id> fullyBilledWorkOrderIds = new Set<Id>();
+        for (Id workOrderId : workOrderIds) {
+            if (
+                isWorkOrderFullyBilled(
+                    workOrderInvoiceNumberById.get(workOrderId),
+                    completedAppointmentsByWorkOrderId.get(workOrderId)
+                )
+            ) {
+                fullyBilledWorkOrderIds.add(workOrderId);
+            }
+        }
+
+        List<Order> eligible = new List<Order>();
+        for (Order orderRecord : candidates) {
+            Id workOrderId = (Id) orderRecord.get('Work_Order__c');
+            if (workOrderId != null) {
+                if (!fullyBilledWorkOrderIds.contains(workOrderId)) {
+                    eligible.add(orderRecord);
+                }
+                continue;
+            }
+            ServiceAppointment appointment = orderRecord.Service_Appointment__r;
+            if (
+                appointment == null
+                || !containsExcludedInvoicingMarker(appointment.Invoice_Number__c)
+            ) {
+                eligible.add(orderRecord);
+            }
+        }
+        return eligible;
+    }
+
+    private static Map<Id, List<ServiceAppointment>> queryCompletedAppointmentsByWorkOrderId(Set<Id> workOrderIds) {
+        Map<Id, List<ServiceAppointment>> appointmentsByWorkOrderId = new Map<Id, List<ServiceAppointment>>();
+        if (workOrderIds == null || workOrderIds.isEmpty()) {
+            return appointmentsByWorkOrderId;
+        }
+
+        for (ServiceAppointment appointmentRecord : [
+            SELECT Id, ParentRecordId, Invoice_Number__c, WO_Inv_Status__c
+            FROM ServiceAppointment
+            WHERE ParentRecordId IN :workOrderIds
+            AND Status = :SERVICE_APPOINTMENT_STATUS_COMPLETED
+        ]) {
+            List<ServiceAppointment> appointments = appointmentsByWorkOrderId.get(appointmentRecord.ParentRecordId);
+            if (appointments == null) {
+                appointments = new List<ServiceAppointment>();
+                appointmentsByWorkOrderId.put(appointmentRecord.ParentRecordId, appointments);
+            }
+            appointments.add(appointmentRecord);
+        }
+        return appointmentsByWorkOrderId;
+    }
+
+    private static Boolean isWorkOrderFullyBilled(
+        String workOrderInvoiceNumber,
+        List<ServiceAppointment> completedAppointments
+    ) {
+        if (containsExcludedInvoicingMarker(workOrderInvoiceNumber)) {
+            return true;
+        }
+        if (completedAppointments == null || completedAppointments.isEmpty()) {
+            return false;
+        }
+        for (ServiceAppointment appointmentRecord : completedAppointments) {
+            if (appointmentRecord != null && containsExcludedInvoicingMarker(appointmentRecord.WO_Inv_Status__c)) {
+                return true;
+            }
+        }
+        for (ServiceAppointment appointmentRecord : completedAppointments) {
+            if (appointmentRecord == null || !containsExcludedInvoicingMarker(appointmentRecord.Invoice_Number__c)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static Boolean containsExcludedInvoicingMarkerForAccount(String value) { return value != null && value.contains('NYCDOE'); }
 
     @TestVisible
     private static Boolean containsExcludedInvoicingMarker(String value) {
-        return value != null && (value.contains('Inv') || value.contains('Inspection'));
+        if (String.isBlank(value)) {
+            return false;
+        }
+        String normalized = value.toLowerCase();
+        return normalized.contains('inv') || normalized.contains('inspection');
     }
 
     private static String buildReceivableOrdersWhereClause(
@@ -2978,6 +3112,7 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public String technicianName;
         @AuraEnabled public String billingStatus;
         @AuraEnabled public String invoiceNumber;
+        @AuraEnabled public String woInvoiceNumber;
         @AuraEnabled public Boolean readyForBilling;
         @AuraEnabled public Decimal invoicedAmount;
         @AuraEnabled public Decimal receivedAmount;

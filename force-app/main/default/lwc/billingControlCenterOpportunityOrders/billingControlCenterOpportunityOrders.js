@@ -2,6 +2,7 @@ import { LightningElement } from 'lwc';
 
 import getOpportunityBillingMetrics from '@salesforce/apex/BillingControl_Invoicing.getOpportunityBillingMetrics';
 import getReadyForBillingOpportunities from '@salesforce/apex/BillingControl_Invoicing.getReadyForBillingOpportunities';
+import { decorateAccountGroups, sortRowsWithAccountGroup } from 'c/billingControlCenterAccountGroup';
 
 const KPI_CONFIG = [
     {
@@ -49,7 +50,7 @@ export default class BillingControlCenterOpportunityOrders extends LightningElem
     displayedRows = [];
     selectedRowIds = [];
     expandedRowIds = [];
-    sortedBy = 'closeDate';
+    sortedBy = 'accountName';
     sortDirection = 'asc';
     isLoading = true;
     errorMessage;
@@ -216,8 +217,19 @@ export default class BillingControlCenterOpportunityOrders extends LightningElem
     rebuildRows() {
         const selectedIds = new Set(this.selectedRowIds);
         const expandedIds = new Set(this.expandedRowIds);
-        const sortedOpportunities = [...this.opportunities].sort((left, right) =>
-            this.compareValues(left[this.sortedBy], right[this.sortedBy], this.sortDirection)
+        const sortedOpportunities = decorateAccountGroups(
+            sortRowsWithAccountGroup(
+                this.opportunities,
+                this.sortedBy,
+                this.sortDirection,
+                (left, right, fieldName, directionMultiplier) =>
+                    this.compareValues(
+                        left[fieldName],
+                        right[fieldName],
+                        directionMultiplier === -1 ? 'desc' : 'asc'
+                    )
+            ),
+            'slds-hint-parent'
         );
 
         this.displayedRows = sortedOpportunities.map(opportunity => {

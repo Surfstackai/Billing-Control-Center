@@ -15,7 +15,7 @@ const TARGET_URL = 'URL';
 const SUPPORTED_INTERNAL_TABS = new Set(['ORDERS', 'INVOICING', 'RECEIVABLES']);
 
 const DEFAULT_INTERNAL_ITEMS = [
-    { developerKey: 'ORDERS', label: 'Orders' },
+    { developerKey: 'ORDERS', label: 'Work Order Ledger' },
     { developerKey: 'INVOICING', label: 'Invoicing' },
     { developerKey: 'RECEIVABLES', label: 'Receivables' }
 ];

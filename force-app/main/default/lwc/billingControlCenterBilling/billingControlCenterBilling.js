@@ -1,8 +1,17 @@
 import { LightningElement, api } from 'lwc';
+import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Billing_Control_Center_Admin_Access';
 
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
 import getInvoicingRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getInvoicingRuntimeData';
+import {
+    MIN_COLUMN_WIDTH,
+    INVOICING_COLUMN_WIDTHS_KEY,
+    columnWidthStyle,
+    loadColumnWidths,
+    saveColumnWidths
+} from 'c/billingControlCenterColumnResize';
+import { decorateAccountGroups, sortRowsWithAccountGroup } from 'c/billingControlCenterAccountGroup';
 
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US');
 const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
@@ -42,13 +51,14 @@ const CATEGORY_KEYS = ['AGED_COMPLETED', 'READY_TO_BILL', 'UNBILLED_REVENUE'];
 const INVOICING_DATASET_KEY = 'INVOICING_SERVICE_APPOINTMENTS';
 const INVOICING_SECTION_KEY = 'READY_TO_INVOICE';
 const invoicingRuntimeCache = new Map();
-const DEFAULT_SORT_FIELD = 'workOrderUrl';
+const DEFAULT_SORT_FIELD = 'accountUrl';
 const DEFAULT_HERO_TITLE = 'Ready-to-Bill Order Diary';
 const DEFAULT_HERO_SUBTITLE =
     'Review ready-to-bill diary records and create invoice batches.';
 const DEFAULT_TABLE_TITLE = 'Ready-to-bill diary records';
 const DEFAULT_REFRESH_LABEL = 'Refresh';
 const DEFAULT_COMPLETE_BILLING_LABEL = 'Complete Billing';
+const DEFAULT_INV_SYNC_LABEL = 'INV-Sync';
 
 const WORK_ORDER_COLUMNS = [
     {
@@ -74,6 +84,14 @@ const WORK_ORDER_COLUMNS = [
             label: { fieldName: 'opportunityName' },
             target: '_blank'
         }
+    },
+    {
+        developerKey: 'INVOICE_NUMBER',
+        configFieldApiName: 'invoiceNumber',
+        label: 'Invoice Number',
+        fieldName: 'invoiceNumber',
+        type: 'text',
+        sortable: true
     },
     {
         developerKey: 'WORK_ORDER',
@@ -129,7 +147,7 @@ const WORK_ORDER_COLUMNS = [
     {
         developerKey: 'OPPORTUNITY_AMOUNT',
         configFieldApiName: 'opportunityAmount',
-        label: 'Billable Amount',
+        label: 'Opportunity Amount',
         fieldName: 'opportunityAmount',
         type: 'currency',
         sortable: true,
@@ -138,12 +156,25 @@ const WORK_ORDER_COLUMNS = [
     {
         developerKey: 'OWNER',
         configFieldApiName: 'ownerName',
-        label: 'Owner',
+        label: 'Account Owner',
         fieldName: 'ownerName',
         type: 'text',
         sortable: true
     }
 ];
+
+const COL_MODIFIER_BY_KEY = {
+    ACCOUNT: 'account',
+    OPPORTUNITY: 'opportunity',
+    INVOICE_NUMBER: 'invoice-number',
+    WORK_ORDER: 'work-order',
+    SERVICE_APPOINTMENTS: 'service-appointment',
+    CREATED_DATE: 'created-date',
+    SUBJECT: 'subject',
+    WORK_ORDER_STATUS: 'status',
+    OPPORTUNITY_AMOUNT: 'opportunity-amount',
+    OWNER: 'owner'
+};
 
 function normalizeConfigKey(value) {
     return value ? String(value).trim().toUpperCase() : '';
@@ -198,26 +229,58 @@ function buildConfiguredColumns(configColumns) {
             return;
         }
 
+        const resolvedLabel =
+            developerKey === 'OPPORTUNITY_AMOUNT'
+                ? 'Opportunity Amount'
+                : developerKey === 'OWNER'
+                    ? 'Account Owner'
+                    : configColumn.label || matchedColumn.label;
+
         matchedColumns.push({
             ...matchedColumn,
-            label: configColumn.label || matchedColumn.label
+            label: resolvedLabel
         });
     });
 
     if (matchedColumns.length === 0) {
         return WORK_ORDER_COLUMNS;
     }
-    return matchedColumns;
+    return injectInvoiceNumberColumn(matchedColumns);
 }
 
-function buildRenderableColumns(columns, sortedBy, sortDirection) {
+function injectInvoiceNumberColumn(columns) {
+    const hasInvoiceNumber = columns.some(
+        column => normalizeConfigKey(column.developerKey) === 'INVOICE_NUMBER'
+    );
+    if (hasInvoiceNumber) {
+        return columns;
+    }
+
+    const invoiceNumberColumn = WORK_ORDER_COLUMNS.find(
+        column => column.developerKey === 'INVOICE_NUMBER'
+    );
+    const workOrderIndex = columns.findIndex(
+        column => normalizeConfigKey(column.developerKey) === 'WORK_ORDER'
+    );
+    const nextColumns = [...columns];
+    if (workOrderIndex >= 0) {
+        nextColumns.splice(workOrderIndex, 0, invoiceNumberColumn);
+    } else {
+        nextColumns.splice(2, 0, invoiceNumberColumn);
+    }
+    return nextColumns;
+}
+
+function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) {
     return (columns || []).map((column, index) => {
         const developerKey = normalizeConfigKey(column.developerKey);
         const fieldName = column.fieldName || column.configFieldApiName;
         const isSorted = sortedBy === fieldName;
         const isAscending = sortDirection === 'asc';
 
-        const isBillableAmount = developerKey === 'OPPORTUNITY_AMOUNT';
+        const isOpportunityAmount = developerKey === 'OPPORTUNITY_AMOUNT';
+        const colModifier = COL_MODIFIER_BY_KEY[developerKey] || 'default';
+        const widthStyle = columnWidthStyle(columnWidths?.[developerKey]);
 
         return {
             ...column,
@@ -230,15 +293,19 @@ function buildRenderableColumns(columns, sortedBy, sortDirection) {
             sortAltText: isAscending ? 'Sorted ascending' : 'Sorted descending',
             isAccount: developerKey === 'ACCOUNT',
             isOpportunity: developerKey === 'OPPORTUNITY',
+            isInvoiceNumber: developerKey === 'INVOICE_NUMBER',
             isWorkOrder: developerKey === 'WORK_ORDER',
             isServiceAppointment: developerKey === 'SERVICE_APPOINTMENTS',
             isCreatedDate: developerKey === 'CREATED_DATE',
             isSubject: developerKey === 'SUBJECT',
             isStatus: developerKey === 'WORK_ORDER_STATUS',
-            isBillableAmount,
+            isOpportunityAmount,
             isOwner: developerKey === 'OWNER',
-            headerClass: `grouped-diary-table__header${isBillableAmount ? ' grouped-diary-table__header--billable-amount' : ''}`,
-            cellClass: `grouped-diary-table__cell${isBillableAmount ? ' grouped-diary-table__cell--billable-amount' : ''}`
+            colClass: `grouped-diary-table__col grouped-diary-table__col--${colModifier}`,
+            colStyle: widthStyle,
+            headerStyle: widthStyle,
+            headerClass: `grouped-diary-table__header bcc-resizable-header${isOpportunityAmount ? ' grouped-diary-table__header--opportunity-amount' : ''}`,
+            cellClass: `grouped-diary-table__cell${isOpportunityAmount ? ' grouped-diary-table__cell--opportunity-amount' : ''}`
         };
     });
 }
@@ -305,6 +372,7 @@ function normalizeAppointmentRows(row) {
             appointment.serviceAppointmentNumber,
             appointment.subject,
             appointment.status,
+            appointment.invoiceNumber,
             appointment.ownerName
         );
         return terms;
@@ -392,16 +460,7 @@ function compareRowValues(left, right, fieldName, directionMultiplier) {
 }
 
 function sortWorkOrderRows(rows, fieldName, direction) {
-    const directionMultiplier = direction === 'desc' ? -1 : 1;
-    return [...rows].sort((left, right) => {
-        const primary = compareRowValues(left, right, fieldName, directionMultiplier);
-        if (primary !== 0) {
-            return primary;
-        }
-        const tieLeft = left.rowKey != null ? String(left.rowKey) : '';
-        const tieRight = right.rowKey != null ? String(right.rowKey) : '';
-        return tieLeft.localeCompare(tieRight) * directionMultiplier;
-    });
+    return sortRowsWithAccountGroup(rows, fieldName, direction, compareRowValues);
 }
 
 function defaultSortState() {
@@ -410,6 +469,20 @@ function defaultSortState() {
         next[key] = { sortedBy: DEFAULT_SORT_FIELD, sortDirection: 'asc' };
     }
     return next;
+}
+
+function hasInvMarker(value) {
+    return typeof value === 'string' && value.toLowerCase().includes('inv');
+}
+
+function resolveInvSyncNumber(row) {
+    const candidates = [row?.invoiceNumber, row?.woInvoiceNumber];
+    for (const value of candidates) {
+        if (hasInvMarker(value)) {
+            return value.trim();
+        }
+    }
+    return '';
 }
 
 export default class BillingControlCenterBilling extends LightningElement {
@@ -423,6 +496,7 @@ export default class BillingControlCenterBilling extends LightningElement {
     appointmentSections = [];
     selectedRowKeys = new Set();
     selectedServiceAppointments = [];
+    invSyncApplied = false;
     sortState = defaultSortState();
     searchKey = '';
     isLoading = true;
@@ -437,6 +511,10 @@ export default class BillingControlCenterBilling extends LightningElement {
     invoicingKpisByKey = {};
     invoicingSectionsByKey = {};
     invoicingActionsByKey = {};
+    columnWidths = {};
+    _resizeState;
+    _boundResizeMove;
+    _boundResizeEnd;
 
     workOrderColumns = WORK_ORDER_COLUMNS;
 
@@ -462,8 +540,13 @@ export default class BillingControlCenterBilling extends LightningElement {
 
     connectedCallback() {
         this._isConnected = true;
+        this.columnWidths = loadColumnWidths(INVOICING_COLUMN_WIDTHS_KEY);
         this.loadInvoicingConfig();
         this.loadData();
+    }
+
+    disconnectedCallback() {
+        this.teardownColumnResize();
     }
 
     get heroTitle() {
@@ -543,6 +626,13 @@ export default class BillingControlCenterBilling extends LightningElement {
 
         return [
             {
+                key: 'invSync',
+                label: DEFAULT_INV_SYNC_LABEL,
+                variant: 'neutral',
+                disabled: this.isCompleteBillingDisabled,
+                title: 'Copy invoice numbers from Service Appointment or Work Order'
+            },
+            {
                 key: 'completeBilling',
                 label: this.completeBillingLabel,
                 variant: 'brand',
@@ -613,10 +703,12 @@ export default class BillingControlCenterBilling extends LightningElement {
                 sortDirection: 'asc'
             };
             rows = sortWorkOrderRows(rows, categorySort.sortedBy, categorySort.sortDirection);
-            rows = rows.map(row => ({
-                ...row,
-                isSelected: row.rowKey ? this.selectedRowKeys.has(row.rowKey) : false
-            }));
+            rows = decorateAccountGroups(
+                rows.map(row => ({
+                    ...row,
+                    isSelected: row.rowKey ? this.selectedRowKeys.has(row.rowKey) : false
+                }))
+            );
             const visibleAppointmentCount = countAppointments(rows);
 
             return {
@@ -630,7 +722,8 @@ export default class BillingControlCenterBilling extends LightningElement {
                 columns: buildRenderableColumns(
                     this.workOrderColumns,
                     categorySort.sortedBy,
-                    categorySort.sortDirection
+                    categorySort.sortDirection,
+                    this.columnWidths
                 ),
                 visibleAppointmentCount
             };
@@ -670,7 +763,8 @@ export default class BillingControlCenterBilling extends LightningElement {
             completionDateTime: row.completionDateTime,
             technicianName: row.technicianName,
             opportunityAmount: row.opportunityAmount,
-            invoiceableOpportunityAmount: row.invoiceableOpportunityAmount
+            invoiceableOpportunityAmount: row.invoiceableOpportunityAmount,
+            invoiceNumber: this.invSyncApplied ? resolveInvSyncNumber(row) : ''
         }));
     }
 
@@ -702,11 +796,49 @@ export default class BillingControlCenterBilling extends LightningElement {
         if (this.selectedServiceAppointments.length === 0) {
             return;
         }
+        this.invSyncApplied = false;
         this.isCompleteBillingModalOpen = true;
+    }
+
+    handleInvSync() {
+        if (this.isCompleteBillingDisabled) {
+            return;
+        }
+        this.selectedServiceAppointments = this.buildSelectedServiceAppointments();
+        if (this.selectedServiceAppointments.length === 0) {
+            return;
+        }
+
+        const opportunityIds = new Set();
+        const missingOpportunityIds = new Set();
+        for (const row of this.selectedServiceAppointments) {
+            const opportunityId = row.opportunityId;
+            if (!opportunityId) {
+                continue;
+            }
+            opportunityIds.add(opportunityId);
+            if (!resolveInvSyncNumber(row)) {
+                missingOpportunityIds.add(opportunityId);
+            }
+        }
+
+        this.invSyncApplied = true;
+        this.isCompleteBillingModalOpen = true;
+
+        if (missingOpportunityIds.size > 0) {
+            this.dispatchEvent(
+                new ShowToastEvent({
+                    title: 'INV-Sync',
+                    message: `No INV value found for ${missingOpportunityIds.size} of ${opportunityIds.size} selected opportunities. Invoice Number left blank.`,
+                    variant: 'warning'
+                })
+            );
+        }
     }
 
     handleCompleteBillingClose() {
         this.isCompleteBillingModalOpen = false;
+        this.invSyncApplied = false;
     }
 
     async handleCompleteBillingSuccess() {
@@ -734,6 +866,10 @@ export default class BillingControlCenterBilling extends LightningElement {
     }
 
     handleTableActionClick(event) {
+        if (event.detail?.key === 'invSync') {
+            this.handleInvSync();
+            return;
+        }
         if (event.detail?.key === 'completeBilling') {
             this.handleOpenCompleteBillingModal();
         }
@@ -765,6 +901,58 @@ export default class BillingControlCenterBilling extends LightningElement {
             ...this.sortState,
             [categoryKey]: { sortedBy: fieldName, sortDirection }
         };
+    }
+
+    handleColumnResizeStart(event) {
+        event.preventDefault();
+        event.stopPropagation();
+        const columnKey = event.currentTarget?.dataset?.columnKey;
+        if (!columnKey) {
+            return;
+        }
+        const header = event.currentTarget.closest('th');
+        const startWidth = header ? header.getBoundingClientRect().width : MIN_COLUMN_WIDTH;
+        this.teardownColumnResize();
+        this._resizeState = {
+            columnKey,
+            startX: event.clientX,
+            startWidth
+        };
+        this._boundResizeMove = this.handleColumnResizeMove.bind(this);
+        this._boundResizeEnd = this.handleColumnResizeEnd.bind(this);
+        window.addEventListener('mousemove', this._boundResizeMove);
+        window.addEventListener('mouseup', this._boundResizeEnd);
+    }
+
+    handleColumnResizeMove(event) {
+        if (!this._resizeState) {
+            return;
+        }
+        const nextWidth = Math.max(
+            MIN_COLUMN_WIDTH,
+            this._resizeState.startWidth + (event.clientX - this._resizeState.startX)
+        );
+        this.columnWidths = {
+            ...this.columnWidths,
+            [this._resizeState.columnKey]: nextWidth
+        };
+    }
+
+    handleColumnResizeEnd() {
+        saveColumnWidths(INVOICING_COLUMN_WIDTHS_KEY, this.columnWidths);
+        this.teardownColumnResize();
+    }
+
+    teardownColumnResize() {
+        if (this._boundResizeMove) {
+            window.removeEventListener('mousemove', this._boundResizeMove);
+        }
+        if (this._boundResizeEnd) {
+            window.removeEventListener('mouseup', this._boundResizeEnd);
+        }
+        this._boundResizeMove = undefined;
+        this._boundResizeEnd = undefined;
+        this._resizeState = undefined;
     }
 
     handleGroupSelection(event) {
@@ -972,7 +1160,9 @@ export default class BillingControlCenterBilling extends LightningElement {
                         technicianName: appointment.technicianName || row.technicianName,
                         opportunityAmount: appointment.opportunityAmount ?? row.opportunityAmount,
                         invoiceableOpportunityAmount:
-                            appointment.invoiceableOpportunityAmount ?? row.invoiceableOpportunityAmount
+                            appointment.invoiceableOpportunityAmount ?? row.invoiceableOpportunityAmount,
+                        invoiceNumber: appointment.invoiceNumber || row.invoiceNumber,
+                        woInvoiceNumber: appointment.woInvoiceNumber || row.woInvoiceNumber
                     });
                 }
             }

@@ -1,17 +1,24 @@
 import { LightningElement, api } from 'lwc';
 
 const OPTIONS = [
-    { label: 'Today', value: 'Today' },
-    { label: 'This Week', value: 'This Week' },
     { label: 'This Month', value: 'This Month' },
-    { label: 'This Year', value: 'This Year' }
+    { label: 'This Quarter', value: 'This Quarter' },
+    { label: 'Current Year', value: 'This Year' },
+    { label: 'Prior Year', value: 'Last Year' },
+    { label: 'Date Range', value: 'Custom' }
 ];
 
-export default class BillingControlCenterDateFilter extends LightningElement {
-    _selectedFilterKey = 'Today';
-    _compact = false;
+const DEFAULT_FILTER_KEY = 'This Year';
 
-    currentFilterKey = 'Today';
+export default class BillingControlCenterDateFilter extends LightningElement {
+    _selectedFilterKey = DEFAULT_FILTER_KEY;
+    _startDate = '';
+    _endDate = '';
+
+    currentFilterKey = DEFAULT_FILTER_KEY;
+    currentStartDate = '';
+    currentEndDate = '';
+    @api compact = false;
 
     @api
     get selectedFilterKey() {
@@ -19,33 +26,76 @@ export default class BillingControlCenterDateFilter extends LightningElement {
     }
 
     set selectedFilterKey(value) {
-        this._selectedFilterKey = value || 'Today';
+        this._selectedFilterKey = value || DEFAULT_FILTER_KEY;
         this.currentFilterKey = this._selectedFilterKey;
     }
 
     @api
-    get compact() {
-        return this._compact;
+    get startDate() {
+        return this._startDate;
     }
 
-    set compact(value) {
-        this._compact = Boolean(value);
+    set startDate(value) {
+        this._startDate = value || '';
+        this.currentStartDate = this._startDate;
     }
 
-    get comboboxVariant() {
-        return this.compact ? 'label-hidden' : 'standard';
+    @api
+    get endDate() {
+        return this._endDate;
+    }
+
+    set endDate(value) {
+        this._endDate = value || '';
+        this.currentEndDate = this._endDate;
     }
 
     get containerClass() {
         return `bcc-date-filter${this.compact ? ' bcc-date-filter_compact' : ''}`;
     }
 
-    get options() {
-        return OPTIONS;
+    get menuLabel() {
+        const selected = OPTIONS.find(option => option.value === this.currentFilterKey);
+        return selected ? selected.label : 'Date Filter';
     }
 
-    handleFilterChange(event) {
-        this.currentFilterKey = event.detail.value;
+    get options() {
+        return OPTIONS.map(option => ({
+            ...option,
+            checked: option.value === this.currentFilterKey
+        }));
+    }
+
+    get isCustomRange() {
+        return this.currentFilterKey === 'Custom';
+    }
+
+    handleMenuSelect(event) {
+        const nextKey = event.detail.value;
+        this.currentFilterKey = nextKey;
+        if (nextKey !== 'Custom') {
+            this.emitChange();
+            return;
+        }
+        if (this.currentStartDate && this.currentEndDate) {
+            this.emitChange();
+        }
+    }
+
+    handleStartDateChange(event) {
+        this.currentStartDate = event.detail.value || '';
+        this.emitCustomIfComplete();
+    }
+
+    handleEndDateChange(event) {
+        this.currentEndDate = event.detail.value || '';
+        this.emitCustomIfComplete();
+    }
+
+    emitCustomIfComplete() {
+        if (!this.isCustomRange || !this.currentStartDate || !this.currentEndDate) {
+            return;
+        }
         this.emitChange();
     }
 
@@ -53,7 +103,9 @@ export default class BillingControlCenterDateFilter extends LightningElement {
         this.dispatchEvent(
             new CustomEvent('datefilterchange', {
                 detail: {
-                    filterKey: this.currentFilterKey
+                    filterKey: this.currentFilterKey,
+                    startDate: this.isCustomRange ? this.currentStartDate : null,
+                    endDate: this.isCustomRange ? this.currentEndDate : null
                 }
             })
         );

@@ -35,6 +35,11 @@
                 <label>This Year</label>
             </value>
             <value>
+                <fullName>Last Year</fullName>
+                <default>false</default>
+                <label>Last Year</label>
+            </value>
+            <value>
                 <fullName>Custom</fullName>
                 <default>false</default>
                 <label>Custom</label>
