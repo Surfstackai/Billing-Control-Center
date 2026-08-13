@@ -6,9 +6,16 @@
                     <span class="kpi-tile__title">{tile.title}</span>
                     <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
                 </div>
-                <div class="kpi-tile__metric">{tile.metricText}</div>
-                <template if:true={tile.countText}>
-                    <div class="kpi-tile__count">{tile.countText}</div>
+                <template if:true={tile.useLines}>
+                    <template for:each={tile.lines} for:item="line">
+                        <div key={line.key} class="kpi-tile__line">{line.text}</div>
+                    </template>
+                </template>
+                <template if:false={tile.useLines}>
+                    <div class="kpi-tile__metric">{tile.metricText}</div>
+                    <template if:true={tile.countText}>
+                        <div class="kpi-tile__count">{tile.countText}</div>
+                    </template>
                 </template>
                 <template if:true={tile.hint}>
                     <div class="kpi-description">

@@ -941,25 +941,14 @@ public with sharing class BillingControl_DataProvider {
         result.kpis.completedTodayCount = 0;
         result.kpis.inProgressRevenue = 0;
         result.kpis.inProgressCount = 0;
+        result.kpis.completedNotBilledRevenue = 0;
+        result.kpis.completedNotBilledCount = 0;
         result.bucketSections = new List<BillingControl_Orders.BucketSectionWrapper>{
-            new BillingControl_Orders.BucketSectionWrapper('UNSCHEDULED', 'Unscheduled Work', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
-            new BillingControl_Orders.BucketSectionWrapper('SCHEDULED', 'Scheduled Work', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
-            new BillingControl_Orders.BucketSectionWrapper('SCHEDULED_TODAY', 'Scheduled for Today', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
-            new BillingControl_Orders.BucketSectionWrapper('COMPLETED_THIS_WEEK', 'Completed This Week', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
-            new BillingControl_Orders.BucketSectionWrapper('COMPLETED_THIS_MONTH', 'Completed This Month', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
+            new BillingControl_Orders.BucketSectionWrapper('READY_TO_SCHEDULE', 'Ready to Schedule', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
+            new BillingControl_Orders.BucketSectionWrapper('IN_PROGRESS', 'In Progress', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
             new BillingControl_Orders.BucketSectionWrapper(
-                'NO_OPPORTUNITY',
-                'Work Orders with No Opportunities',
-                new List<BillingControl_Orders.WorkOrderRowWrapper>()
-            ),
-            new BillingControl_Orders.BucketSectionWrapper(
-                'NO_SERVICE_APPOINTMENT',
-                'Work Orders with No Service Appointment',
-                new List<BillingControl_Orders.WorkOrderRowWrapper>()
-            ),
-            new BillingControl_Orders.BucketSectionWrapper(
-                'MULTIPLE_OPPORTUNITIES',
-                'Work Orders with Multiple Opportunities',
+                'COMPLETED_NOT_BILLED',
+                'Completed, Not Billed',
                 new List<BillingControl_Orders.WorkOrderRowWrapper>()
             ),
             new BillingControl_Orders.BucketSectionWrapper(

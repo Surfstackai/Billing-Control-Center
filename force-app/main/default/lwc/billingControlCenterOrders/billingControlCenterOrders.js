@@ -21,16 +21,17 @@ const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
 const NUMBER_FORMATTER = new Intl.NumberFormat('en-US');
 
 const BUCKET_KEYS = [
-    'UNSCHEDULED',
-    'SCHEDULED',
-    'SCHEDULED_TODAY',
-    'COMPLETED_THIS_WEEK',
-    'COMPLETED_THIS_MONTH',
-    'NO_OPPORTUNITY',
-    'NO_SERVICE_APPOINTMENT',
-    'MULTIPLE_OPPORTUNITIES',
+    'READY_TO_SCHEDULE',
+    'IN_PROGRESS',
+    'COMPLETED_NOT_BILLED',
     'RELATED_WORK'
 ];
+const SECTION_LABELS = {
+    READY_TO_SCHEDULE: 'Ready to Schedule',
+    IN_PROGRESS: 'In Progress',
+    COMPLETED_NOT_BILLED: 'Completed, Not Billed',
+    RELATED_WORK: 'Related Work'
+};
 const ORDERS_DATASET_KEY = 'ORDERS_WORK_ORDERS';
 const ordersRuntimeCache = new Map();
 
@@ -40,94 +41,43 @@ const DEFAULT_HERO_SUBTITLE = 'Accounting Reconciliation';
 const DEFAULT_TABLE_TITLE = 'Work Order Ledger by bucket';
 const DEFAULT_REFRESH_LABEL = 'Refresh';
 
-const KPI_CONFIG_PRIMARY = [
+const KPI_CONFIGS = [
     {
-        key: 'unscheduled',
-        developerKey: 'UNSCHEDULED',
+        key: 'readyToSchedule',
+        developerKey: 'READY_TO_SCHEDULE',
         revenueKey: 'unscheduledRevenue',
         countKey: 'unscheduledCount',
-        title: 'Unscheduled Work',
+        title: 'Ready to Schedule',
         icon: 'utility:date_input',
-        hint: 'Service appointments with a blank Scheduled Start.'
+        hint: 'Work Orders with no scheduled Service Appointment, including Work Orders with no Service Appointment.'
     },
     {
-        key: 'scheduled',
-        developerKey: 'SCHEDULED',
-        revenueKey: 'scheduledRevenue',
-        countKey: 'scheduledCount',
-        title: 'Scheduled Work',
-        icon: 'utility:clock',
-        hint: 'Service appointments with a Scheduled Start that is not today.'
-    },
-    {
-        key: 'scheduledToday',
-        developerKey: 'SCHEDULED_TODAY',
-        revenueKey: 'scheduledTodayRevenue',
-        countKey: 'scheduledTodayCount',
-        title: 'Scheduled for Today',
+        key: 'inProgress',
+        developerKey: 'IN_PROGRESS',
+        revenueKey: 'inProgressRevenue',
+        countKey: 'inProgressCount',
+        title: 'In Progress',
         icon: 'utility:sync',
-        hint: 'Service appointments whose Scheduled Start is today.'
+        hint: 'Work Orders with at least one scheduled or active Service Appointment.'
     },
     {
-        key: 'completedThisWeek',
-        developerKey: 'COMPLETED_THIS_WEEK',
-        revenueKey: 'completedThisWeekRevenue',
-        countKey: 'completedThisWeekCount',
-        title: 'Completed This Week',
-        icon: 'utility:check',
-        hint: 'Service appointments completed this week (by Actual End).'
-    }
-];
-
-const KPI_CONFIG_SECONDARY = [
-    {
-        key: 'completedThisMonth',
-        developerKey: 'COMPLETED_THIS_MONTH',
-        revenueKey: 'completedThisMonthRevenue',
-        countKey: 'completedThisMonthCount',
-        title: 'Completed This Month',
-        icon: 'utility:monthlyview',
-        hint: 'Service appointments completed this calendar month (by Actual End).'
-    },
-    {
-        key: 'noOpportunity',
-        developerKey: 'NO_OPPORTUNITY',
-        revenueKey: 'noOpportunityRevenue',
-        countKey: 'noOpportunityCount',
-        title: 'Work Orders with No Opportunities',
+        key: 'completedNotBilled',
+        developerKey: 'COMPLETED_NOT_BILLED',
+        revenueKey: 'completedNotBilledRevenue',
+        countKey: 'completedNotBilledCount',
+        title: 'Completed, Not Billed',
         icon: 'utility:warning',
-        hint: 'Work Orders with no Opportunity_WorkOrder junction.'
+        hint: 'Work Orders with completed work that still requires billing.'
     },
     {
-        key: 'noServiceAppointment',
-        developerKey: 'NO_SERVICE_APPOINTMENT',
-        revenueKey: 'noServiceAppointmentRevenue',
-        countKey: 'noServiceAppointmentCount',
-        title: 'No Service Appointment',
-        icon: 'utility:ban',
-        hint: 'Work Orders with no Service Appointment.'
-    },
-    {
-        key: 'multipleOpportunities',
-        developerKey: 'MULTIPLE_OPPORTUNITIES',
-        revenueKey: 'multipleOpportunitiesRevenue',
-        countKey: 'multipleOpportunitiesCount',
-        title: 'Multiple Opportunities',
-        icon: 'utility:multi_select_checkbox',
-        hint: 'Work Orders linked to more than one Opportunity.'
-    },
-    {
-        key: 'relatedWork',
-        developerKey: 'RELATED_WORK',
-        revenueKey: 'relatedWorkRevenue',
-        countKey: 'relatedWorkCount',
-        title: 'Related Work',
-        icon: 'utility:connected_apps',
-        hint: 'Work Orders pulled in by a matching Opportunity that do not fit another bucket.'
+        key: 'completed',
+        developerKey: 'COMPLETED',
+        title: 'Completed',
+        icon: 'utility:check',
+        useLines: true,
+        hint: 'Completed Work Orders this week and this calendar month, regardless of billing status.'
     }
 ];
-
-const KPI_CONFIGS = [...KPI_CONFIG_PRIMARY, ...KPI_CONFIG_SECONDARY];
 const DEFAULT_DATE_FILTER = { filterKey: 'This Year' };
 
 const WORK_ORDER_COLUMNS = [
@@ -677,12 +627,8 @@ export default class BillingControlCenterOrders extends LightningElement {
         return this.dateFilter?.endDate || '';
     }
 
-    get kpiTilesPrimary() {
-        return this.buildKpiTilesFromDefinitions(KPI_CONFIG_PRIMARY);
-    }
-
-    get kpiTilesSecondary() {
-        return this.buildKpiTilesFromDefinitions(KPI_CONFIG_SECONDARY);
+    get kpiTiles() {
+        return this.buildKpiTilesFromDefinitions(KPI_CONFIGS);
     }
 
     get accordionSections() {
@@ -705,7 +651,11 @@ export default class BillingControlCenterOrders extends LightningElement {
             const definition = KPI_CONFIGS.find(tile => tile.developerKey === bucketKey);
             return this.buildAccordionSection(
                 runtimeSection,
-                configRecord?.label || runtimeSection.sectionLabel || definition?.title || bucketKey,
+                configRecord?.label
+                    || runtimeSection.sectionLabel
+                    || definition?.title
+                    || SECTION_LABELS[bucketKey]
+                    || bucketKey,
                 q,
                 Number(configRecord?.displayOrder || (index + 1) * 10)
             );
@@ -793,6 +743,24 @@ export default class BillingControlCenterOrders extends LightningElement {
     }
 
     buildKpiTile(definition, configRecord) {
+        if (definition.useLines) {
+            const weekCount = NUMBER_FORMATTER.format(this.kpiState.completedThisWeekCount || 0);
+            const weekRevenue = CURRENCY_FORMATTER.format(this.kpiState.completedThisWeekRevenue || 0);
+            const monthCount = NUMBER_FORMATTER.format(this.kpiState.completedThisMonthCount || 0);
+            const monthRevenue = CURRENCY_FORMATTER.format(this.kpiState.completedThisMonthRevenue || 0);
+            return {
+                ...definition,
+                title: configRecord?.label || definition.title,
+                icon: configRecord?.iconName || definition.icon,
+                metricText: '',
+                countText: '',
+                lines: [
+                    { key: 'week', text: `This Week: ${weekCount} | ${weekRevenue}` },
+                    { key: 'month', text: `This Month: ${monthCount} | ${monthRevenue}` }
+                ]
+            };
+        }
+
         return {
             ...definition,
             title: configRecord?.label || definition.title,

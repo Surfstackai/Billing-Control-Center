@@ -923,6 +923,8 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Integer completedTodayCount;
         @AuraEnabled public Decimal inProgressRevenue;
         @AuraEnabled public Integer inProgressCount;
+        @AuraEnabled public Decimal completedNotBilledRevenue;
+        @AuraEnabled public Integer completedNotBilledCount;
     }
 
     public class BucketSectionWrapper {

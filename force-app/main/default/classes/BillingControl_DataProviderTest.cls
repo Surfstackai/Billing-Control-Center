@@ -143,7 +143,7 @@ private class BillingControl_DataProviderTest {
         System.assertEquals(4, invoicingData.filterContext.filters.size());
         System.assertEquals(0, emptyOrders.size());
         System.assertEquals(1, kpiData.unscheduledCount);
-        System.assertEquals(1, findOrdersSection(ordersData.bucketSections, 'UNSCHEDULED').rows.size());
+        System.assertEquals(1, findOrdersSection(ordersData.bucketSections, 'READY_TO_SCHEDULE').rows.size());
         System.assert(
             kpiData.completedThisWeekCount >= 1,
             'Completed appointments with active diary statuses appear in Completed This Week.'
@@ -197,6 +197,26 @@ private class BillingControl_DataProviderTest {
         System.assertEquals(0, countOrderRows(ordersData.bucketSections));
         System.assert(String.join(ordersData.warnings, ' ').contains('Work Order Ledger dataset missing or invalid.'));
         System.assert(String.join(ordersData.warnings, ' ').contains('Legacy fallback disabled.'));
+    }
+
+    @IsTest
+    static void missingReceivablesDatasetReturnsEmptyWithWarnings() {
+        Billing_Center_Dataset_Config__c invoicesDataset = [
+            SELECT Id, Is_Active__c
+            FROM Billing_Center_Dataset_Config__c
+            WHERE Developer_Key__c = 'RECEIVABLES_INVOICES'
+            LIMIT 1
+        ];
+        invoicesDataset.Is_Active__c = false;
+        update invoicesDataset;
+
+        Test.startTest();
+        BillingControl_DataProvider.ReceivablesRuntimeDataDTO receivablesData =
+            BillingControl_DataProvider.getReceivablesRuntimeData();
+        Test.stopTest();
+
+        System.assert(String.join(receivablesData.warnings, ' ').contains('Order diary dataset missing or invalid.'));
+        System.assert(String.join(receivablesData.warnings, ' ').contains('Legacy fallback disabled.'));
     }
 
     @IsTest
@@ -522,34 +542,29 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(77L);
         Test.stopTest();
 
-        BillingControl_Orders.BucketSectionWrapper unscheduledSection = findOrdersSection(
+        BillingControl_Orders.BucketSectionWrapper readySection = findOrdersSection(
             ordersData.bucketSections,
-            'UNSCHEDULED'
+            'READY_TO_SCHEDULE'
         );
-        BillingControl_Orders.BucketSectionWrapper scheduledSection = findOrdersSection(
+        BillingControl_Orders.BucketSectionWrapper inProgressSection = findOrdersSection(
             ordersData.bucketSections,
-            'SCHEDULED'
+            'IN_PROGRESS'
         );
-        BillingControl_Orders.BucketSectionWrapper scheduledTodaySection = findOrdersSection(
+        BillingControl_Orders.BucketSectionWrapper completedNotBilledSection = findOrdersSection(
             ordersData.bucketSections,
-            'SCHEDULED_TODAY'
+            'COMPLETED_NOT_BILLED'
         );
-        BillingControl_Orders.BucketSectionWrapper completedThisWeekSection = findOrdersSection(
+        BillingControl_Orders.BucketSectionWrapper relatedWorkSection = findOrdersSection(
             ordersData.bucketSections,
-            'COMPLETED_THIS_WEEK'
-        );
-        BillingControl_Orders.BucketSectionWrapper noOpportunitySection = findOrdersSection(
-            ordersData.bucketSections,
-            'NO_OPPORTUNITY'
+            'RELATED_WORK'
         );
 
-        System.assertEquals(1, unscheduledSection.rows.size());
-        System.assertEquals(1, scheduledSection.rows.size());
-        System.assertEquals(1, scheduledTodaySection.rows.size());
-        System.assertNotEquals(null, completedThisWeekSection);
-        System.assertEquals(0, noOpportunitySection.rows.size());
-        System.assertEquals(scheduledWorkOrder.Id, scheduledSection.rows[0].workOrderId);
-        System.assertEquals(todayWorkOrder.Id, scheduledTodaySection.rows[0].workOrderId);
+        System.assertEquals(1, readySection.rows.size());
+        System.assertEquals(true, inProgressSection.rows.size() >= 2);
+        System.assertNotEquals(null, findOrdersRow(inProgressSection.rows, scheduledWorkOrder.Id));
+        System.assertNotEquals(null, findOrdersRow(inProgressSection.rows, todayWorkOrder.Id));
+        System.assertNotEquals(null, completedNotBilledSection);
+        System.assertNotEquals(null, relatedWorkSection);
         System.assertEquals(4, invoicingData.metrics.readyToBill);
 
         Set<Id> scheduledAppointmentIds = new Set<Id>{
@@ -661,17 +676,13 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getOrdersRuntimeData(88L);
         Test.stopTest();
 
-        BillingControl_Orders.BucketSectionWrapper completedThisWeekSection = findOrdersSection(
+        BillingControl_Orders.BucketSectionWrapper readySection = findOrdersSection(
             ordersData.bucketSections,
-            'COMPLETED_THIS_WEEK'
+            'READY_TO_SCHEDULE'
         );
-        BillingControl_Orders.BucketSectionWrapper completedThisMonthSection = findOrdersSection(
+        BillingControl_Orders.BucketSectionWrapper completedNotBilledSection = findOrdersSection(
             ordersData.bucketSections,
-            'COMPLETED_THIS_MONTH'
-        );
-        BillingControl_Orders.BucketSectionWrapper noOpportunitySection = findOrdersSection(
-            ordersData.bucketSections,
-            'NO_OPPORTUNITY'
+            'COMPLETED_NOT_BILLED'
         );
 
         System.assert(ordersData.kpis.completedThisWeekCount >= 1);
@@ -680,18 +691,11 @@ private class BillingControl_DataProviderTest {
             ordersData.kpis.completedThisWeekRevenue >= 225,
             'Completed KPI revenue uses Opportunity Amount.'
         );
-        System.assertEquals(1, noOpportunitySection.rows.size());
-        System.assertEquals(noOpportunityWorkOrder.Id, noOpportunitySection.rows[0].workOrderId);
-        System.assertEquals(null, noOpportunitySection.rows[0].opportunityAmount);
+        System.assertEquals(true, ordersData.kpis.completedThisMonthCount >= ordersData.kpis.completedThisWeekCount);
+        System.assertNotEquals(null, findOrdersRow(readySection.rows, noOpportunityWorkOrder.Id));
+        System.assertEquals(null, findOrdersRow(readySection.rows, noOpportunityWorkOrder.Id).opportunityAmount);
         System.assertEquals(0, ordersData.kpis.noOpportunityRevenue);
-        System.assert(
-            completedThisWeekSection.rows.size() >= 1,
-            'Completed This Week should include appointments with Actual End in the current week.'
-        );
-        System.assert(
-            completedThisMonthSection.rows.size() >= completedThisWeekSection.rows.size(),
-            'Completed This Month should at least cover Completed This Week within the same month.'
-        );
+        System.assertNotEquals(null, completedNotBilledSection);
     }
 
     @IsTest
@@ -2048,6 +2052,21 @@ private class BillingControl_DataProviderTest {
         for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
             if (sectionRecord.bucketKey == bucketKey) {
                 return sectionRecord;
+            }
+        }
+        return null;
+    }
+
+    private static BillingControl_Orders.WorkOrderRowWrapper findOrdersRow(
+        List<BillingControl_Orders.WorkOrderRowWrapper> rows,
+        Id workOrderId
+    ) {
+        if (rows == null) {
+            return null;
+        }
+        for (BillingControl_Orders.WorkOrderRowWrapper row : rows) {
+            if (row.workOrderId == workOrderId) {
+                return row;
             }
         }
         return null;

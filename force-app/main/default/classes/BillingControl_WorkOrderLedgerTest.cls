@@ -63,19 +63,22 @@ private class BillingControl_WorkOrderLedgerTest {
         Test.stopTest();
 
         System.assertEquals(true, runtime.kpis.unscheduledCount >= 1);
-        System.assertEquals(true, runtime.kpis.scheduledTodayCount >= 1);
+        System.assertEquals(true, runtime.kpis.inProgressCount >= 1);
+        System.assertEquals(true, runtime.kpis.completedNotBilledCount >= 1);
         System.assertEquals(true, runtime.kpis.completedThisWeekCount >= 1);
-        System.assertEquals(true, runtime.kpis.noOpportunityCount >= 1);
-        System.assertEquals(true, runtime.kpis.noServiceAppointmentCount >= 1);
-        System.assertEquals(true, runtime.kpis.multipleOpportunitiesCount >= 1);
+        System.assertEquals(true, runtime.kpis.completedThisMonthCount >= 1);
+        System.assertEquals(0, runtime.kpis.noOpportunityCount);
+        System.assertEquals(0, runtime.kpis.noServiceAppointmentCount);
+        System.assertEquals(0, runtime.kpis.multipleOpportunitiesCount);
 
         BillingControl_Orders.WorkOrderRowWrapper multiSaRow = findRow(
-            findSection(runtime.sections, 'UNSCHEDULED').rows,
+            findSection(runtime.sections, 'IN_PROGRESS').rows,
             multiSaWorkOrder.Id
         );
         System.assertNotEquals(null, multiSaRow);
-        System.assertEquals(1, countRows(findSection(runtime.sections, 'UNSCHEDULED').rows, multiSaWorkOrder.Id));
-        System.assertEquals(1, countRows(findSection(runtime.sections, 'SCHEDULED').rows, multiSaWorkOrder.Id));
+        System.assertEquals(1, countRows(findSection(runtime.sections, 'IN_PROGRESS').rows, multiSaWorkOrder.Id));
+        System.assertEquals(0, countRows(findSection(runtime.sections, 'READY_TO_SCHEDULE').rows, multiSaWorkOrder.Id));
+        System.assertEquals(1, countOperationalOccurrences(runtime.sections, multiSaWorkOrder.Id));
         System.assertEquals(2, multiSaRow.relatedServiceAppointments.size());
         System.assertEquals(1000, multiSaRow.opportunityAmount);
         System.assertEquals(firstOpportunity.Name, multiSaRow.opportunityName);
@@ -90,11 +93,12 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals('Multi SA Ledger WO', multiSaRow.subject);
 
         BillingControl_Orders.WorkOrderRowWrapper multiOppRow = findRow(
-            findSection(runtime.sections, 'MULTIPLE_OPPORTUNITIES').rows,
+            findSection(runtime.sections, 'READY_TO_SCHEDULE').rows,
             multiOppWorkOrder.Id
         );
         System.assertNotEquals(null, multiOppRow);
-        System.assertEquals(1, countRows(findSection(runtime.sections, 'MULTIPLE_OPPORTUNITIES').rows, multiOppWorkOrder.Id));
+        System.assertEquals(1, countRows(findSection(runtime.sections, 'READY_TO_SCHEDULE').rows, multiOppWorkOrder.Id));
+        System.assertEquals(1, countOperationalOccurrences(runtime.sections, multiOppWorkOrder.Id));
         System.assertEquals(null, multiOppRow.opportunityId);
         System.assertEquals(2, multiOppRow.relatedOpportunities.size());
         System.assertEquals(true, multiOppRow.opportunityName.contains(firstOpportunity.Name));
@@ -102,21 +106,22 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(1500, multiOppRow.opportunityAmount);
 
         BillingControl_Orders.WorkOrderRowWrapper noSaRow = findRow(
-            findSection(runtime.sections, 'NO_SERVICE_APPOINTMENT').rows,
+            findSection(runtime.sections, 'READY_TO_SCHEDULE').rows,
             noAppointmentWorkOrder.Id
         );
         System.assertNotEquals(null, noSaRow);
         System.assertEquals(0, noSaRow.serviceAppointmentCount);
+        System.assertEquals(1, countOperationalOccurrences(runtime.sections, noAppointmentWorkOrder.Id));
 
         BillingControl_Orders.WorkOrderRowWrapper noOppRow = findRow(
-            findSection(runtime.sections, 'NO_OPPORTUNITY').rows,
+            findSection(runtime.sections, 'READY_TO_SCHEDULE').rows,
             noOpportunityWorkOrder.Id
         );
         System.assertNotEquals(null, noOppRow);
         System.assertEquals(null, noOppRow.opportunityAmount);
 
         BillingControl_Orders.WorkOrderRowWrapper todayRow = findRow(
-            findSection(runtime.sections, 'SCHEDULED_TODAY').rows,
+            findSection(runtime.sections, 'IN_PROGRESS').rows,
             scheduledTodayWorkOrder.Id
         );
         System.assertNotEquals(null, todayRow);
@@ -127,7 +132,7 @@ private class BillingControl_WorkOrderLedgerTest {
         );
 
         BillingControl_Orders.WorkOrderRowWrapper woliRow = findRow(
-            findSection(runtime.sections, 'UNSCHEDULED').rows,
+            findSection(runtime.sections, 'READY_TO_SCHEDULE').rows,
             woliWorkOrder.Id
         );
         System.assertNotEquals(null, woliRow);
@@ -135,8 +140,9 @@ private class BillingControl_WorkOrderLedgerTest {
 
         System.assertNotEquals(
             null,
-            findRow(findSection(runtime.sections, 'COMPLETED_THIS_WEEK').rows, completedWorkOrder.Id)
+            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, completedWorkOrder.Id)
         );
+        System.assertEquals(1, countOperationalOccurrences(runtime.sections, completedWorkOrder.Id));
     }
 
     @IsTest
@@ -218,8 +224,10 @@ private class BillingControl_WorkOrderLedgerTest {
         );
         System.assertNotEquals(
             null,
-            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_THIS_WEEK').rows, workOrderRecord.Id)
+            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_NOT_BILLED').rows, workOrderRecord.Id)
         );
+        System.assertEquals(true, thisYearRuntime.kpis.completedThisWeekCount >= 1);
+        System.assertEquals(true, thisYearRuntime.kpis.completedThisMonthCount >= 1);
         System.assertEquals(
             0,
             countAllRows(lastYearRuntime.sections),
@@ -328,6 +336,14 @@ private class BillingControl_WorkOrderLedgerTest {
         ];
         billedAppointment.Invoice_Number__c = 'INV-EXPAND-BILLED';
         update billedAppointment;
+        ServiceAppointment siblingAppointment = [
+            SELECT Id
+            FROM ServiceAppointment
+            WHERE ParentRecordId = :siblingRelatedWorkOrder.Id
+            LIMIT 1
+        ];
+        siblingAppointment.Invoice_Number__c = 'INV-EXPAND-SIBLING';
+        update siblingAppointment;
 
         WorkOrderLedgerService.backfillWorkOrders(
             new Set<Id>{
@@ -357,21 +373,24 @@ private class BillingControl_WorkOrderLedgerTest {
 
         System.assertNotEquals(
             null,
-            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_THIS_WEEK').rows, matchingWorkOrder.Id)
+            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_NOT_BILLED').rows, matchingWorkOrder.Id)
         );
+        System.assertEquals(1, countOperationalOccurrences(thisYearRuntime.sections, matchingWorkOrder.Id));
         System.assertEquals(
             null,
-            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_THIS_WEEK').rows, siblingRelatedWorkOrder.Id),
-            'Expanded sibling must not inherit the matching Work Order completed-week bucket.'
+            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_NOT_BILLED').rows, siblingRelatedWorkOrder.Id),
+            'Billed completed leftover must not enter Completed, Not Billed.'
         );
         BillingControl_Orders.WorkOrderRowWrapper relatedRow = findRow(
             findSection(thisYearRuntime.sections, 'RELATED_WORK').rows,
             siblingRelatedWorkOrder.Id
         );
-        System.assertNotEquals(null, relatedRow, 'Expanded sibling with no operational bucket lands in Related Work.');
+        System.assertNotEquals(null, relatedRow, 'Billed completed leftover lands in Related Work.');
+        System.assertEquals(true, thisYearRuntime.kpis.completedThisWeekCount >= 1);
+        System.assertEquals(true, thisYearRuntime.kpis.completedThisMonthCount >= 1);
 
         BillingControl_Orders.WorkOrderRowWrapper sharedRow = findRow(
-            findSection(thisYearRuntime.sections, 'MULTIPLE_OPPORTUNITIES').rows,
+            findSection(thisYearRuntime.sections, 'READY_TO_SCHEDULE').rows,
             sharedWorkOrder.Id
         );
         System.assertNotEquals(null, sharedRow);
@@ -558,6 +577,92 @@ private class BillingControl_WorkOrderLedgerTest {
     }
 
     @IsTest
+    static void operationalClassificationIsExclusiveAndWeekMonthAreBillingAgnostic() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        OrderDiaryAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger Classify Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Classify Type', 1);
+
+        Opportunity unbilledOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Unbilled Completed Opp', 400);
+        Opportunity billedOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Billed Completed Opp', 250);
+        Opportunity multiCompleteOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Multi Complete Opp', 300);
+
+        WorkOrder unbilledWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Unbilled Completed WO');
+        WorkOrder billedWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Billed Completed WO');
+        WorkOrder multiCompleteWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Multi Complete WO');
+
+        insert new List<Opportunity_WorkOrder__c>{
+            new Opportunity_WorkOrder__c(Work_Order__c = unbilledWorkOrder.Id, Opportunity__c = unbilledOpportunity.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = billedWorkOrder.Id, Opportunity__c = billedOpportunity.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = multiCompleteWorkOrder.Id, Opportunity__c = multiCompleteOpportunity.Id)
+        };
+
+        Datetime weekEnd = Datetime.newInstance(Date.today(), Time.newInstance(14, 0, 0, 0));
+        insert new List<ServiceAppointment>{
+            buildAppointment(unbilledWorkOrder.Id, 'Completed', weekEnd.addHours(-2), weekEnd, 'Unbilled Completed SA'),
+            buildAppointment(billedWorkOrder.Id, 'Completed', weekEnd.addHours(-2), weekEnd, 'Billed Completed SA'),
+            buildAppointment(multiCompleteWorkOrder.Id, 'Completed', weekEnd.addHours(-3), weekEnd.addHours(-1), 'Multi Complete SA One'),
+            buildAppointment(multiCompleteWorkOrder.Id, 'Completed', weekEnd.addHours(-2), weekEnd, 'Multi Complete SA Two')
+        };
+        ServiceAppointment billedAppointment = [
+            SELECT Id
+            FROM ServiceAppointment
+            WHERE ParentRecordId = :billedWorkOrder.Id
+            LIMIT 1
+        ];
+        billedAppointment.Invoice_Number__c = 'INV-CLASSIFY-BILLED';
+        update billedAppointment;
+
+        WorkOrderLedgerService.backfillWorkOrders(
+            new Set<Id>{ unbilledWorkOrder.Id, billedWorkOrder.Id, multiCompleteWorkOrder.Id }
+        );
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime = BillingControl_WorkOrderLedger.getRuntime(71L, null);
+        Test.stopTest();
+
+        System.assertEquals(1, countOperationalOccurrences(runtime.sections, unbilledWorkOrder.Id));
+        System.assertEquals(1, countOperationalOccurrences(runtime.sections, billedWorkOrder.Id));
+        System.assertEquals(1, countOperationalOccurrences(runtime.sections, multiCompleteWorkOrder.Id));
+        System.assertNotEquals(
+            null,
+            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, unbilledWorkOrder.Id)
+        );
+        System.assertNotEquals(
+            null,
+            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, multiCompleteWorkOrder.Id)
+        );
+        System.assertEquals(
+            1,
+            countRows(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, multiCompleteWorkOrder.Id),
+            'Multiple completed Service Appointments still produce one Work Order row.'
+        );
+        System.assertEquals(
+            null,
+            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, billedWorkOrder.Id)
+        );
+        BillingControl_Orders.WorkOrderRowWrapper billedRow = findRow(
+            findSection(runtime.sections, 'RELATED_WORK').rows,
+            billedWorkOrder.Id
+        );
+        System.assertNotEquals(null, billedRow);
+        System.assertEquals(true, billedRow.relatedServiceAppointments[0].billedBadge);
+        System.assertEquals(
+            false,
+            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, unbilledWorkOrder.Id)
+                .relatedServiceAppointments[0].billedBadge
+        );
+
+        System.assertEquals(true, runtime.kpis.completedNotBilledCount >= 2);
+        System.assertEquals(true, runtime.kpis.completedNotBilledRevenue >= 700);
+        System.assertEquals(true, runtime.kpis.completedThisWeekCount >= 3);
+        System.assertEquals(true, runtime.kpis.completedThisMonthCount >= runtime.kpis.completedThisWeekCount);
+        System.assertEquals(true, runtime.kpis.completedThisWeekRevenue >= 950);
+        System.assertEquals(true, runtime.kpis.completedThisMonthRevenue >= 950);
+    }
+
+    @IsTest
     static void validationCountsAreAvailableForDiagnostics() {
         WorkOrderLedgerAutomationControl.disableForTests();
         OrderDiaryAutomationControl.disableForTests();
@@ -692,6 +797,20 @@ private class BillingControl_WorkOrderLedgerTest {
             if (row.workOrderId == workOrderId) {
                 matchCount++;
             }
+        }
+        return matchCount;
+    }
+
+    private static Integer countOperationalOccurrences(
+        List<BillingControl_Orders.BucketSectionWrapper> sections,
+        Id workOrderId
+    ) {
+        Integer matchCount = 0;
+        if (sections == null) {
+            return matchCount;
+        }
+        for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
+            matchCount += countRows(sectionRecord.rows, workOrderId);
         }
         return matchCount;
     }

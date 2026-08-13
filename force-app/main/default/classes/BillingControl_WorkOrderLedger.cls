@@ -3,15 +3,12 @@
  * One compact row per Work_Order_Ledger__c. Ledger Entry history loads only on View Ledger.
  */
 public with sharing class BillingControl_WorkOrderLedger {
-    private static final String BUCKET_UNSCHEDULED = 'UNSCHEDULED';
-    private static final String BUCKET_SCHEDULED = 'SCHEDULED';
-    private static final String BUCKET_SCHEDULED_TODAY = 'SCHEDULED_TODAY';
-    private static final String BUCKET_COMPLETED_THIS_WEEK = 'COMPLETED_THIS_WEEK';
-    private static final String BUCKET_COMPLETED_THIS_MONTH = 'COMPLETED_THIS_MONTH';
-    private static final String BUCKET_NO_OPPORTUNITY = 'NO_OPPORTUNITY';
-    private static final String BUCKET_NO_SERVICE_APPOINTMENT = 'NO_SERVICE_APPOINTMENT';
-    private static final String BUCKET_MULTIPLE_OPPORTUNITIES = 'MULTIPLE_OPPORTUNITIES';
+    private static final String BUCKET_READY_TO_SCHEDULE = 'READY_TO_SCHEDULE';
+    private static final String BUCKET_IN_PROGRESS = 'IN_PROGRESS';
+    private static final String BUCKET_COMPLETED_NOT_BILLED = 'COMPLETED_NOT_BILLED';
     private static final String BUCKET_RELATED_WORK = 'RELATED_WORK';
+    private static final String KPI_COMPLETED_THIS_WEEK = 'KPI_COMPLETED_THIS_WEEK';
+    private static final String KPI_COMPLETED_THIS_MONTH = 'KPI_COMPLETED_THIS_MONTH';
 
     private static final String SA_STATUS_COMPLETED = 'Completed';
     private static final Integer MAX_ROWS_PER_SECTION = 500;
@@ -20,26 +17,16 @@ public with sharing class BillingControl_WorkOrderLedger {
         'Showing first 500 records. Narrow the date filter/search for more specific results.';
 
     private static final List<String> BUCKET_QUERY_ORDER = new List<String>{
-        BUCKET_UNSCHEDULED,
-        BUCKET_SCHEDULED,
-        BUCKET_SCHEDULED_TODAY,
-        BUCKET_COMPLETED_THIS_WEEK,
-        BUCKET_COMPLETED_THIS_MONTH,
-        BUCKET_NO_OPPORTUNITY,
-        BUCKET_NO_SERVICE_APPOINTMENT,
-        BUCKET_MULTIPLE_OPPORTUNITIES,
+        BUCKET_READY_TO_SCHEDULE,
+        BUCKET_IN_PROGRESS,
+        BUCKET_COMPLETED_NOT_BILLED,
         BUCKET_RELATED_WORK
     };
 
     private static final Map<String, String> BUCKET_LABELS = new Map<String, String>{
-        BUCKET_UNSCHEDULED => 'Unscheduled Work',
-        BUCKET_SCHEDULED => 'Scheduled Work',
-        BUCKET_SCHEDULED_TODAY => 'Scheduled for Today',
-        BUCKET_COMPLETED_THIS_WEEK => 'Completed This Week',
-        BUCKET_COMPLETED_THIS_MONTH => 'Completed This Month',
-        BUCKET_NO_OPPORTUNITY => 'Work Orders with No Opportunities',
-        BUCKET_NO_SERVICE_APPOINTMENT => 'Work Orders with No Service Appointment',
-        BUCKET_MULTIPLE_OPPORTUNITIES => 'Work Orders with Multiple Opportunities',
+        BUCKET_READY_TO_SCHEDULE => 'Ready to Schedule',
+        BUCKET_IN_PROGRESS => 'In Progress',
+        BUCKET_COMPLETED_NOT_BILLED => 'Completed, Not Billed',
         BUCKET_RELATED_WORK => 'Related Work'
     };
 
@@ -63,6 +50,12 @@ public with sharing class BillingControl_WorkOrderLedger {
     public class RuntimeBundle {
         public BillingControl_Orders.KpiWrapper kpis;
         public List<BillingControl_Orders.BucketSectionWrapper> sections;
+    }
+
+    private class WorkOrderClassification {
+        String operationalBucket;
+        Boolean completedThisWeek;
+        Boolean completedThisMonth;
     }
 
     public class LedgerDetailWrapper {
@@ -331,11 +324,11 @@ public with sharing class BillingControl_WorkOrderLedger {
 
         RuntimeBundle bundle = getRuntime(null, null);
         result.unscheduledCount = bundle.kpis.unscheduledCount;
-        result.scheduledTodayCount = bundle.kpis.scheduledTodayCount;
+        result.scheduledTodayCount = bundle.kpis.inProgressCount;
         result.completedThisWeekCount = bundle.kpis.completedThisWeekCount;
-        result.noOpportunityCount = bundle.kpis.noOpportunityCount;
-        result.noServiceAppointmentCount = bundle.kpis.noServiceAppointmentCount;
-        result.multipleOpportunityCount = bundle.kpis.multipleOpportunitiesCount;
+        result.noOpportunityCount = 0;
+        result.noServiceAppointmentCount = 0;
+        result.multipleOpportunityCount = 0;
         return result;
     }
 
@@ -343,19 +336,24 @@ public with sharing class BillingControl_WorkOrderLedger {
         Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>> rowsByBucket
     ) {
         BillingControl_Orders.KpiWrapper result = new BillingControl_Orders.KpiWrapper();
-        applyKpi(result, rowsByBucket.get(BUCKET_UNSCHEDULED), 'unscheduled');
-        applyKpi(result, rowsByBucket.get(BUCKET_SCHEDULED), 'scheduled');
-        applyKpi(result, rowsByBucket.get(BUCKET_SCHEDULED_TODAY), 'scheduledToday');
-        applyKpi(result, rowsByBucket.get(BUCKET_COMPLETED_THIS_WEEK), 'completedThisWeek');
-        applyKpi(result, rowsByBucket.get(BUCKET_COMPLETED_THIS_MONTH), 'completedThisMonth');
-        applyKpi(result, rowsByBucket.get(BUCKET_NO_OPPORTUNITY), 'noOpportunity');
-        applyKpi(result, rowsByBucket.get(BUCKET_NO_SERVICE_APPOINTMENT), 'noServiceAppointment');
-        applyKpi(result, rowsByBucket.get(BUCKET_MULTIPLE_OPPORTUNITIES), 'multipleOpportunities');
+        applyKpi(result, rowsByBucket.get(BUCKET_READY_TO_SCHEDULE), 'unscheduled');
+        applyKpi(result, rowsByBucket.get(BUCKET_IN_PROGRESS), 'inProgress');
+        applyKpi(result, rowsByBucket.get(BUCKET_COMPLETED_NOT_BILLED), 'completedNotBilled');
+        applyKpi(result, rowsByBucket.get(KPI_COMPLETED_THIS_WEEK), 'completedThisWeek');
+        applyKpi(result, rowsByBucket.get(KPI_COMPLETED_THIS_MONTH), 'completedThisMonth');
         applyKpi(result, rowsByBucket.get(BUCKET_RELATED_WORK), 'relatedWork');
+        result.scheduledCount = 0;
+        result.scheduledRevenue = 0;
+        result.scheduledTodayCount = 0;
+        result.scheduledTodayRevenue = 0;
+        result.noOpportunityCount = 0;
+        result.noOpportunityRevenue = 0;
+        result.noServiceAppointmentCount = 0;
+        result.noServiceAppointmentRevenue = 0;
+        result.multipleOpportunitiesCount = 0;
+        result.multipleOpportunitiesRevenue = 0;
         result.completedTodayCount = 0;
         result.completedTodayRevenue = 0;
-        result.inProgressCount = 0;
-        result.inProgressRevenue = 0;
         return result;
     }
 
@@ -409,27 +407,18 @@ public with sharing class BillingControl_WorkOrderLedger {
         if (prefix == 'unscheduled') {
             result.unscheduledCount = recordCount;
             result.unscheduledRevenue = totalAmount;
-        } else if (prefix == 'scheduled') {
-            result.scheduledCount = recordCount;
-            result.scheduledRevenue = totalAmount;
-        } else if (prefix == 'scheduledToday') {
-            result.scheduledTodayCount = recordCount;
-            result.scheduledTodayRevenue = totalAmount;
+        } else if (prefix == 'inProgress') {
+            result.inProgressCount = recordCount;
+            result.inProgressRevenue = totalAmount;
+        } else if (prefix == 'completedNotBilled') {
+            result.completedNotBilledCount = recordCount;
+            result.completedNotBilledRevenue = totalAmount;
         } else if (prefix == 'completedThisWeek') {
             result.completedThisWeekCount = recordCount;
             result.completedThisWeekRevenue = totalAmount;
         } else if (prefix == 'completedThisMonth') {
             result.completedThisMonthCount = recordCount;
             result.completedThisMonthRevenue = totalAmount;
-        } else if (prefix == 'noOpportunity') {
-            result.noOpportunityCount = recordCount;
-            result.noOpportunityRevenue = 0;
-        } else if (prefix == 'noServiceAppointment') {
-            result.noServiceAppointmentCount = recordCount;
-            result.noServiceAppointmentRevenue = totalAmount;
-        } else if (prefix == 'multipleOpportunities') {
-            result.multipleOpportunitiesCount = recordCount;
-            result.multipleOpportunitiesRevenue = totalAmount;
         } else if (prefix == 'relatedWork') {
             result.relatedWorkCount = recordCount;
             result.relatedWorkRevenue = totalAmount;
@@ -444,6 +433,8 @@ public with sharing class BillingControl_WorkOrderLedger {
         for (String bucketKey : BUCKET_QUERY_ORDER) {
             rowsByBucket.put(bucketKey, new List<BillingControl_Orders.WorkOrderRowWrapper>());
         }
+        rowsByBucket.put(KPI_COMPLETED_THIS_WEEK, new List<BillingControl_Orders.WorkOrderRowWrapper>());
+        rowsByBucket.put(KPI_COMPLETED_THIS_MONTH, new List<BillingControl_Orders.WorkOrderRowWrapper>());
 
         List<Work_Order_Ledger__c> ledgers = queryLedgers(filterContext);
         if (ledgers.size() >= LEDGER_QUERY_LIMIT) {
@@ -473,14 +464,25 @@ public with sharing class BillingControl_WorkOrderLedger {
         Date monthEnd = monthStart.addMonths(1).addDays(-1);
 
         for (Work_Order_Ledger__c ledgerRecord : ledgers) {
+            List<ServiceAppointment> appointments = appointmentsByWorkOrderId.get(ledgerRecord.Work_Order__c);
             BillingControl_Orders.WorkOrderRowWrapper row = buildRow(
                 ledgerRecord,
-                appointmentsByWorkOrderId.get(ledgerRecord.Work_Order__c),
+                appointments,
                 junctionsByWorkOrderId.get(ledgerRecord.Work_Order__c)
             );
-            Set<String> bucketKeys = classifyRow(row, ledgerRecord, todayDate, weekStart, weekEnd, monthStart, monthEnd);
-            for (String bucketKey : bucketKeys) {
-                rowsByBucket.get(bucketKey).add(row);
+            WorkOrderClassification classification = classifyWorkOrder(
+                appointments,
+                weekStart,
+                weekEnd,
+                monthStart,
+                monthEnd
+            );
+            rowsByBucket.get(classification.operationalBucket).add(row);
+            if (classification.completedThisWeek) {
+                rowsByBucket.get(KPI_COMPLETED_THIS_WEEK).add(row);
+            }
+            if (classification.completedThisMonth) {
+                rowsByBucket.get(KPI_COMPLETED_THIS_MONTH).add(row);
             }
         }
         return rowsByBucket;
@@ -811,7 +813,9 @@ public with sharing class BillingControl_WorkOrderLedger {
                 'Subject',
                 'CreatedDate',
                 'SchedStartTime',
-                'ActualEndTime'
+                'ActualEndTime',
+                'Invoice_Number__c',
+                'WO_Inv_Status__c'
             }
         );
     }
@@ -973,6 +977,7 @@ public with sharing class BillingControl_WorkOrderLedger {
             appointmentRow.createdDate = appointmentRecord.CreatedDate;
             appointmentRow.schedStartTime = appointmentRecord.SchedStartTime;
             appointmentRow.actualEndTime = appointmentRecord.ActualEndTime;
+            appointmentRow.billedBadge = isBilledAppointment(appointmentRecord);
             appointmentRow.serviceAppointmentDisplay = String.isNotBlank(appointmentRecord.AppointmentNumber)
                 ? appointmentRecord.AppointmentNumber
                 : String.valueOf(appointmentRecord.Id);
@@ -1038,64 +1043,63 @@ public with sharing class BillingControl_WorkOrderLedger {
         return row;
     }
 
-    private static Set<String> classifyRow(
-        BillingControl_Orders.WorkOrderRowWrapper row,
-        Work_Order_Ledger__c ledgerRecord,
-        Date todayDate,
+    private static WorkOrderClassification classifyWorkOrder(
+        List<ServiceAppointment> appointments,
         Date weekStart,
         Date weekEnd,
         Date monthStart,
         Date monthEnd
     ) {
-        Set<String> bucketKeys = new Set<String>();
-        List<BillingControl_Orders.WorkOrderRowWrapper> appointments = row.relatedServiceAppointments;
-        Decimal ledgerSaCount = ledgerRecord.Service_Appointment_Count__c;
-        if (ledgerSaCount == null) {
-            ledgerSaCount = appointments == null ? 0 : appointments.size();
-        }
-        if (ledgerSaCount == 0) {
-            bucketKeys.add(BUCKET_NO_SERVICE_APPOINTMENT);
-        }
+        Boolean hasCompletedUnbilled = false;
+        Boolean hasScheduledOrActive = false;
+        Boolean hasUnscheduledActive = false;
+        Boolean hasAnySA = appointments != null && !appointments.isEmpty();
+        Boolean completedThisWeek = false;
+        Boolean completedThisMonth = false;
+
         if (appointments != null) {
-            for (BillingControl_Orders.WorkOrderRowWrapper appointmentRow : appointments) {
-                Boolean completed = isCompleted(appointmentRow.serviceAppointmentStatus);
-                Boolean cancelled = isCancelled(appointmentRow.serviceAppointmentStatus);
-                if (!completed && !cancelled && appointmentRow.schedStartTime == null) {
-                    bucketKeys.add(BUCKET_UNSCHEDULED);
+            for (ServiceAppointment appointmentRecord : appointments) {
+                Boolean completed = isCompleted(appointmentRecord.Status);
+                Boolean cancelled = isCancelled(appointmentRecord.Status);
+                if (completed) {
+                    if (!isBilledAppointment(appointmentRecord)) {
+                        hasCompletedUnbilled = true;
+                    }
+                    if (appointmentRecord.ActualEndTime != null) {
+                        Date actualDate = appointmentRecord.ActualEndTime.date();
+                        if (actualDate >= weekStart && actualDate <= weekEnd) {
+                            completedThisWeek = true;
+                        }
+                        if (actualDate >= monthStart && actualDate <= monthEnd) {
+                            completedThisMonth = true;
+                        }
+                    }
+                    continue;
                 }
-                if (!completed && !cancelled && appointmentRow.schedStartTime != null) {
-                    Date schedDate = appointmentRow.schedStartTime.date();
-                    if (schedDate == todayDate) {
-                        bucketKeys.add(BUCKET_SCHEDULED_TODAY);
-                    } else {
-                        bucketKeys.add(BUCKET_SCHEDULED);
-                    }
+                if (cancelled) {
+                    continue;
                 }
-                if (completed && appointmentRow.actualEndTime != null) {
-                    Date actualDate = appointmentRow.actualEndTime.date();
-                    if (actualDate >= weekStart && actualDate <= weekEnd) {
-                        bucketKeys.add(BUCKET_COMPLETED_THIS_WEEK);
-                    }
-                    if (actualDate >= monthStart && actualDate <= monthEnd) {
-                        bucketKeys.add(BUCKET_COMPLETED_THIS_MONTH);
-                    }
+                if (appointmentRecord.SchedStartTime != null) {
+                    hasScheduledOrActive = true;
+                } else {
+                    hasUnscheduledActive = true;
                 }
             }
         }
-        Decimal opportunityCount = ledgerRecord.Opportunity_Count__c;
-        if (opportunityCount == null) {
-            opportunityCount = row.opportunityCount == null ? 0 : row.opportunityCount;
+
+        WorkOrderClassification classification = new WorkOrderClassification();
+        classification.completedThisWeek = completedThisWeek;
+        classification.completedThisMonth = completedThisMonth;
+        if (hasCompletedUnbilled) {
+            classification.operationalBucket = BUCKET_COMPLETED_NOT_BILLED;
+        } else if (hasScheduledOrActive) {
+            classification.operationalBucket = BUCKET_IN_PROGRESS;
+        } else if (hasUnscheduledActive || !hasAnySA) {
+            classification.operationalBucket = BUCKET_READY_TO_SCHEDULE;
+        } else {
+            classification.operationalBucket = BUCKET_RELATED_WORK;
         }
-        if (opportunityCount == 0) {
-            bucketKeys.add(BUCKET_NO_OPPORTUNITY);
-        }
-        if (opportunityCount > 1) {
-            bucketKeys.add(BUCKET_MULTIPLE_OPPORTUNITIES);
-        }
-        if (bucketKeys.isEmpty()) {
-            bucketKeys.add(BUCKET_RELATED_WORK);
-        }
-        return bucketKeys;
+        return classification;
     }
 
     private static Boolean isCompleted(String statusValue) {

@@ -34,3 +34,15 @@
     min-height: 0;
     margin-top: 0.3rem;
 }
+
+.kpi-tile__line {
+    margin-top: 0.3rem;
+    color: var(--bcc-text);
+    font-size: 0.95rem;
+    font-weight: 600;
+    line-height: 1.35;
+}
+
+.kpi-grid_compact .kpi-tile__line {
+    font-size: 0.9rem;
+}
