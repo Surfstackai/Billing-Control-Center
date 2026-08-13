@@ -2083,7 +2083,9 @@ public with sharing class BillingControl_Invoicing {
     }
 
     private static List<ServiceAppointment> queryCompletedAppointmentsForEligibleWorkOrders() {
-        return [
+        List<ServiceAppointment> candidates = new List<ServiceAppointment>();
+        Set<Id> seenAppointmentIds = new Set<Id>();
+        for (ServiceAppointment appointmentRecord : [
             SELECT Id,
                 AppointmentNumber,
                 Status,
@@ -2106,20 +2108,52 @@ public with sharing class BillingControl_Invoicing {
                 Owner.Name
             FROM ServiceAppointment
             WHERE Status = :SERVICE_APPOINTMENT_STATUS_COMPLETED
-            AND (
-                ParentRecordId IN (
-                    SELECT Id
-                    FROM WorkOrder
-                    WHERE Status NOT IN :EXCLUDED_INVOICING_WORK_ORDER_STATUSES
-                )
-                OR ParentRecordId IN (
-                    SELECT Id
-                    FROM WorkOrderLineItem
-                    WHERE WorkOrder.Status NOT IN :EXCLUDED_INVOICING_WORK_ORDER_STATUSES
-                )
+            AND ParentRecordId IN (
+                SELECT Id
+                FROM WorkOrder
+                WHERE Status NOT IN :EXCLUDED_INVOICING_WORK_ORDER_STATUSES
             )
             ORDER BY ActualEndTime DESC NULLS LAST, AppointmentNumber ASC NULLS LAST
-        ];
+        ]) {
+            if (seenAppointmentIds.add(appointmentRecord.Id)) {
+                candidates.add(appointmentRecord);
+            }
+        }
+        for (ServiceAppointment appointmentRecord : [
+            SELECT Id,
+                AppointmentNumber,
+                Status,
+                Subject,
+                CreatedDate,
+                ActualEndTime,
+                SchedStartTime,
+                Invoice_Number__c,
+                WO_Inv_Status__c,
+                Opportunity__c,
+                Opportunity__r.Name,
+                Opportunity__r.Amount,
+                Opportunity__r.Billing_Status__c,
+                AccountId,
+                Account.Name,
+                Account.OwnerId,
+                Account.Owner.Name,
+                ParentRecordId,
+                OwnerId,
+                Owner.Name
+            FROM ServiceAppointment
+            WHERE Status = :SERVICE_APPOINTMENT_STATUS_COMPLETED
+            AND ParentRecordId IN (
+                SELECT Id
+                FROM WorkOrderLineItem
+                WHERE WorkOrder.Status NOT IN :EXCLUDED_INVOICING_WORK_ORDER_STATUSES
+            )
+            ORDER BY ActualEndTime DESC NULLS LAST, AppointmentNumber ASC NULLS LAST
+        ]) {
+            if (seenAppointmentIds.add(appointmentRecord.Id)) {
+                candidates.add(appointmentRecord);
+            }
+        }
+        return candidates;
     }
 
     private static List<ServiceAppointment> filterEligibleInvoicingAppointments(
