@@ -26,7 +26,7 @@ const KPI_CONFIG = [
         developerKey: 'AGED_COMPLETED_WORK',
         title: 'Aged Ready to Bill (>2 Days)',
         icon: 'utility:clock',
-        hint: 'Ready-to-bill diary records older than 2 days.',
+        hint: 'Ready-to-bill work older than 2 days.',
         isCurrency: false
     },
     {
@@ -34,7 +34,7 @@ const KPI_CONFIG = [
         developerKey: 'BILLABLE_SERVICE_APPOINTMENTS',
         title: 'Ready to Bill',
         icon: 'utility:check',
-        hint: 'Diary records ready for invoice batch creation.',
+        hint: 'Completed Service Appointments ready to invoice.',
         isCurrency: false
     },
     {
@@ -52,10 +52,10 @@ const INVOICING_DATASET_KEY = 'INVOICING_SERVICE_APPOINTMENTS';
 const INVOICING_SECTION_KEY = 'READY_TO_INVOICE';
 const invoicingRuntimeCache = new Map();
 const DEFAULT_SORT_FIELD = 'accountUrl';
-const DEFAULT_HERO_TITLE = 'Ready-to-Bill Order Diary';
+const DEFAULT_HERO_TITLE = 'Ready to Bill';
 const DEFAULT_HERO_SUBTITLE =
-    'Review ready-to-bill diary records and create invoice batches.';
-const DEFAULT_TABLE_TITLE = 'Ready-to-bill diary records';
+    'Review completed Service Appointments and create invoice batches.';
+const DEFAULT_TABLE_TITLE = 'Ready-to-bill Service Appointments';
 const DEFAULT_REFRESH_LABEL = 'Refresh';
 const DEFAULT_COMPLETE_BILLING_LABEL = 'Complete Billing';
 const DEFAULT_INV_SYNC_LABEL = 'INV-Sync';
@@ -139,7 +139,7 @@ const WORK_ORDER_COLUMNS = [
     {
         developerKey: 'WORK_ORDER_STATUS',
         configFieldApiName: 'status',
-        label: 'Diary Status',
+        label: 'Work Order Status',
         fieldName: 'status',
         type: 'text',
         sortable: true
@@ -883,7 +883,7 @@ export default class BillingControlCenterBilling extends LightningElement {
             metricText: definition.isCurrency
                 ? CURRENCY_FORMATTER.format(this.metrics[definition.key] || 0)
                 : NUMBER_FORMATTER.format(this.metrics[definition.key] || 0),
-            countText: 'Diary Records'
+            countText: 'Appointments'
         };
     }
 

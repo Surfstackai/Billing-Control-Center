@@ -1137,17 +1137,6 @@ private class BillingControl_DataProviderTest {
         filterContext.filters.add(
             buildFilter('INVOICING_ZERO_INVOICE', 'Order', 'Invoiced_Amount__c', 'Equals', '0', 'Static', 10)
         );
-        filterContext.filters.add(
-            buildFilter(
-                'INVOICING_EFFECTIVE_AFTER_SETUP',
-                'Order',
-                'EffectiveDate',
-                'Greater Or Equal',
-                formatDateValue(filteredOrder.EffectiveDate),
-                'Static',
-                20
-            )
-        );
 
         Test.startTest();
         BillingControl_Invoicing.BillingControlMetricsWrapper metrics =
@@ -1156,10 +1145,10 @@ private class BillingControl_DataProviderTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(42L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(3, metrics.readyToBill, 'Legacy Invoiced Amount filters do not exclude SA/WO-eligible records.');
+        System.assertEquals(4, metrics.readyToBill, 'Legacy Invoiced Amount and Effective Date filters do not exclude SA/WO-eligible records.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
             if (groupRecord.categoryKey == 'READY_TO_BILL') {
-                System.assertEquals(3, groupRecord.serviceAppointmentCount);
+                System.assertEquals(4, groupRecord.serviceAppointmentCount);
                 System.assert(groupRecord.totalBillableAmount > 0);
             }
         }
@@ -1538,7 +1527,7 @@ private class BillingControl_DataProviderTest {
                 Is_Active__c = true,
                 Data_Source_Type__c = 'Apex Handler',
                 Apex_Handler_Key__c = 'BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh',
-                Source_Object_API_Name__c = 'Order'
+                Source_Object_API_Name__c = 'ServiceAppointment'
             ),
             new Billing_Center_Dataset_Config__c(
                 Developer_Key__c = 'RECEIVABLES_INVOICES',

@@ -84,7 +84,7 @@ public with sharing class BillingControl_DataProvider {
             return result;
         }
 
-        result.warnings.add('Order diary dataset missing or invalid.');
+        result.warnings.add('Invoicing dataset missing or invalid.');
         result.warnings.add('Legacy fallback disabled.');
         initializeEmptyInvoicingRuntimeData(result);
         return result;
@@ -194,10 +194,10 @@ public with sharing class BillingControl_DataProvider {
             );
             appendRuntimeWarnings(result.warnings, result.filterContext);
             if (countInvoicingRows(result.groups) == 0) {
-                result.warnings.add('No Order diary records found.');
+                result.warnings.add('No ready-to-bill Service Appointments found.');
             }
         } catch (Exception ex) {
-            result.warnings.add('Order diary dataset missing or invalid.');
+            result.warnings.add('Invoicing dataset missing or invalid.');
             result.warnings.add('Legacy fallback disabled.');
             result.warnings.add('Invoicing filter application failed. ' + ex.getMessage());
             initializeEmptyInvoicingRuntimeData(result);

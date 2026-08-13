@@ -74,7 +74,7 @@
                     </div>
 
                     <div class="table-meta">
-                        <span><lightning-formatted-number value={billableCount}></lightning-formatted-number> Diary Records</span>
+                        <span><lightning-formatted-number value={billableCount}></lightning-formatted-number> Appointments</span>
                         <span><lightning-formatted-number value={selectedOpportunityCount}></lightning-formatted-number> Opportunities Selected</span>
                         <span>{searchSummary}</span>
                     </div>
@@ -87,7 +87,7 @@
                                 label={section.titleWithCount}>
                                 <div class="bucket-section-body">
                                     <template if:true={section.isEmpty}>
-                                        <p class="bucket-empty">No order diary records contribute to this KPI.</p>
+                                        <p class="bucket-empty">No completed Service Appointments contribute to this KPI.</p>
                                     </template>
                                     <template if:false={section.isEmpty}>
                                         <div class="slds-scrollable_x bucket-table-host">
