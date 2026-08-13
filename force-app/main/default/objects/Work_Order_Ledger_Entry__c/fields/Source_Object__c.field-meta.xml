@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Source_Object__c</fullName>
+    <label>Source Object</label>
+    <required>false</required>
+    <trackHistory>true</trackHistory>
+    <trackTrending>false</trackTrending>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+        <value>
+            <fullName>WorkOrder</fullName>
+            <default>false</default>
+            <label>WorkOrder</label>
+        </value>
+        <value>
+            <fullName>ServiceAppointment</fullName>
+            <default>false</default>
+            <label>ServiceAppointment</label>
+        </value>
+        <value>
+            <fullName>Opportunity_WorkOrder</fullName>
+            <default>false</default>
+            <label>Opportunity_WorkOrder</label>
+        </value>
+        <value>
+            <fullName>Invoice</fullName>
+            <default>false</default>
+            <label>Invoice</label>
+        </value>
+        <value>
+            <fullName>Manual</fullName>
+            <default>false</default>
+            <label>Manual</label>
+        </value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>
