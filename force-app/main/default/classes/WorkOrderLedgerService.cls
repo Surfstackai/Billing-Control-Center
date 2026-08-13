@@ -557,14 +557,17 @@ public without sharing class WorkOrderLedgerService {
         if (!entriesToInsert.isEmpty()) {
             insert entriesToInsert;
         }
-        refreshLedgers(workOrderIds);
+        refreshLedgers(workOrderIds, ledgerByWorkOrderId);
     }
 
     public static void refreshLedgers(Set<Id> workOrderIds) {
         if (workOrderIds == null || workOrderIds.isEmpty()) {
             return;
         }
-        Map<Id, Work_Order_Ledger__c> ledgerByWorkOrderId = ensureLedgers(workOrderIds);
+        refreshLedgers(workOrderIds, ensureLedgers(workOrderIds));
+    }
+
+    private static void refreshLedgers(Set<Id> workOrderIds, Map<Id, Work_Order_Ledger__c> ledgerByWorkOrderId) {
         Map<Id, WorkOrder> workOrderById = new Map<Id, WorkOrder>([
             SELECT Id, AccountId
             FROM WorkOrder

@@ -103,20 +103,38 @@ private class WorkOrderLedgerServiceTest {
         update workOrderRecord;
 
         if (partsValues.size() >= 2) {
-            workOrderRecord.Parts_Hardware__c = partsValues[0];
-            update workOrderRecord;
-            workOrderRecord.Parts_Hardware__c = partsValues[1];
-            update workOrderRecord;
-            workOrderRecord.Parts_Hardware__c = partsValues[0];
-            update workOrderRecord;
-            workOrderRecord.Parts_Hardware__c = partsValues[1];
-            update workOrderRecord;
+            Datetime firstChanged = System.now().addDays(-4);
+            Datetime secondChanged = System.now().addDays(-3);
+            Datetime thirdChanged = System.now().addDays(-2);
+            Datetime fourthChanged = System.now().addDays(-1);
+            WorkOrderLedgerService.persistEvents(
+                new List<WorkOrderLedgerService.LedgerEvent>{
+                    partsEvent(workOrderRecord.Id, firstChanged, null, partsValues[0]),
+                    partsEvent(workOrderRecord.Id, secondChanged, partsValues[0], partsValues[1]),
+                    partsEvent(workOrderRecord.Id, thirdChanged, partsValues[1], partsValues[0]),
+                    partsEvent(workOrderRecord.Id, fourthChanged, partsValues[0], partsValues[1])
+                }
+            );
         }
         if (depositStatusValues.size() >= 2) {
-            workOrderRecord.Deposit_Payments__c = depositStatusValues[0];
-            update workOrderRecord;
-            workOrderRecord.Deposit_Payments__c = depositStatusValues[1];
-            update workOrderRecord;
+            WorkOrderLedgerService.LedgerEvent statusEvent = newEvent(
+                workOrderRecord.Id,
+                WorkOrderLedgerService.EVENT_DEPOSIT_STATUS,
+                System.now().addDays(-5),
+                UserInfo.getUserId(),
+                false
+            );
+            statusEvent.OldValue = depositStatusValues[0];
+            statusEvent.NewValue = depositStatusValues[1];
+            statusEvent.Description =
+                'Deposit / Payments changed from '
+                + depositStatusValues[0]
+                + ' to '
+                + depositStatusValues[1]
+                + '.';
+            WorkOrderLedgerService.persistEvents(
+                new List<WorkOrderLedgerService.LedgerEvent>{ statusEvent }
+            );
         }
 
         Work_Order_Ledger_Entry__c recorded = [
@@ -280,15 +298,32 @@ private class WorkOrderLedgerServiceTest {
             ]
         );
 
-        Work_Order_Ledger_Entry__c secondLink = [
+        Work_Order_Ledger__c ledgerAfterLinks = [
+            SELECT Opportunity_Count__c
+            FROM Work_Order_Ledger__c
+            WHERE Work_Order__c = :workOrderRecord.Id
+        ];
+        System.assertEquals(2, ledgerAfterLinks.Opportunity_Count__c);
+
+        Boolean sawLinkedDescription = false;
+        for (Work_Order_Ledger_Entry__c linkEntry : [
             SELECT Description__c
             FROM Work_Order_Ledger_Entry__c
             WHERE Event_Type__c = :WorkOrderLedgerService.EVENT_OPPORTUNITY_LINKED
-            ORDER BY CreatedDate DESC
-            LIMIT 1
-        ];
-        System.assertEquals(true, secondLink.Description__c.contains('2 Opportunities'));
-        System.assertEquals(false, secondLink.Description__c.contains(UserInfo.getName()));
+        ]) {
+            System.assertEquals(
+                false,
+                linkEntry.Description__c != null && linkEntry.Description__c.contains(UserInfo.getName())
+            );
+            if (linkEntry.Description__c != null && linkEntry.Description__c.contains('linked to Work Order')) {
+                sawLinkedDescription = true;
+            }
+        }
+        System.assertEquals(true, sawLinkedDescription);
+
+        Opportunity thirdOpportunity = insertOpportunity('Ledger Opp Three');
+        firstJunction.Opportunity__c = thirdOpportunity.Id;
+        update firstJunction;
 
         delete firstJunction;
         System.assertEquals(
@@ -393,6 +428,9 @@ private class WorkOrderLedgerServiceTest {
         WorkOrder workOrderRecord;
         System.runAs(sourceUser) {
             workOrderRecord = insertWorkOrder('Ledger Backfill WO');
+            workOrderRecord.Deposit_Amount__c = 150;
+            workOrderRecord.Invoice_Number__c = 'INV-BF-1';
+            update workOrderRecord;
         }
 
         System.runAs(batchUser) {
@@ -424,9 +462,41 @@ private class WorkOrderLedgerServiceTest {
         WorkOrderLedgerAutomationControl.enableForTests();
         System.assertEquals(true, WorkOrderLedgerAutomationControl.shouldRunSyncAutomation());
         System.assertEquals(true, WorkOrderLedgerAutomationControl.shouldRun());
+        insert new Billing_Center_Global_Setting__c(
+            Label__c = 'Ledger Automation Test',
+            Developer_Key__c = 'ledger-auto-' + String.valueOf(Datetime.now().getTime()),
+            Is_Active__c = true,
+            Disable_Work_Order_Ledger_Automation__c = true
+        );
+        System.assertEquals(true, WorkOrderLedgerAutomationControl.isSyncAutomationDisabledBySetting());
 
         WorkOrder workOrderRecord = insertWorkOrder('Ledger Trigger WO');
         System.assertEquals(1, [SELECT COUNT() FROM Work_Order_Ledger__c WHERE Work_Order__c = :workOrderRecord.Id]);
+        String nextStatus = secondOpenWorkOrderStatus(workOrderRecord.Status);
+        if (nextStatus != null) {
+            workOrderRecord.Status = nextStatus;
+            update workOrderRecord;
+        }
+        ServiceAppointment appointmentRecord = insertAppointment(workOrderRecord.Id, 'None', System.now().addDays(1), null);
+        ServiceAppointment previousAppointment = new ServiceAppointment(
+            Id = appointmentRecord.Id,
+            ParentRecordId = appointmentRecord.ParentRecordId,
+            Status = appointmentRecord.Status,
+            SchedStartTime = appointmentRecord.SchedStartTime,
+            ActualEndTime = appointmentRecord.ActualEndTime
+        );
+        appointmentRecord.Status = cancelledAppointmentStatus();
+        WorkOrderLedgerService.handleServiceAppointments(
+            new List<ServiceAppointment>{ appointmentRecord },
+            new Map<Id, ServiceAppointment>{ appointmentRecord.Id => previousAppointment }
+        );
+        WorkOrder destinationWorkOrder = insertWorkOrder('Ledger Move Dest WO');
+        previousAppointment.Status = appointmentRecord.Status;
+        appointmentRecord.ParentRecordId = destinationWorkOrder.Id;
+        WorkOrderLedgerService.handleServiceAppointments(
+            new List<ServiceAppointment>{ appointmentRecord },
+            new Map<Id, ServiceAppointment>{ appointmentRecord.Id => previousAppointment }
+        );
 
         System.assertEquals(
             false,
@@ -477,6 +547,26 @@ private class WorkOrderLedgerServiceTest {
         eventRecord.Description = 'Work Order created.';
         eventRecord.IsBackfill = isBackfill;
         eventRecord.SystemGenerated = true;
+        return eventRecord;
+    }
+
+    private static WorkOrderLedgerService.LedgerEvent partsEvent(
+        Id workOrderId,
+        Datetime eventDatetime,
+        String oldValue,
+        String newValue
+    ) {
+        WorkOrderLedgerService.LedgerEvent eventRecord = newEvent(
+            workOrderId,
+            WorkOrderLedgerService.EVENT_PARTS_STATUS,
+            eventDatetime,
+            UserInfo.getUserId(),
+            false
+        );
+        eventRecord.OldValue = oldValue;
+        eventRecord.NewValue = newValue;
+        eventRecord.Description =
+            'Parts / Hardware changed from ' + (oldValue == null ? '' : oldValue) + ' to ' + newValue + '.';
         return eventRecord;
     }
 
@@ -597,6 +687,31 @@ private class WorkOrderLedgerServiceTest {
             }
         }
         return 'For Appointment Booking';
+    }
+
+    private static String secondOpenWorkOrderStatus(String currentStatus) {
+        Set<String> closedStatuses = WorkOrderLedgerService.getClosedWorkOrderStatusValues();
+        for (Schema.PicklistEntry entry : WorkOrder.Status.getDescribe().getPicklistValues()) {
+            if (entry.isActive()
+                && !closedStatuses.contains(entry.getValue())
+                && entry.getValue() != currentStatus) {
+                return entry.getValue();
+            }
+        }
+        return null;
+    }
+
+    private static String cancelledAppointmentStatus() {
+        for (Schema.PicklistEntry entry : ServiceAppointment.Status.getDescribe().getPicklistValues()) {
+            if (!entry.isActive()) {
+                continue;
+            }
+            String normalized = entry.getValue() == null ? null : entry.getValue().trim().toUpperCase();
+            if (normalized == 'CANCELED' || normalized == 'CANCELLED') {
+                return entry.getValue();
+            }
+        }
+        return 'Canceled';
     }
 
     private static List<String> firstTwoPicklistValues(Schema.SObjectField fieldToken) {

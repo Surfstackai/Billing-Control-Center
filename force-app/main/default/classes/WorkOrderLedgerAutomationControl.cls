@@ -29,6 +29,7 @@ public without sharing class WorkOrderLedgerAutomationControl {
         syncAutomationDisabled = true;
     }
 
+    @TestVisible
     private static Boolean isSyncAutomationDisabledBySetting() {
         return [
             SELECT COUNT()
