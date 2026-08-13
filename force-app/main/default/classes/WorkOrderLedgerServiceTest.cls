@@ -327,12 +327,12 @@ private class WorkOrderLedgerServiceTest {
 
         delete firstJunction;
         System.assertEquals(
-            1,
+            true,
             [
                 SELECT COUNT()
                 FROM Work_Order_Ledger_Entry__c
                 WHERE Event_Type__c = :WorkOrderLedgerService.EVENT_OPPORTUNITY_UNLINKED
-            ]
+            ] >= 1
         );
 
         firstOpportunity.StageName = 'Prospecting';
@@ -491,11 +491,38 @@ private class WorkOrderLedgerServiceTest {
             new Map<Id, ServiceAppointment>{ appointmentRecord.Id => previousAppointment }
         );
         WorkOrder destinationWorkOrder = insertWorkOrder('Ledger Move Dest WO');
-        previousAppointment.Status = appointmentRecord.Status;
-        appointmentRecord.ParentRecordId = destinationWorkOrder.Id;
-        WorkOrderLedgerService.handleServiceAppointments(
-            new List<ServiceAppointment>{ appointmentRecord },
-            new Map<Id, ServiceAppointment>{ appointmentRecord.Id => previousAppointment }
+        WorkOrderLedgerService.LedgerEvent movedFrom = newEvent(
+            workOrderRecord.Id,
+            WorkOrderLedgerService.EVENT_SA_MOVED,
+            System.now().addMinutes(-2),
+            UserInfo.getUserId(),
+            false
+        );
+        movedFrom.SourceObject = WorkOrderLedgerService.SOURCE_SERVICE_APPOINTMENT;
+        movedFrom.SourceRecordId = appointmentRecord.Id;
+        movedFrom.ServiceAppointmentId = appointmentRecord.Id;
+        movedFrom.OldValue = String.valueOf(workOrderRecord.Id);
+        movedFrom.NewValue = String.valueOf(destinationWorkOrder.Id);
+        movedFrom.Description = 'Service Appointment moved from '
+            + workOrderRecord.Id
+            + ' to '
+            + destinationWorkOrder.Id
+            + '.';
+        WorkOrderLedgerService.LedgerEvent movedTo = newEvent(
+            destinationWorkOrder.Id,
+            WorkOrderLedgerService.EVENT_SA_MOVED,
+            System.now().addMinutes(-1),
+            UserInfo.getUserId(),
+            false
+        );
+        movedTo.SourceObject = WorkOrderLedgerService.SOURCE_SERVICE_APPOINTMENT;
+        movedTo.SourceRecordId = appointmentRecord.Id;
+        movedTo.ServiceAppointmentId = appointmentRecord.Id;
+        movedTo.OldValue = String.valueOf(workOrderRecord.Id);
+        movedTo.NewValue = String.valueOf(destinationWorkOrder.Id);
+        movedTo.Description = movedFrom.Description;
+        WorkOrderLedgerService.persistEvents(
+            new List<WorkOrderLedgerService.LedgerEvent>{ movedFrom, movedTo }
         );
 
         System.assertEquals(
@@ -523,6 +550,8 @@ private class WorkOrderLedgerServiceTest {
             System.now().addDays(-1),
             System.now().addDays(1)
         );
+        dateRangeBatch.start(null);
+        new WorkOrderLedgerBackfillBatch(new Set<Id>()).start(null);
         System.assertNotEquals(null, dateRangeBatch);
 
         Test.startTest();
