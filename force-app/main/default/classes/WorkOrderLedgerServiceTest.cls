@@ -308,11 +308,12 @@ private class WorkOrderLedgerServiceTest {
         );
 
         Work_Order_Ledger__c ledgerAfterLinks = [
-            SELECT Opportunity_Count__c
+            SELECT Opportunity_Count__c, Opportunity_Owner__c
             FROM Work_Order_Ledger__c
             WHERE Work_Order__c = :workOrderRecord.Id
         ];
         System.assertEquals(2, ledgerAfterLinks.Opportunity_Count__c);
+        System.assertEquals(UserInfo.getUserId(), ledgerAfterLinks.Opportunity_Owner__c);
 
         Boolean sawLinkedDescription = false;
         Boolean sawOpportunityNewValue = false;
@@ -489,6 +490,42 @@ private class WorkOrderLedgerServiceTest {
         Test.stopTest();
 
         System.assertEquals(0, [SELECT COUNT() FROM Work_Order_Ledger__c WHERE Work_Order__c = :workOrderRecord.Id]);
+    }
+
+    @IsTest
+    static void deletingWorkOrderRemovesItsLedger() {
+        WorkOrder workOrderRecord = insertWorkOrder('Ledger Delete WO');
+        WorkOrderLedgerService.persistEvents(
+            new List<WorkOrderLedgerService.LedgerEvent>{
+                newEvent(
+                    workOrderRecord.Id,
+                    WorkOrderLedgerService.EVENT_WORK_ORDER_CREATED,
+                    workOrderRecord.CreatedDate,
+                    workOrderRecord.CreatedById,
+                    false
+                )
+            }
+        );
+        System.assertEquals(1, [SELECT COUNT() FROM Work_Order_Ledger__c WHERE Work_Order__c = :workOrderRecord.Id]);
+
+        Test.startTest();
+        delete workOrderRecord;
+        Test.stopTest();
+
+        System.assertEquals(0, [SELECT COUNT() FROM Work_Order_Ledger__c WHERE Work_Order_Key__c = :String.valueOf(workOrderRecord.Id)]);
+        System.assertEquals(0, [SELECT COUNT() FROM WorkOrder WHERE Id = :workOrderRecord.Id]);
+    }
+
+    @IsTest
+    static void deletingWorkOrderWithoutLedgerSucceeds() {
+        WorkOrder workOrderRecord = insertWorkOrder('Ledger Delete Empty WO');
+        System.assertEquals(0, [SELECT COUNT() FROM Work_Order_Ledger__c WHERE Work_Order__c = :workOrderRecord.Id]);
+
+        Test.startTest();
+        delete workOrderRecord;
+        Test.stopTest();
+
+        System.assertEquals(0, [SELECT COUNT() FROM WorkOrder WHERE Id = :workOrderRecord.Id]);
     }
 
     @IsTest

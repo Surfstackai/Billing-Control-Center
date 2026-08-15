@@ -3,10 +3,23 @@ import { NavigationMixin } from 'lightning/navigation';
 import getWorkOrderLedgerDetail from '@salesforce/apex/BillingControl_DataProvider.getWorkOrderLedgerDetail';
 
 export default class BillingControlCenterLedgerModal extends NavigationMixin(LightningElement) {
+    @api embedded = false;
     isLoading = false;
     errorMessage;
     detail;
     _ledgerId;
+
+    get dialogClass() {
+        return this.embedded ? 'ledger-embedded' : 'slds-modal slds-fade-in-open';
+    }
+
+    get containerClass() {
+        return this.embedded ? 'ledger-embedded__body' : 'slds-modal__container ledger-modal';
+    }
+
+    get showOpenFullLedger() {
+        return !this.embedded;
+    }
 
     @api
     get ledgerId() {

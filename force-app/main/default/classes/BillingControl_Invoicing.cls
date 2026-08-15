@@ -1,8 +1,7 @@
 /**
  * Billing lifecycle and commissions: Service Appointment / Work Order invoicing,
- * Order-diary-backed receivables and commissions until Phase 5, plus receipt posting helpers.
- * Invoicing queue and Complete Billing use completed Service Appointments and Work Orders.
- * Order remains the source of truth only for Receivables / commissions in this phase.
+ * Invoice__c-backed receivables, INV-Sync backfill, and receipt posting.
+ * Complete Billing and INV-Sync create Invoice__c / Invoice_Line__c without Order.
  */
 public with sharing class BillingControl_Invoicing {
     private static final Integer MAX_ROWS_PER_SECTION = 500;
@@ -34,7 +33,7 @@ public with sharing class BillingControl_Invoicing {
     private static final String KPI_CATEGORY_REVENUE_UNDER_COLLECTION = 'REVENUE_UNDER_COLLECTION';
     private static final String KPI_CATEGORY_COMMISSION_EARNED = 'COMMISSION_EARNED';
     private static final String KPI_CATEGORY_COMMISSION_PAYABLE = 'COMMISSION_PAYABLE';
-    private static final String KPI_LABEL_REVENUE_UNDER_COLLECTION = 'Accounts Receivable (A/R)';
+    private static final String KPI_LABEL_REVENUE_UNDER_COLLECTION = 'Receivables Outstanding';
     private static final String KPI_LABEL_COMMISSION_EARNED = 'Commission Accrued';
     private static final String KPI_LABEL_COMMISSION_PAYABLE = 'Commission Payable';
     private static final String SERVICE_APPOINTMENT_STATUS_COMPLETED = 'Completed';
@@ -50,8 +49,6 @@ public with sharing class BillingControl_Invoicing {
     private static final String INVOICE_STATUS_SENT = 'Sent';
     private static final String INVOICE_STATUS_PARTIALLY_PAID = 'Partially Paid';
     private static final String INVOICE_STATUS_PAID = 'Paid';
-    private static final String ORDER_DIARY_STATUS_PAID = 'Paid';
-    private static final String ORDER_DIARY_STATUS_CANCELLED = 'Cancelled';
     private static final String SERVICE_APPOINTMENT_WO_INV_STATUS_FIELD = 'WO_Inv_Status__c';
     private static final List<String> EXCLUDED_INVOICING_WORK_ORDER_STATUSES = new List<String>{
         'For Clearance',
@@ -66,13 +63,13 @@ public with sharing class BillingControl_Invoicing {
         return String.isNotBlank(billingStatus) && INVOICING_PAGE_OPPORTUNITY_BILLING_STATUSES.contains(billingStatus);
     }
 
-    private static AuraHandledException buildHandledException(String message) {
+    public static AuraHandledException buildHandledException(String message) {
         AuraHandledException exceptionRecord = new AuraHandledException(message);
         exceptionRecord.setMessage(message);
         return exceptionRecord;
     }
 
-    private static Boolean isOutstandingReceivableStatus(String billingStatus) {
+    public static Boolean isOutstandingReceivableStatus(String billingStatus) {
         return String.isNotBlank(billingStatus) && OUTSTANDING_RECEIVABLE_BILLING_STATUSES.contains(billingStatus);
     }
 
@@ -80,7 +77,7 @@ public with sharing class BillingControl_Invoicing {
      * Prefer the required plural status when it exists in picklist metadata, otherwise fall back
      * to the legacy singular value to avoid runtime DML failures in orgs that haven't migrated yet.
      */
-    private static String getOutstandingReceivableStatusForUpdate() {
+    public static String getOutstandingReceivableStatusForUpdate() {
         List<Schema.PicklistEntry> entries = Opportunity.Billing_Status__c.getDescribe().getPicklistValues();
         for (Schema.PicklistEntry entry : entries) {
             if (entry != null && entry.isActive() && entry.getValue() == OUTSTANDING_RECEIVABLES) {
@@ -202,12 +199,14 @@ public with sharing class BillingControl_Invoicing {
         Long ignoredRefreshToken = refreshToken;
         cachedEligibleInvoicingAppointments = null;
         BillingControlMetricsWrapper metrics = new BillingControlMetricsWrapper();
-        // The aged category is retained only for backward-compatible response shape. Invoicing
-        // eligibility must not be restricted by ActualEndTime.
+        // The aged category is retained only for backward-compatible response shape.
+        // Page Date Range still applies to ActualEndTime on ready-to-bill rows.
+        List<ServiceAppointmentRowWrapper> readyToBillRows = buildBillableServiceAppointmentRows(filterContext, false);
         metrics.completedMoreThan2Days = 0;
-        metrics.readyToBill = queryReadyToInvoiceCount(filterContext, false);
-        metrics.unbilledRevenue = queryReadyToInvoiceRevenue(filterContext);
+        metrics.readyToBill = readyToBillRows.size();
+        metrics.unbilledRevenue = calculateUniqueOpportunityRevenue(readyToBillRows);
         metrics.outstandingAr = 0;
+        applyReadyToBillPeriodKpis(metrics, readyToBillRows);
 
         return metrics;
     }
@@ -259,6 +258,7 @@ public with sharing class BillingControl_Invoicing {
             section.totalBillableAmount = calculateUniqueOpportunityRevenue(sectionRows);
         }
 
+        stampServiceAppointmentLedgerIds(sections);
         return sections;
     }
 
@@ -290,6 +290,44 @@ public with sharing class BillingControl_Invoicing {
             totalRevenue += opportunityAmount != null ? opportunityAmount : 0;
         }
         return totalRevenue;
+    }
+
+    private static void applyReadyToBillPeriodKpis(
+        BillingControlMetricsWrapper metrics,
+        List<ServiceAppointmentRowWrapper> rows
+    ) {
+        Date todayDate = Date.today();
+        Date weekStart = todayDate.toStartOfWeek();
+        Date weekEnd = weekStart.addDays(6);
+        List<ServiceAppointmentRowWrapper> todayRows = new List<ServiceAppointmentRowWrapper>();
+        List<ServiceAppointmentRowWrapper> weekRows = new List<ServiceAppointmentRowWrapper>();
+        List<ServiceAppointmentRowWrapper> laterRows = new List<ServiceAppointmentRowWrapper>();
+
+        if (rows != null) {
+            for (ServiceAppointmentRowWrapper row : rows) {
+                if (row == null) {
+                    continue;
+                }
+                laterRows.add(row);
+                Date completionDate = row.completionDateTime == null ? null : row.completionDateTime.date();
+                if (completionDate == null) {
+                    continue;
+                }
+                if (completionDate == todayDate) {
+                    todayRows.add(row);
+                }
+                if (completionDate >= weekStart && completionDate <= weekEnd) {
+                    weekRows.add(row);
+                }
+            }
+        }
+
+        metrics.completedTodayCount = todayRows.size();
+        metrics.completedTodayAmount = calculateUniqueOpportunityRevenue(todayRows);
+        metrics.completedThisWeekCount = weekRows.size();
+        metrics.completedThisWeekAmount = calculateUniqueOpportunityRevenue(weekRows);
+        metrics.completedLaterCount = laterRows.size();
+        metrics.completedLaterAmount = calculateUniqueOpportunityRevenue(laterRows);
     }
 
     private static List<ServiceAppointmentRowWrapper> groupServiceAppointmentRowsByWorkOrder(
@@ -371,6 +409,7 @@ public with sharing class BillingControl_Invoicing {
         clone.opportunityId = source.opportunityId;
         clone.opportunityName = source.opportunityName;
         clone.opportunityAmount = source.opportunityAmount;
+        clone.opportunityOwnerId = source.opportunityOwnerId;
         clone.invoiceableOpportunityAmount = source.invoiceableOpportunityAmount;
         clone.accountId = source.accountId;
         clone.accountName = source.accountName;
@@ -394,7 +433,62 @@ public with sharing class BillingControl_Invoicing {
         clone.outstandingAmount = source.outstandingAmount;
         clone.effectiveDate = source.effectiveDate;
         clone.serviceAppointmentCount = source.serviceAppointmentCount;
+        clone.ledgerId = source.ledgerId;
         return clone;
+    }
+
+    private static void stampServiceAppointmentLedgerIds(List<ServiceAppointmentKpiCategoryWrapper> sections) {
+        if (sections == null || sections.isEmpty()) {
+            return;
+        }
+        Set<Id> workOrderIds = new Set<Id>();
+        for (ServiceAppointmentKpiCategoryWrapper section : sections) {
+            collectWorkOrderIdsFromServiceAppointmentRows(
+                section == null ? null : section.rows,
+                workOrderIds
+            );
+        }
+        Map<Id, Id> ledgerByWorkOrderId = BillingControl_WorkOrderLedger.getLedgerIdsByWorkOrderId(workOrderIds);
+        for (ServiceAppointmentKpiCategoryWrapper section : sections) {
+            applyLedgerIdsToServiceAppointmentRows(
+                section == null ? null : section.rows,
+                ledgerByWorkOrderId
+            );
+        }
+    }
+
+    private static void collectWorkOrderIdsFromServiceAppointmentRows(
+        List<ServiceAppointmentRowWrapper> rows,
+        Set<Id> workOrderIds
+    ) {
+        if (rows == null || workOrderIds == null) {
+            return;
+        }
+        for (ServiceAppointmentRowWrapper row : rows) {
+            if (row == null) {
+                continue;
+            }
+            if (row.workOrderId != null) {
+                workOrderIds.add(row.workOrderId);
+            }
+            collectWorkOrderIdsFromServiceAppointmentRows(row.relatedServiceAppointments, workOrderIds);
+        }
+    }
+
+    private static void applyLedgerIdsToServiceAppointmentRows(
+        List<ServiceAppointmentRowWrapper> rows,
+        Map<Id, Id> ledgerByWorkOrderId
+    ) {
+        if (rows == null || ledgerByWorkOrderId == null) {
+            return;
+        }
+        for (ServiceAppointmentRowWrapper row : rows) {
+            if (row == null) {
+                continue;
+            }
+            row.ledgerId = row.workOrderId == null ? null : ledgerByWorkOrderId.get(row.workOrderId);
+            applyLedgerIdsToServiceAppointmentRows(row.relatedServiceAppointments, ledgerByWorkOrderId);
+        }
     }
 
     private static List<ServiceAppointmentOpportunityGroupWrapper> buildServiceAppointmentOpportunityGroups(
@@ -485,242 +579,52 @@ public with sharing class BillingControl_Invoicing {
         List<Id> serviceAppointmentIds,
         Map<String, String> invoiceNumberByOpportunityId
     ) {
-        CompleteBillingResultWrapper result = new CompleteBillingResultWrapper();
+        return BillingControl_CompleteBilling.completeServiceAppointmentBilling(
+            serviceAppointmentIds,
+            invoiceNumberByOpportunityId
+        );
+    }
+
+    @AuraEnabled
+    public static InvSyncResultWrapper syncExistingInvoiceNumbers(
+        BillingControl_DataProvider.BillingDateFilterDTO dateFilter,
+        String opportunityOwnerId
+    ) {
+        if (Test.isRunningTest()) {
+            return executeInvSyncNow(dateFilter, opportunityOwnerId);
+        }
+        Id jobId = Database.executeBatch(new BillingControl_InvSyncBatch(dateFilter, opportunityOwnerId), 40);
+        InvSyncResultWrapper result = new InvSyncResultWrapper();
         result.invoicesCreated = 0;
         result.serviceAppointmentsUpdated = 0;
-        result.invoiceGroups = new List<InvoiceGroupResultWrapper>();
-
-        if (serviceAppointmentIds == null || serviceAppointmentIds.isEmpty()) {
-            return result;
-        }
-
-        List<ServiceAppointment> lockedAppointments = [
-            SELECT Id,
-                Opportunity__c,
-                Opportunity__r.Name,
-                Opportunity__r.AccountId,
-                Opportunity__r.Billing_Status__c,
-                ParentRecordId,
-                Invoice_Number__c,
-                Status
-            FROM ServiceAppointment
-            WHERE Id IN :serviceAppointmentIds
-            AND Status = :SERVICE_APPOINTMENT_STATUS_COMPLETED
-            AND Invoice_Number__c = NULL
-            FOR UPDATE
-        ];
-
-        Set<Id> requestedAppointmentIds = new Set<Id>(serviceAppointmentIds);
-        Set<Id> lockedAppointmentIds = new Map<Id, ServiceAppointment>(lockedAppointments).keySet();
-        if (lockedAppointmentIds.size() != requestedAppointmentIds.size()) {
-            List<String> ineligibleSelections = new List<String>();
-            for (Id requestedAppointmentId : requestedAppointmentIds) {
-                if (!lockedAppointmentIds.contains(requestedAppointmentId)) {
-                    ineligibleSelections.add(String.valueOf(requestedAppointmentId));
-                }
-            }
-            throw buildHandledException(
-                'Complete Billing requires selected Service Appointments to be completed and uninvoiced. Ineligible selections: '
-                + String.join(ineligibleSelections, ', ')
-                + '.'
-            );
-        }
-
-        List<ServiceAppointment> appointmentsToBill = new List<ServiceAppointment>(lockedAppointments);
-        Map<Id, Id> workOrderIdByAppointmentId = resolveWorkOrderIdsForAppointments(appointmentsToBill);
-        Map<Id, Id> effectiveOpportunityByAppointmentId = resolveAttributedOpportunitiesForBilling(
-            appointmentsToBill,
-            workOrderIdByAppointmentId
-        );
-        Map<Id, List<ServiceAppointment>> appointmentsByOpportunityId = new Map<Id, List<ServiceAppointment>>();
-        for (ServiceAppointment appointment : appointmentsToBill) {
-            Id opportunityId = effectiveOpportunityByAppointmentId.get(appointment.Id);
-            if (!appointmentsByOpportunityId.containsKey(opportunityId)) {
-                appointmentsByOpportunityId.put(opportunityId, new List<ServiceAppointment>());
-            }
-            appointmentsByOpportunityId.get(opportunityId).add(appointment);
-        }
-
-        Set<Id> resolvedOpportunityIds = new Set<Id>(appointmentsByOpportunityId.keySet());
-        Map<Id, Opportunity> opportunityById = new Map<Id, Opportunity>([
-            SELECT Id, Name, Billing_Status__c, AccountId, Amount
-            FROM Opportunity
-            WHERE Id IN :resolvedOpportunityIds
-            FOR UPDATE
-        ]);
-
-        Map<Id, Decimal> historicalInvoiceTotalByOpportunityId = queryHistoricalInvoiceTotalByOpportunityId(
-            resolvedOpportunityIds
-        );
-        Map<Id, Decimal> invoiceTotalByOpportunityId = new Map<Id, Decimal>();
-        Map<Id, Decimal> invoiceLineAmountByAppointmentId = new Map<Id, Decimal>();
-        for (Id opportunityId : appointmentsByOpportunityId.keySet()) {
-            Opportunity opportunityRecord = opportunityById.get(opportunityId);
-            Decimal opportunityAmount = opportunityRecord != null ? opportunityRecord.Amount : null;
-            if (opportunityAmount == null || opportunityAmount <= 0) {
-                throw buildHandledException(
-                    'Complete Billing requires Opportunity.Amount greater than 0 for Opportunity '
-                    + String.valueOf(opportunityId)
-                    + '.'
-                );
-            }
-
-            Decimal historicalInvoiceTotal = historicalInvoiceTotalByOpportunityId.containsKey(opportunityId)
-                ? historicalInvoiceTotalByOpportunityId.get(opportunityId)
-                : 0;
-            Decimal invoiceTotal = opportunityAmount - historicalInvoiceTotal;
-            if (invoiceTotal <= 0) {
-                throw buildHandledException(
-                    'Complete Billing cannot create additional invoice value for Opportunity '
-                    + String.valueOf(opportunityId)
-                    + ' because its current Opportunity.Amount has already been fully invoiced.'
-                );
-            }
-            invoiceTotalByOpportunityId.put(opportunityId, invoiceTotal);
-            invoiceLineAmountByAppointmentId.putAll(
-                allocateInvoiceTotalAcrossAppointments(invoiceTotal, appointmentsByOpportunityId.get(opportunityId))
-            );
-        }
-
-        Integer invoiceSequence = 1;
-        Map<Id, String> invoiceNumberResolvedByOpportunityId = new Map<Id, String>();
-        Set<String> invoiceNumbersForUniqueness = new Set<String>();
-        for (Id opportunityId : appointmentsByOpportunityId.keySet()) {
-            String invoiceNumber = resolveInvoiceNumberForBilling(
-                opportunityId,
-                invoiceNumberByOpportunityId,
-                invoiceSequence
-            );
-            invoiceSequence++;
-
-            if (invoiceNumber.length() > 80) {
-                throw buildHandledException('Invoice number must be 80 characters or fewer.');
-            }
-            if (invoiceNumbersForUniqueness.contains(invoiceNumber)) {
-                throw buildHandledException('Each invoice number in this batch must be unique.');
-            }
-            invoiceNumbersForUniqueness.add(invoiceNumber);
-            invoiceNumberResolvedByOpportunityId.put(opportunityId, invoiceNumber);
-        }
-
-        if (!invoiceNumbersForUniqueness.isEmpty()) {
-            Integer existingInvoiceCount = [
-                SELECT COUNT()
-                FROM Invoice__c
-                WHERE Invoice_Number__c IN :invoiceNumbersForUniqueness
-            ];
-            if (existingInvoiceCount > 0) {
-                throw buildHandledException(
-                    'One or more invoice numbers are already used on another invoice. Enter a different number.'
-                );
-            }
-        }
-
-        List<Invoice__c> invoicesToInsert = new List<Invoice__c>();
-        Map<Id, Invoice__c> invoiceByOpportunityId = new Map<Id, Invoice__c>();
-        for (Id opportunityId : appointmentsByOpportunityId.keySet()) {
-            String invoiceNumber = invoiceNumberResolvedByOpportunityId.get(opportunityId);
-            Decimal invoiceTotal = invoiceTotalByOpportunityId.get(opportunityId);
-            List<ServiceAppointment> groupedAppointments = appointmentsByOpportunityId.get(opportunityId);
-
-            Opportunity headerOpportunity = opportunityById.get(opportunityId);
-            Invoice__c invoiceRecord = new Invoice__c(
-                Invoice_Number__c = invoiceNumber,
-                Opportunity__c = opportunityId,
-                Account__c = headerOpportunity != null ? headerOpportunity.AccountId : null,
-                Status__c = INVOICE_STATUS_SENT,
-                Invoice_Date__c = Date.today(),
-                Due_Date__c = Date.today().addDays(30),
-                Subtotal__c = invoiceTotal,
-                Tax_Amount__c = 0,
-                Total_Amount__c = invoiceTotal,
-                Amount_Paid__c = 0,
-                Balance_Due__c = invoiceTotal
-            );
-            invoicesToInsert.add(invoiceRecord);
-            invoiceByOpportunityId.put(opportunityId, invoiceRecord);
-
-            InvoiceGroupResultWrapper invoiceGroup = new InvoiceGroupResultWrapper();
-            invoiceGroup.opportunityId = opportunityId;
-            invoiceGroup.opportunityName = headerOpportunity != null ? headerOpportunity.Name : null;
-            invoiceGroup.invoiceNumber = invoiceNumber;
-            invoiceGroup.serviceAppointmentCount = groupedAppointments.size();
-            result.invoiceGroups.add(invoiceGroup);
-        }
-
-        if (!invoicesToInsert.isEmpty()) {
-            insert invoicesToInsert;
-        }
-
-        List<Invoice_Line__c> invoiceLinesToInsert = new List<Invoice_Line__c>();
-        List<ServiceAppointment> serviceAppointmentsToUpdate = new List<ServiceAppointment>();
-        for (Id opportunityId : appointmentsByOpportunityId.keySet()) {
-            Invoice__c invoiceRecord = invoiceByOpportunityId.get(opportunityId);
-            if (invoiceRecord == null || invoiceRecord.Id == null) {
-                continue;
-            }
-
-            for (ServiceAppointment appointment : appointmentsByOpportunityId.get(opportunityId)) {
-                Decimal invoiceLineAmount = invoiceLineAmountByAppointmentId.get(appointment.Id);
-                invoiceLinesToInsert.add(new Invoice_Line__c(
-                    Invoice__c = invoiceRecord.Id,
-                    Service_Appointment__c = appointment.Id,
-                    Opportunity__c = opportunityId,
-                    Work_Order__c = workOrderIdByAppointmentId.get(appointment.Id),
-                    Description__c = 'Service Appointment ' + appointment.Id,
-                    Quantity__c = 1,
-                    Unit_Price__c = invoiceLineAmount,
-                    Line_Total__c = invoiceLineAmount
-                ));
-
-                appointment.Invoice_Number__c = invoiceRecord.Invoice_Number__c;
-                if (appointment.Opportunity__c == null) {
-                    appointment.Opportunity__c = effectiveOpportunityByAppointmentId.get(appointment.Id);
-                }
-                serviceAppointmentsToUpdate.add(appointment);
-            }
-        }
-
-        if (!invoiceLinesToInsert.isEmpty()) {
-            insert invoiceLinesToInsert;
-        }
-
-        if (!serviceAppointmentsToUpdate.isEmpty()) {
-            update serviceAppointmentsToUpdate;
-        }
-
-        Set<Id> opportunityIdsToUpdate = new Set<Id>();
-        for (ServiceAppointment appointmentRecord : serviceAppointmentsToUpdate) {
-            Id effectiveOpportunityId = effectiveOpportunityByAppointmentId.get(appointmentRecord.Id);
-            if (effectiveOpportunityId != null) {
-                opportunityIdsToUpdate.add(effectiveOpportunityId);
-            }
-        }
-
-        String billedStatusForUpdate = getOutstandingReceivableStatusForUpdate();
-        if (!opportunityIdsToUpdate.isEmpty()) {
-            List<Opportunity> opportunitiesToUpdate = new List<Opportunity>();
-            for (Opportunity opportunityRecord : [
-                SELECT Id, Billing_Status__c
-                FROM Opportunity
-                WHERE Id IN :opportunityIdsToUpdate
-            ]) {
-                if (opportunityRecord.Billing_Status__c == billedStatusForUpdate) {
-                    continue;
-                }
-                opportunitiesToUpdate.add(new Opportunity(
-                    Id = opportunityRecord.Id,
-                    Billing_Status__c = billedStatusForUpdate
-                ));
-            }
-            if (!opportunitiesToUpdate.isEmpty()) {
-                update opportunitiesToUpdate;
-            }
-        }
-
-        result.invoicesCreated = result.invoiceGroups.size();
-        result.serviceAppointmentsUpdated = serviceAppointmentsToUpdate.size();
+        result.skippedCount = 0;
+        result.queued = true;
+        result.jobId = jobId;
+        result.warnings = new List<String>{
+            'INV-Sync started. Refresh Invoicing and Receivables when it finishes.'
+        };
         return result;
+    }
+
+    @TestVisible
+    private static InvSyncResultWrapper executeInvSyncNow(
+        BillingControl_DataProvider.BillingDateFilterDTO dateFilter,
+        String opportunityOwnerId
+    ) {
+        return BillingControl_InvSync.executeInvSyncNow(dateFilter, opportunityOwnerId);
+    }
+
+    public static List<ServiceAppointment> queryInvSyncCandidateAppointments(
+        BillingControl_DataProvider.BillingDateFilterDTO dateFilter
+    ) {
+        return BillingControl_InvSync.queryInvSyncCandidateAppointments(dateFilter);
+    }
+
+    public static InvSyncResultWrapper processInvSyncAppointments(
+        List<ServiceAppointment> appointments,
+        String opportunityOwnerId
+    ) {
+        return BillingControl_InvSync.processInvSyncAppointments(appointments, opportunityOwnerId);
     }
 
     @AuraEnabled
@@ -769,93 +673,7 @@ public with sharing class BillingControl_Invoicing {
 
     @AuraEnabled
     public static PaymentReceiptResultWrapper postReceipt(PostReceiptInputWrapper input) {
-        if (input == null || input.opportunityId == null) {
-            throw new AuraHandledException('A valid opportunity is required.');
-        }
-        if (input.amountReceived == null || input.amountReceived <= 0) {
-            throw new AuraHandledException('Payment amount must be greater than 0.');
-        }
-        if (input.paymentDate == null) {
-            throw new AuraHandledException('Payment date is required.');
-        }
-        if (String.isBlank(input.paymentMethod)) {
-            throw new AuraHandledException('Payment method is required.');
-        }
-        if (String.isBlank(input.referenceNumber)) {
-            throw new AuraHandledException('Reference number is required.');
-        }
-
-        Opportunity opportunityRecord = [
-            SELECT Id, Billing_Status__c, AccountId
-            FROM Opportunity
-            WHERE Id = :input.opportunityId
-            LIMIT 1
-            FOR UPDATE
-        ];
-
-        Invoice__c invoiceRecord = getOpenReceivableInvoice(opportunityRecord.Id);
-        Decimal invoiceAmount;
-        Decimal previouslyPaid;
-        if (invoiceRecord != null) {
-            invoiceAmount = invoiceRecord.Total_Amount__c != null ? invoiceRecord.Total_Amount__c : 0;
-            previouslyPaid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
-        } else {
-            invoiceAmount = resolveReceivableInvoiceAmountFromOrderDiary(opportunityRecord.Id);
-            previouslyPaid = 0;
-            if (invoiceAmount <= 0) {
-                throw new AuraHandledException(
-                    'No invoiced Order diary balance is available for this opportunity. Post billing before recording a receipt.'
-                );
-            }
-            invoiceRecord = getOrCreateReceivableInvoice(opportunityRecord, invoiceAmount, previouslyPaid);
-        }
-
-        if (invoiceAmount <= 0) {
-            throw new AuraHandledException(
-                'The receivable invoice total must be greater than 0 before recording a receipt.'
-            );
-        }
-
-        Decimal totalPaid = previouslyPaid + input.amountReceived;
-
-        if (input.amountReceived > invoiceAmount - previouslyPaid) {
-            throw new AuraHandledException('Payment amount cannot exceed the balance due.');
-        }
-        if (totalPaid > invoiceAmount) {
-            throw new AuraHandledException('Payment amount cannot exceed the balance due.');
-        }
-
-        insert new Invoice_Payment__c(
-            Opportunity__c = input.opportunityId,
-            Invoice__c = invoiceRecord.Id,
-            Amount_Received__c = input.amountReceived,
-            Payment_Date__c = input.paymentDate,
-            Payment_Method__c = input.paymentMethod,
-            Reference_Number__c = input.referenceNumber
-        );
-
-        String nextStatus = totalPaid < invoiceAmount ? PARTIALLY_PAID : PAID;
-        update new Opportunity(
-            Id = opportunityRecord.Id,
-            Billing_Status__c = nextStatus
-        );
-
-        Decimal updatedInvoicePaid = (invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0) + input.amountReceived;
-        Decimal updatedBalanceDue = invoiceAmount - updatedInvoicePaid;
-        update new Invoice__c(
-            Id = invoiceRecord.Id,
-            Amount_Paid__c = updatedInvoicePaid,
-            Balance_Due__c = updatedBalanceDue,
-            Status__c = updatedBalanceDue <= 0 ? INVOICE_STATUS_PAID : INVOICE_STATUS_PARTIALLY_PAID
-        );
-
-        applyPartialCommissionAccrual(input.opportunityId, input.amountReceived, invoiceAmount, totalPaid >= invoiceAmount);
-
-        PaymentReceiptResultWrapper result = new PaymentReceiptResultWrapper();
-        result.totalPaid = totalPaid;
-        result.balanceDue = invoiceAmount - totalPaid;
-        result.billingStatus = nextStatus;
-        return result;
+        return BillingControl_Receivables.postReceipt(input);
     }
 
     @AuraEnabled(cacheable=true)
@@ -867,60 +685,7 @@ public with sharing class BillingControl_Invoicing {
         BillingControl_DataProvider.BillingFilterContextDTO invoicesFilterContext,
         BillingControl_DataProvider.BillingFilterContextDTO commissionsFilterContext
     ) {
-        CommissionMetricsWrapper metrics = new CommissionMetricsWrapper();
-        metrics.unbilledRevenue = 0;
-        metrics.unbilledRevenueCount = 0;
-        Set<Id> billingOrderIds = queryInvoiceLinkedBillingOrderIds();
-        if (!billingOrderIds.isEmpty()) {
-            for (AggregateResult revenueAggregateRow : Database.query(
-                'SELECT OpportunityId opportunityId, SUM(Invoiced_Amount__c) totalInvoiced, SUM(Received_Amount__c) totalReceived'
-                + ' FROM Order'
-                + buildReceivableOrdersWhereClause(invoicesFilterContext, false)
-                + ' GROUP BY OpportunityId'
-            )) {
-                Decimal invoicedAmount = revenueAggregateRow.get('totalInvoiced') != null
-                    ? (Decimal) revenueAggregateRow.get('totalInvoiced')
-                    : 0;
-                Decimal receivedAmount = revenueAggregateRow.get('totalReceived') != null
-                    ? (Decimal) revenueAggregateRow.get('totalReceived')
-                    : 0;
-                Decimal outstandingAmount = invoicedAmount - receivedAmount;
-                if (outstandingAmount <= 0) {
-                    continue;
-                }
-
-                metrics.revenueUnderCollectionCount++;
-                metrics.revenueUnderCollection += outstandingAmount;
-            }
-        }
-
-        AggregateResult[] commissionEarnedResults = Database.query(
-            'SELECT COUNT(Id) recordCount, SUM(Commission_Amount__c) totalCommission'
-            + ' FROM Commission__c'
-            + buildCommissionWhereClause(commissionsFilterContext, true, false)
-        );
-        metrics.commissionEarnedCount = extractInteger(commissionEarnedResults, 'recordCount');
-        metrics.commissionEarned = extractDecimal(commissionEarnedResults, 'totalCommission');
-
-        List<Commission__c> payableCommissionRecords = queryOrderLinkedReceivableCommissionRecords(commissionsFilterContext);
-        for (Commission__c payableCommissionRecord : payableCommissionRecords) {
-            Order linkedOrder = payableCommissionRecord != null ? payableCommissionRecord.Billing_Order__r : null;
-            String billingStatus = linkedOrder != null ? (String) linkedOrder.get('Billing_Diary_Status__c') : null;
-            Decimal commissionAmount = payableCommissionRecord != null && payableCommissionRecord.Commission_Amount__c != null
-                ? payableCommissionRecord.Commission_Amount__c
-                : 0;
-            Decimal commissionPaid = payableCommissionRecord != null && payableCommissionRecord.Commission_Paid__c != null
-                ? payableCommissionRecord.Commission_Paid__c
-                : 0;
-            if (billingStatus != ORDER_DIARY_STATUS_PAID || commissionPaid >= commissionAmount) {
-                continue;
-            }
-
-            metrics.commissionPayableCount++;
-            metrics.commissionPayable += (commissionAmount - commissionPaid);
-        }
-
-        return metrics;
+        return BillingControl_Receivables.getCommissionMetrics(invoicesFilterContext, commissionsFilterContext);
     }
 
     @AuraEnabled(cacheable=true)
@@ -933,467 +698,10 @@ public with sharing class BillingControl_Invoicing {
         BillingControl_DataProvider.BillingFilterContextDTO invoicesFilterContext,
         BillingControl_DataProvider.BillingFilterContextDTO commissionsFilterContext
     ) {
-        List<CommissionKpiCategoryWrapper> sections = new List<CommissionKpiCategoryWrapper>{
-            new CommissionKpiCategoryWrapper(
-                KPI_CATEGORY_REVENUE_UNDER_COLLECTION,
-                KPI_LABEL_REVENUE_UNDER_COLLECTION
-            ),
-            new CommissionKpiCategoryWrapper(
-                KPI_CATEGORY_COMMISSION_EARNED,
-                KPI_LABEL_COMMISSION_EARNED
-            ),
-            new CommissionKpiCategoryWrapper(
-                KPI_CATEGORY_COMMISSION_PAYABLE,
-                KPI_LABEL_COMMISSION_PAYABLE
-            )
-        };
-
-        Map<String, CommissionKpiCategoryWrapper> sectionByKey = new Map<String, CommissionKpiCategoryWrapper>();
-        Map<String, Map<String, SalespersonWrapper>> salespersonIndexByCategoryKey =
-            new Map<String, Map<String, SalespersonWrapper>>();
-        for (CommissionKpiCategoryWrapper section : sections) {
-            sectionByKey.put(section.categoryKey, section);
-            salespersonIndexByCategoryKey.put(section.categoryKey, new Map<String, SalespersonWrapper>());
-        }
-
-        String ignoredSubtabType = subtabType;
-        List<ReceivableOrderSummary> receivableSummaries = queryReceivableOrderSummaries(invoicesFilterContext);
-        List<Commission__c> commissionRecords = queryOrderLinkedReceivableCommissionRecords(commissionsFilterContext);
-
-        CommissionKpiCategoryWrapper revenueSection = sectionByKey.get(KPI_CATEGORY_REVENUE_UNDER_COLLECTION);
-        CommissionKpiCategoryWrapper earnedSection = sectionByKey.get(KPI_CATEGORY_COMMISSION_EARNED);
-        CommissionKpiCategoryWrapper payableSection = sectionByKey.get(KPI_CATEGORY_COMMISSION_PAYABLE);
-
-        for (ReceivableOrderSummary summary : receivableSummaries) {
-            addOpportunityToCommissionSection(
-                revenueSection,
-                salespersonIndexByCategoryKey.get(revenueSection.categoryKey),
-                summary.ownerId,
-                summary.ownerName,
-                buildOpportunityFromReceivableSummary(summary)
-            );
-        }
-
-        for (Commission__c commissionRecord : commissionRecords) {
-            Order linkedOrder = commissionRecord != null ? commissionRecord.Billing_Order__r : null;
-            Decimal outstandingAmount = linkedOrder != null
-                ? coalesceDecimal((Decimal) linkedOrder.get('Outstanding_Amount__c'))
-                : 0;
-            Decimal commissionAmount = commissionRecord != null && commissionRecord.Commission_Amount__c != null
-                ? commissionRecord.Commission_Amount__c
-                : 0;
-            Decimal commissionPaid = commissionRecord != null && commissionRecord.Commission_Paid__c != null
-                ? commissionRecord.Commission_Paid__c
-                : 0;
-            String billingStatus = linkedOrder != null ? (String) linkedOrder.get('Billing_Diary_Status__c') : null;
-
-            if (outstandingAmount > 0) {
-                addOpportunityToCommissionSection(
-                    earnedSection,
-                    salespersonIndexByCategoryKey.get(earnedSection.categoryKey),
-                    commissionRecord.Sales_Person__c,
-                    commissionRecord.Sales_Person__r != null ? commissionRecord.Sales_Person__r.Name : null,
-                    buildOpportunityFromOrderLinkedCommission(commissionRecord)
-                );
-            }
-
-            if (billingStatus == ORDER_DIARY_STATUS_PAID && commissionPaid < commissionAmount) {
-                addOpportunityToCommissionSection(
-                    payableSection,
-                    salespersonIndexByCategoryKey.get(payableSection.categoryKey),
-                    commissionRecord.Sales_Person__c,
-                    commissionRecord.Sales_Person__r != null ? commissionRecord.Sales_Person__r.Name : null,
-                    buildOpportunityFromOrderLinkedCommission(commissionRecord)
-                );
-            }
-        }
-
-        return sections;
+        return BillingControl_Receivables.getCommissionData(subtabType, invoicesFilterContext, commissionsFilterContext);
     }
 
-    private static List<ReceivableOrderSummary> queryReceivableOrderSummaries(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        Set<Id> billingOrderIds = queryInvoiceLinkedBillingOrderIds();
-        if (billingOrderIds.isEmpty()) {
-            return new List<ReceivableOrderSummary>();
-        }
-
-        List<Order> outstandingReceivableOrders = Database.query(
-            'SELECT Id,'
-            + ' OpportunityId,'
-            + ' Opportunity_Name__c,'
-            + ' Opportunity.CloseDate,'
-            + ' Opportunity.OwnerId,'
-            + ' Opportunity.Owner.Name,'
-            + ' Account_Name__c,'
-            + ' Billing_Diary_Status__c,'
-            + ' Invoiced_Amount__c,'
-            + ' Received_Amount__c,'
-            + ' Outstanding_Amount__c,'
-            + ' EffectiveDate'
-            + ' FROM Order'
-            + buildReceivableOrdersWhereClause(filterContext, false)
-            + ' ORDER BY Opportunity_Name__c ASC NULLS LAST, OrderNumber ASC NULLS LAST'
-            + ' LIMIT '
-            + QUERY_ROW_LIMIT
-        );
-
-        if (outstandingReceivableOrders.size() >= QUERY_ROW_LIMIT) {
-            while (outstandingReceivableOrders.size() > MAX_ROWS_PER_SECTION) {
-                outstandingReceivableOrders.remove(outstandingReceivableOrders.size() - 1);
-            }
-            addRuntimeWarning(filterContext, KPI_LABEL_REVENUE_UNDER_COLLECTION + ': ' + ROW_LIMIT_WARNING_MESSAGE);
-        }
-
-        return summarizeReceivableOrders(outstandingReceivableOrders);
-    }
-
-    private static List<Commission__c> queryOrderLinkedReceivableCommissionRecords(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        List<Commission__c> commissionRecords = Database.query(
-            'SELECT Id,'
-            + ' Billing_Order__c,'
-            + ' Billing_Order__r.OpportunityId,'
-            + ' Billing_Order__r.Opportunity_Name__c,'
-            + ' Billing_Order__r.Opportunity.CloseDate,'
-            + ' Billing_Order__r.Opportunity.OwnerId,'
-            + ' Billing_Order__r.Opportunity.Owner.Name,'
-            + ' Billing_Order__r.Account_Name__c,'
-            + ' Billing_Order__r.Billing_Diary_Status__c,'
-            + ' Billing_Order__r.Invoiced_Amount__c,'
-            + ' Billing_Order__r.Received_Amount__c,'
-            + ' Billing_Order__r.Outstanding_Amount__c,'
-            + ' Billing_Order__r.EffectiveDate,'
-            + ' Sales_Person__c,'
-            + ' Sales_Person__r.Name,'
-            + ' Commission_Amount__c,'
-            + ' Commission_Paid__c'
-            + ' FROM Commission__c'
-            + buildCommissionPrefilterWhereClause(filterContext)
-            + ' ORDER BY Sales_Person__r.Name ASC NULLS LAST, Billing_Order__r.Opportunity_Name__c ASC NULLS LAST'
-            + ' LIMIT '
-            + QUERY_ROW_LIMIT
-        );
-
-        if (filterContext != null && filterContext.filters != null && !filterContext.filters.isEmpty()) {
-            commissionRecords = filterReceivablesCommissionRecords(commissionRecords, filterContext);
-        }
-
-        if (commissionRecords.size() >= QUERY_ROW_LIMIT) {
-            while (commissionRecords.size() > MAX_ROWS_PER_SECTION) {
-                commissionRecords.remove(commissionRecords.size() - 1);
-            }
-            addRuntimeWarning(filterContext, KPI_LABEL_COMMISSION_EARNED + ': ' + ROW_LIMIT_WARNING_MESSAGE);
-            addRuntimeWarning(filterContext, KPI_LABEL_COMMISSION_PAYABLE + ': ' + ROW_LIMIT_WARNING_MESSAGE);
-        }
-
-        return commissionRecords;
-    }
-
-    private static List<Opportunity> queryOutstandingReceivableOpportunities() {
-        return [
-            SELECT Id,
-                Name,
-                Account.Name,
-                Amount,
-                Amount_Paid__c,
-                Billing_Status__c,
-                CloseDate,
-                OwnerId,
-                Owner.Name
-            FROM Opportunity
-            WHERE Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
-            ORDER BY Owner.Name ASC NULLS LAST, Name ASC NULLS LAST
-        ];
-    }
-
-    private static List<Order> filterReceivableOrders(
-        List<Order> orderRecords,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        List<Order> filtered = new List<Order>();
-        for (Order orderRecord : orderRecords) {
-            if (matchesReceivableOrderFilters(orderRecord, filterContext)) {
-                filtered.add(orderRecord);
-            }
-        }
-        return filtered;
-    }
-
-    private static Boolean matchesReceivableOrderFilters(
-        Order orderRecord,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        if (filterContext == null || filterContext.filters == null || filterContext.filters.isEmpty()) {
-            return true;
-        }
-
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
-            String fieldKey = normalizeFilterValue(filterRecord.objectApiName) + '.' + normalizeFilterValue(filterRecord.fieldApiName);
-            Object fieldValue;
-
-            if (fieldKey == 'ORDER.BILLING_DIARY_STATUS__C') {
-                fieldValue = orderRecord != null ? (String) orderRecord.get('Billing_Diary_Status__c') : null;
-            } else if (fieldKey == 'ORDER.RECEIVED_AMOUNT__C') {
-                fieldValue = orderRecord != null ? (Decimal) orderRecord.get('Received_Amount__c') : null;
-            } else if (fieldKey == 'ORDER.OUTSTANDING_AMOUNT__C') {
-                fieldValue = orderRecord != null ? (Decimal) orderRecord.get('Outstanding_Amount__c') : null;
-            } else if (fieldKey == 'ORDER.EFFECTIVEDATE') {
-                if (!evaluateDateFilter(orderRecord != null ? orderRecord.EffectiveDate : null, filterRecord)) {
-                    return false;
-                }
-                continue;
-            } else {
-                continue;
-            }
-
-            if (!evaluateFilter(fieldValue, filterRecord)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static List<Commission__c> queryReceivablesCommissionRecords() {
-        return [
-            SELECT Id,
-                Opportunity__c,
-                Opportunity__r.Name,
-                Opportunity__r.Account.Name,
-                Opportunity__r.Amount,
-                Opportunity__r.Amount_Paid__c,
-                Opportunity__r.Billing_Status__c,
-                Opportunity__r.CloseDate,
-                Sales_Person__c,
-                Sales_Person__r.Name,
-                Commission_Amount__c,
-                Commission_Paid__c
-            FROM Commission__c
-            WHERE Opportunity__r.Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
-            OR Opportunity__r.Billing_Status__c = :PAID
-            ORDER BY Sales_Person__r.Name ASC NULLS LAST, Opportunity__r.Name ASC NULLS LAST
-        ];
-    }
-
-    private static List<Opportunity> filterReceivablesOpportunities(
-        List<Opportunity> opportunities,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        List<Opportunity> filtered = new List<Opportunity>();
-        for (Opportunity opportunityRecord : opportunities) {
-            if (matchesReceivablesOpportunityFilters(opportunityRecord, filterContext)) {
-                filtered.add(opportunityRecord);
-            }
-        }
-        return filtered;
-    }
-
-    private static Boolean matchesReceivablesOpportunityFilters(
-        Opportunity opportunityRecord,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        if (filterContext == null || filterContext.filters == null || filterContext.filters.isEmpty()) {
-            return true;
-        }
-
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
-            String fieldKey = normalizeFilterValue(filterRecord.objectApiName) + '.' + normalizeFilterValue(filterRecord.fieldApiName);
-            Object fieldValue;
-
-            if (fieldKey == 'OPPORTUNITY.BILLING_STATUS__C') {
-                fieldValue = opportunityRecord != null ? (String) opportunityRecord.get('Billing_Status__c') : null;
-            } else if (fieldKey == 'OPPORTUNITY.AMOUNT_PAID__C') {
-                fieldValue = opportunityRecord != null ? (Decimal) opportunityRecord.get('Amount_Paid__c') : null;
-            } else if (fieldKey == 'OPPORTUNITY.CLOSEDATE') {
-                fieldValue = opportunityRecord != null ? opportunityRecord.CloseDate : null;
-            } else {
-                continue;
-            }
-
-            if (!evaluateFilter(fieldValue, filterRecord)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static List<Commission__c> filterReceivablesCommissionRecords(
-        List<Commission__c> commissionRecords,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        List<Commission__c> filtered = new List<Commission__c>();
-        for (Commission__c commissionRecord : commissionRecords) {
-            if (matchesReceivablesCommissionFilters(commissionRecord, filterContext)) {
-                filtered.add(commissionRecord);
-            }
-        }
-        return filtered;
-    }
-
-    private static Boolean matchesReceivablesCommissionFilters(
-        Commission__c commissionRecord,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        if (filterContext == null || filterContext.filters == null || filterContext.filters.isEmpty()) {
-            return true;
-        }
-
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
-            String fieldKey = normalizeFilterValue(filterRecord.objectApiName) + '.' + normalizeFilterValue(filterRecord.fieldApiName);
-            Object fieldValue;
-
-            if (fieldKey == 'ORDER.BILLING_DIARY_STATUS__C') {
-                fieldValue = (
-                    commissionRecord != null && commissionRecord.Billing_Order__r != null
-                ) ? (String) commissionRecord.Billing_Order__r.get('Billing_Diary_Status__c') : null;
-            } else if (fieldKey == 'ORDER.RECEIVED_AMOUNT__C') {
-                fieldValue = (
-                    commissionRecord != null && commissionRecord.Billing_Order__r != null
-                ) ? (Decimal) commissionRecord.Billing_Order__r.get('Received_Amount__c') : null;
-            } else if (fieldKey == 'ORDER.OUTSTANDING_AMOUNT__C') {
-                fieldValue = (
-                    commissionRecord != null && commissionRecord.Billing_Order__r != null
-                ) ? (Decimal) commissionRecord.Billing_Order__r.get('Outstanding_Amount__c') : null;
-            } else if (fieldKey == 'ORDER.EFFECTIVEDATE') {
-                if (!evaluateDateFilter(
-                    (commissionRecord != null && commissionRecord.Billing_Order__r != null)
-                        ? commissionRecord.Billing_Order__r.EffectiveDate
-                        : null,
-                    filterRecord
-                )) {
-                    return false;
-                }
-                continue;
-            } else if (fieldKey == 'COMMISSION__C.COMMISSION_PAID__C') {
-                fieldValue = commissionRecord != null ? commissionRecord.Commission_Paid__c : null;
-            } else {
-                continue;
-            }
-
-            if (!evaluateFilter(fieldValue, filterRecord)) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private static Decimal sumOpportunityAmounts(List<Opportunity> opportunities) {
-        Decimal total = 0;
-        if (opportunities == null) {
-            return total;
-        }
-        for (Opportunity opportunityRecord : opportunities) {
-            total += opportunityRecord != null && opportunityRecord.Amount != null ? opportunityRecord.Amount : 0;
-        }
-        return total;
-    }
-
-    private static List<ReceivableOrderSummary> summarizeReceivableOrders(List<Order> orderRecords) {
-        Map<Id, ReceivableOrderSummary> summaryByOpportunityId = new Map<Id, ReceivableOrderSummary>();
-        List<ReceivableOrderSummary> summaries = new List<ReceivableOrderSummary>();
-        if (orderRecords == null) {
-            return summaries;
-        }
-
-        for (Order orderRecord : orderRecords) {
-            if (orderRecord == null || orderRecord.OpportunityId == null) {
-                continue;
-            }
-
-            Decimal invoicedAmount = coalesceDecimal((Decimal) orderRecord.get('Invoiced_Amount__c'));
-            Decimal receivedAmount = coalesceDecimal((Decimal) orderRecord.get('Received_Amount__c'));
-            Decimal outstandingAmount = invoicedAmount - receivedAmount;
-            if (outstandingAmount <= 0) {
-                continue;
-            }
-
-            ReceivableOrderSummary summary = summaryByOpportunityId.get(orderRecord.OpportunityId);
-            if (summary == null) {
-                summary = new ReceivableOrderSummary();
-                summary.opportunityId = orderRecord.OpportunityId;
-                summary.opportunityName = (String) orderRecord.get('Opportunity_Name__c');
-                summary.accountName = (String) orderRecord.get('Account_Name__c');
-                summary.closeDate = orderRecord.Opportunity != null ? orderRecord.Opportunity.CloseDate : null;
-                summary.ownerId = orderRecord.Opportunity != null ? orderRecord.Opportunity.OwnerId : null;
-                summary.ownerName = orderRecord.Opportunity != null && orderRecord.Opportunity.Owner != null
-                    ? orderRecord.Opportunity.Owner.Name
-                    : null;
-                summary.billingStatus = (String) orderRecord.get('Billing_Diary_Status__c');
-                summary.amount = 0;
-                summary.amountPaid = 0;
-                summary.balanceDue = 0;
-                summaryByOpportunityId.put(summary.opportunityId, summary);
-                summaries.add(summary);
-            }
-
-            summary.amount += invoicedAmount;
-            summary.amountPaid += receivedAmount;
-            summary.balanceDue += outstandingAmount;
-        }
-
-        return summaries;
-    }
-
-    private static Decimal sumReceivableBalances(List<ReceivableOrderSummary> summaries) {
-        Decimal total = 0;
-        if (summaries == null) {
-            return total;
-        }
-        for (ReceivableOrderSummary summary : summaries) {
-            total += summary != null ? summary.balanceDue : 0;
-        }
-        return total;
-    }
-
-    private static OpportunityWrapper buildOpportunityFromReceivableSummary(ReceivableOrderSummary summary) {
-        OpportunityWrapper opportunity = new OpportunityWrapper();
-        opportunity.opportunityId = summary != null ? summary.opportunityId : null;
-        opportunity.name = summary != null ? summary.opportunityName : null;
-        opportunity.opportunityName = opportunity.name;
-        opportunity.accountName = summary != null ? summary.accountName : null;
-        opportunity.amount = summary != null ? summary.amount : 0;
-        opportunity.amountPaid = summary != null ? summary.amountPaid : 0;
-        opportunity.balanceDue = summary != null ? summary.balanceDue : 0;
-        opportunity.billingStatus = summary != null ? summary.billingStatus : null;
-        opportunity.closeDate = summary != null ? summary.closeDate : null;
-        opportunity.ownerId = summary != null ? summary.ownerId : null;
-        opportunity.ownerName = summary != null ? summary.ownerName : null;
-        opportunity.commissionAmount = 0;
-        opportunity.commissionPaid = 0;
-        opportunity.commissionId = null;
-        return opportunity;
-    }
-
-    private static OpportunityWrapper buildOpportunityFromOrderLinkedCommission(Commission__c commissionRecord) {
-        OpportunityWrapper opportunity = new OpportunityWrapper();
-        Order linkedOrder = commissionRecord != null ? commissionRecord.Billing_Order__r : null;
-        opportunity.opportunityId = linkedOrder != null ? linkedOrder.OpportunityId : null;
-        opportunity.name = linkedOrder != null ? (String) linkedOrder.get('Opportunity_Name__c') : null;
-        opportunity.opportunityName = opportunity.name;
-        opportunity.accountName = linkedOrder != null ? (String) linkedOrder.get('Account_Name__c') : null;
-        opportunity.amount = linkedOrder != null ? coalesceDecimal((Decimal) linkedOrder.get('Invoiced_Amount__c')) : 0;
-        opportunity.amountPaid = linkedOrder != null ? coalesceDecimal((Decimal) linkedOrder.get('Received_Amount__c')) : 0;
-        opportunity.balanceDue = linkedOrder != null ? coalesceDecimal((Decimal) linkedOrder.get('Outstanding_Amount__c')) : 0;
-        opportunity.billingStatus = linkedOrder != null ? (String) linkedOrder.get('Billing_Diary_Status__c') : null;
-        opportunity.closeDate = linkedOrder != null && linkedOrder.Opportunity != null
-            ? linkedOrder.Opportunity.CloseDate
-            : null;
-        opportunity.ownerId = commissionRecord != null ? commissionRecord.Sales_Person__c : null;
-        opportunity.ownerName = commissionRecord != null && commissionRecord.Sales_Person__r != null
-            ? commissionRecord.Sales_Person__r.Name
-            : null;
-        opportunity.commissionAmount = commissionRecord != null ? coalesceDecimal(commissionRecord.Commission_Amount__c) : 0;
-        opportunity.commissionPaid = commissionRecord != null ? coalesceDecimal(commissionRecord.Commission_Paid__c) : 0;
-        opportunity.commissionId = commissionRecord != null ? commissionRecord.Id : null;
-        return opportunity;
-    }
-
-    private static Decimal coalesceDecimal(Decimal value) {
+    public static Decimal coalesceDecimal(Decimal value) {
         return value != null ? value : 0;
     }
 
@@ -1405,475 +713,17 @@ public with sharing class BillingControl_Invoicing {
         ServiceAppointment appointmentRecord,
         WorkOrder workOrderRecord
     ) {
-        if (appointmentRecord != null && String.isNotBlank(appointmentRecord.Invoice_Number__c)) {
-            return appointmentRecord.Invoice_Number__c;
-        }
-        if (workOrderRecord != null && String.isNotBlank(workOrderRecord.Invoice_Number__c)) {
-            return workOrderRecord.Invoice_Number__c;
-        }
-        return appointmentRecord != null ? appointmentRecord.WO_Inv_Status__c : null;
-    }
-
-    private static OpportunityWrapper buildOpportunityFromOpportunity(Opportunity opportunityRecord) {
-        OpportunityWrapper opportunity = new OpportunityWrapper();
-        opportunity.opportunityId = opportunityRecord != null ? opportunityRecord.Id : null;
-        opportunity.name = opportunityRecord != null ? opportunityRecord.Name : null;
-        opportunity.opportunityName = opportunity.name;
-        opportunity.accountName = opportunityRecord != null && opportunityRecord.Account != null
-            ? opportunityRecord.Account.Name
-            : null;
-        opportunity.amount = opportunityRecord != null ? opportunityRecord.Amount : null;
-        Decimal amountPaid = opportunityRecord != null
-            ? (Decimal) opportunityRecord.get('Amount_Paid__c')
-            : null;
-        opportunity.amountPaid = amountPaid != null ? amountPaid : 0;
-        Decimal amount = opportunity.amount != null ? opportunity.amount : 0;
-        opportunity.balanceDue = amount - opportunity.amountPaid;
-        opportunity.billingStatus = opportunityRecord != null
-            ? (String) opportunityRecord.get('Billing_Status__c')
-            : null;
-        opportunity.closeDate = opportunityRecord != null ? opportunityRecord.CloseDate : null;
-        opportunity.commissionAmount = 0;
-        opportunity.commissionPaid = 0;
-        opportunity.commissionId = null;
-        return opportunity;
-    }
-
-    private static OpportunityWrapper buildOpportunityFromCommission(Commission__c commissionRecord) {
-        OpportunityWrapper opportunity = new OpportunityWrapper();
-        opportunity.opportunityId = commissionRecord != null ? commissionRecord.Opportunity__c : null;
-        opportunity.name = commissionRecord != null && commissionRecord.Opportunity__r != null
-            ? commissionRecord.Opportunity__r.Name
-            : null;
-        opportunity.opportunityName = opportunity.name;
-        opportunity.accountName = commissionRecord != null
-            && commissionRecord.Opportunity__r != null
-            && commissionRecord.Opportunity__r.Account != null
-                ? commissionRecord.Opportunity__r.Account.Name
-                : null;
-        opportunity.amount = commissionRecord != null && commissionRecord.Opportunity__r != null
-            ? commissionRecord.Opportunity__r.Amount
-            : null;
-        Decimal amountPaid = commissionRecord != null && commissionRecord.Opportunity__r != null
-            ? (Decimal) commissionRecord.Opportunity__r.get('Amount_Paid__c')
-            : null;
-        opportunity.amountPaid = amountPaid != null ? amountPaid : 0;
-        Decimal amount = opportunity.amount != null ? opportunity.amount : 0;
-        opportunity.balanceDue = amount - opportunity.amountPaid;
-        opportunity.billingStatus = commissionRecord != null && commissionRecord.Opportunity__r != null
-            ? commissionRecord.Opportunity__r.Billing_Status__c
-            : null;
-        opportunity.closeDate = commissionRecord != null && commissionRecord.Opportunity__r != null
-            ? commissionRecord.Opportunity__r.CloseDate
-            : null;
-        opportunity.commissionAmount = commissionRecord != null && commissionRecord.Commission_Amount__c != null
-            ? commissionRecord.Commission_Amount__c
-            : 0;
-        opportunity.commissionPaid = commissionRecord != null && commissionRecord.Commission_Paid__c != null
-            ? commissionRecord.Commission_Paid__c
-            : 0;
-        opportunity.commissionId = commissionRecord != null ? commissionRecord.Id : null;
-        return opportunity;
-    }
-
-    private static void addOpportunityToCommissionSection(
-        CommissionKpiCategoryWrapper section,
-        Map<String, SalespersonWrapper> salespersonIndex,
-        Id salespersonId,
-        String salespersonName,
-        OpportunityWrapper opportunity
-    ) {
-        if (section == null || salespersonIndex == null || opportunity == null || opportunity.opportunityId == null) {
-            return;
-        }
-
-        String salespersonKey = salespersonId != null ? String.valueOf(salespersonId) : 'UNASSIGNED';
-        SalespersonWrapper salesperson = salespersonIndex.get(salespersonKey);
-        if (salesperson == null) {
-            salesperson = new SalespersonWrapper();
-            salesperson.salespersonId = salespersonId;
-            salesperson.salespersonName = String.isNotBlank(salespersonName) ? salespersonName : 'Unassigned';
-            salesperson.totalAmount = 0;
-            salesperson.totalCommission = 0;
-            salesperson.totalPaid = 0;
-            salesperson.opportunities = new List<OpportunityWrapper>();
-            salespersonIndex.put(salespersonKey, salesperson);
-            section.salespersonGroups.add(salesperson);
-        }
-
-        Decimal amount = opportunity.amount != null ? opportunity.amount : 0;
-        Decimal commissionAmount = opportunity.commissionAmount != null ? opportunity.commissionAmount : 0;
-        Decimal commissionPaid = opportunity.commissionPaid != null ? opportunity.commissionPaid : 0;
-
-        salesperson.totalAmount += amount;
-        salesperson.totalCommission += commissionAmount;
-        salesperson.totalPaid += commissionPaid;
-        salesperson.opportunities.add(opportunity);
-
-        section.opportunityCount++;
-        section.totalAmount += amount;
-        section.totalCommission += commissionAmount;
-        section.totalPaid += commissionPaid;
+        return BillingControl_InvSync.coalesceInvoiceNumber(appointmentRecord, workOrderRecord);
     }
 
     @AuraEnabled
     public static void updateCommissionPaid(List<Id> commissionIds) {
-        if (commissionIds == null || commissionIds.isEmpty()) {
-            return;
-        }
-
-        List<Commission__c> commissionsToUpdate = new List<Commission__c>();
-        for (Commission__c commissionRecord : [
-            SELECT Id, Commission_Amount__c, Commission_Paid__c
-            FROM Commission__c
-            WHERE Id IN :commissionIds
-        ]) {
-            if (commissionRecord.Commission_Paid__c != commissionRecord.Commission_Amount__c) {
-                commissionRecord.Commission_Paid__c = commissionRecord.Commission_Amount__c;
-                commissionsToUpdate.add(commissionRecord);
-            }
-        }
-
-        if (!commissionsToUpdate.isEmpty()) {
-            update commissionsToUpdate;
-        }
+        BillingControl_Receivables.updateCommissionPaid(commissionIds);
     }
 
     @AuraEnabled
     public static CommissionResultWrapper createCommissionRecords(List<CommissionInputWrapper> inputs) {
-        System.debug(LoggingLevel.ERROR, 'BCC createCommissionRecords START');
-        System.debug(LoggingLevel.ERROR, 'BCC createCommissionRecords inputs=' + JSON.serialize(inputs));
-
-        CommissionResultWrapper result = new CommissionResultWrapper();
-        result.successCount = 0;
-        result.errorMessages = new List<String>();
-
-        if (inputs == null || inputs.isEmpty()) {
-            System.debug(LoggingLevel.ERROR, 'BCC createCommissionRecords exiting early: inputs empty');
-            return result;
-        }
-
-        Map<Id, CommissionInputWrapper> inputByOpportunityId = new Map<Id, CommissionInputWrapper>();
-        Set<Id> opportunityIds = new Set<Id>();
-        for (CommissionInputWrapper input : inputs) {
-            System.debug(LoggingLevel.ERROR, 'BCC iterating input=' + JSON.serialize(input));
-            if (input != null && input.opportunityId != null) {
-                inputByOpportunityId.put(input.opportunityId, input);
-                opportunityIds.add(input.opportunityId);
-            }
-        }
-
-        System.debug(LoggingLevel.ERROR, 'BCC inputByOpportunityId keys=' + inputByOpportunityId.keySet());
-        System.debug(LoggingLevel.ERROR, 'BCC opportunityIds=' + opportunityIds);
-
-        if (inputByOpportunityId.isEmpty()) {
-            System.debug(LoggingLevel.ERROR, 'BCC createCommissionRecords exiting early: no valid opportunity ids');
-            return result;
-        }
-
-        Map<Id, Opportunity> opportunityById = new Map<Id, Opportunity>([
-            SELECT Id, Name, OwnerId, Owner.Name
-            FROM Opportunity
-            WHERE Id IN :opportunityIds
-        ]);
-
-        System.debug(LoggingLevel.ERROR, 'BCC queried opportunities count=' + opportunityById.size());
-        System.debug(LoggingLevel.ERROR, 'BCC queried opportunities=' + JSON.serialize(opportunityById.values()));
-
-        List<Commission__c> commissionRecords = new List<Commission__c>();
-        List<Id> commissionOpportunityIds = new List<Id>();
-
-        for (CommissionInputWrapper input : inputs) {
-            if (input == null || input.opportunityId == null) {
-                System.debug(LoggingLevel.ERROR, 'BCC skipping null/invalid input=' + JSON.serialize(input));
-                continue;
-            }
-
-            Opportunity opportunityRecord = opportunityById.get(input.opportunityId);
-            Id salesPersonId = input.ownerId != null
-                ? input.ownerId
-                : (opportunityRecord != null ? opportunityRecord.OwnerId : null);
-
-            Commission__c commissionRecord = new Commission__c();
-            commissionRecord.Opportunity__c = input.opportunityId;
-            commissionRecord.Commission_Rate__c = input.commissionRate;
-            commissionRecord.Sales_Person__c = salesPersonId;
-            commissionRecord.Unique_Key__c = String.valueOf(input.opportunityId) + String.valueOf(salesPersonId);
-            commissionRecords.add(commissionRecord);
-            commissionOpportunityIds.add(input.opportunityId);
-
-            System.debug(LoggingLevel.ERROR,
-                'BCC prepared commissionRecord for opportunity=' + input.opportunityId +
-                ', salesPersonId=' + salesPersonId +
-                ', commissionRate=' + input.commissionRate +
-                ', uniqueKey=' + commissionRecord.Unique_Key__c
-            );
-        }
-
-        System.debug(LoggingLevel.ERROR, 'BCC commissionRecords size=' + commissionRecords.size());
-        System.debug(LoggingLevel.ERROR, 'BCC commissionRecords payload=' + JSON.serialize(commissionRecords));
-        System.debug(LoggingLevel.ERROR, 'BCC commissionOpportunityIds=' + commissionOpportunityIds);
-
-        if (commissionRecords.isEmpty()) {
-            System.debug(LoggingLevel.ERROR, 'BCC createCommissionRecords exiting early: no commission records prepared');
-            return result;
-        }
-
-        Database.SaveResult[] saveResults = Database.insert(commissionRecords, false);
-        System.debug(LoggingLevel.ERROR, 'BCC saveResults size=' + saveResults.size());
-        Set<Id> successfulOpportunityIds = new Set<Id>();
-
-        for (Integer index = 0; index < saveResults.size(); index++) {
-            Database.SaveResult saveResult = saveResults[index];
-            Id opportunityId = commissionOpportunityIds[index];
-            Opportunity opportunityRecord = opportunityById.get(opportunityId);
-            String opportunityName = opportunityRecord != null ? opportunityRecord.Name : String.valueOf(opportunityId);
-            String ownerName = opportunityRecord != null && opportunityRecord.Owner != null
-                ? opportunityRecord.Owner.Name
-                : '';
-
-            System.debug(LoggingLevel.ERROR,
-                'BCC saveResult index=' + index +
-                ', opportunityId=' + opportunityId +
-                ', success=' + saveResult.isSuccess() +
-                ', id=' + saveResult.getId()
-            );
-
-            if (saveResult.isSuccess()) {
-                successfulOpportunityIds.add(opportunityId);
-                result.successCount = (result.successCount == null ? 0 : result.successCount) + 1;
-                continue;
-            }
-
-            for (Database.Error dbError : saveResult.getErrors()) {
-                String message = dbError.getMessage();
-                System.debug(LoggingLevel.ERROR,
-                    'BCC saveResult error opportunity=' + opportunityId +
-                    ', statusCode=' + dbError.getStatusCode() +
-                    ', message=' + message +
-                    ', fields=' + dbError.getFields()
-                );
-                if (String.isNotBlank(message) &&
-                    (message.contains('DUPLICATE_VALUE') || message.contains('duplicate value'))) {
-                    result.errorMessages.add(
-                        'Commission already exists for Opportunity: ' + opportunityName +
-                        ' and Owner: ' + ownerName
-                    );
-                } else {
-                    result.errorMessages.add(
-                        'Opportunity: ' + opportunityName +
-                        ', Owner: ' + ownerName +
-                        ' - ' + message
-                    );
-                }
-            }
-        }
-
-        System.debug(LoggingLevel.ERROR, 'BCC successfulOpportunityIds=' + successfulOpportunityIds);
-        System.debug(LoggingLevel.ERROR, 'BCC interim result=' + JSON.serialize(result));
-
-        if (!successfulOpportunityIds.isEmpty()) {
-            List<Opportunity> opportunitiesToUpdate = new List<Opportunity>();
-            for (Id opportunityId : successfulOpportunityIds) {
-                opportunitiesToUpdate.add(new Opportunity(
-                    Id = opportunityId,
-                    Billing_Status__c = getOutstandingReceivableStatusForUpdate()
-                ));
-            }
-            System.debug(LoggingLevel.ERROR, 'BCC opportunitiesToUpdate=' + JSON.serialize(opportunitiesToUpdate));
-            update opportunitiesToUpdate;
-            System.debug(LoggingLevel.ERROR, 'BCC opportunity update complete count=' + opportunitiesToUpdate.size());
-        }
-
-        if (result.successCount == 0 && result.errorMessages.isEmpty()) {
-            result.errorMessages.add('No commission records were created.');
-            System.debug(LoggingLevel.ERROR, 'BCC added fallback no-records-created message');
-        }
-
-        System.debug(LoggingLevel.ERROR, 'BCC createCommissionRecords END result=' + JSON.serialize(result));
-        return result;
-    }
-
-    private static Map<Id, WorkOrder> buildWorkOrderLookup(List<ServiceAppointment> appointments) {
-        Set<Id> workOrderIds = new Set<Id>();
-        for (ServiceAppointment appointment : appointments) {
-            if (appointment.ParentRecordId != null) {
-                workOrderIds.add(appointment.ParentRecordId);
-            }
-        }
-
-        if (workOrderIds.isEmpty()) {
-            return new Map<Id, WorkOrder>();
-        }
-
-        return new Map<Id, WorkOrder>([
-            SELECT Id, WorkOrderNumber, TotalPrice
-            FROM WorkOrder
-            WHERE Id IN :workOrderIds
-        ]);
-    }
-
-    private static Map<Id, Integer> buildAppointmentCountByWorkOrder(List<ServiceAppointment> appointments) {
-        Map<Id, Integer> appointmentCountByWorkOrderId = new Map<Id, Integer>();
-        for (ServiceAppointment appointment : appointments) {
-            if (appointment.ParentRecordId == null) {
-                continue;
-            }
-            Integer currentCount = appointmentCountByWorkOrderId.containsKey(appointment.ParentRecordId)
-                ? appointmentCountByWorkOrderId.get(appointment.ParentRecordId)
-                : 0;
-            appointmentCountByWorkOrderId.put(appointment.ParentRecordId, currentCount + 1);
-        }
-        return appointmentCountByWorkOrderId;
-    }
-
-    private static Map<String, Integer> buildAppointmentCountByWorkOrderAndOpportunity(
-        List<ServiceAppointment> appointments,
-        Map<Id, Id> effectiveOpportunityByAppointmentId
-    ) {
-        Map<String, Integer> countByWorkOrderAndOpportunity = new Map<String, Integer>();
-        for (ServiceAppointment appointmentRecord : appointments) {
-            if (appointmentRecord.ParentRecordId == null) {
-                continue;
-            }
-            Id effectiveOpportunityId = effectiveOpportunityByAppointmentId.get(appointmentRecord.Id);
-            if (effectiveOpportunityId == null) {
-                continue;
-            }
-            String key = workOrderOpportunityKey(appointmentRecord.ParentRecordId, effectiveOpportunityId);
-            Integer current = countByWorkOrderAndOpportunity.containsKey(key)
-                ? countByWorkOrderAndOpportunity.get(key)
-                : 0;
-            countByWorkOrderAndOpportunity.put(key, current + 1);
-        }
-        return countByWorkOrderAndOpportunity;
-    }
-
-    private static String workOrderOpportunityKey(Id workOrderId, Id opportunityId) {
-        return String.valueOf(workOrderId) + '|' + String.valueOf(opportunityId);
-    }
-
-    /**
-     * Legacy allocation helper retained only so older internal call sites can compile. BCC Order
-     * Diary billing must not derive billable amount from WorkOrder or Opportunity totals.
-     */
-    private static Decimal resolveBillableAmount(
-        Id workOrderId,
-        Id effectiveOpportunityId,
-        Map<Id, WorkOrder> workOrderById,
-        Map<Id, Integer> appointmentCountByWorkOrderId,
-        Map<String, Integer> appointmentCountByWorkOrderAndOpportunityId,
-        Map<Id, Opportunity> opportunityById
-    ) {
-        return 0;
-    }
-
-    private static Invoice__c getOrCreateReceivableInvoice(
-        Opportunity opportunityRecord,
-        Decimal invoiceAmount,
-        Decimal previouslyPaid
-    ) {
-        Invoice__c existingInvoice = getOpenReceivableInvoice(opportunityRecord.Id);
-        if (existingInvoice != null) {
-            return existingInvoice;
-        }
-
-        String invoiceNumber = buildInvoiceNumber(opportunityRecord.Id, 1);
-        Invoice__c invoiceRecord = new Invoice__c(
-            Invoice_Number__c = invoiceNumber,
-            Opportunity__c = opportunityRecord.Id,
-            Account__c = opportunityRecord.AccountId,
-            Status__c = INVOICE_STATUS_SENT,
-            Invoice_Date__c = Date.today(),
-            Due_Date__c = Date.today().addDays(30),
-            Subtotal__c = invoiceAmount,
-            Tax_Amount__c = 0,
-            Total_Amount__c = invoiceAmount,
-            Amount_Paid__c = previouslyPaid,
-            Balance_Due__c = invoiceAmount - previouslyPaid
-        );
-        insert invoiceRecord;
-        return invoiceRecord;
-    }
-
-    private static Invoice__c getOpenReceivableInvoice(Id opportunityId) {
-        List<Invoice__c> existingInvoices = [
-            SELECT Id,
-                Invoice_Number__c,
-                Amount_Paid__c,
-                Balance_Due__c,
-                Total_Amount__c
-            FROM Invoice__c
-            WHERE Opportunity__c = :opportunityId
-            AND Status__c != :INVOICE_STATUS_PAID
-            LIMIT 1
-            FOR UPDATE
-        ];
-        return existingInvoices.isEmpty() ? null : existingInvoices[0];
-    }
-
-    private static Decimal resolveReceivableInvoiceAmountFromOrderDiary(Id opportunityId) {
-        Decimal totalAmount = 0;
-        for (AggregateResult aggregateResult : [
-            SELECT SUM(Invoiced_Amount__c) totalAmount
-            FROM Order
-            WHERE OpportunityId = :opportunityId
-            AND Invoiced_Amount__c != null
-            AND Invoiced_Amount__c > 0
-        ]) {
-            Decimal value = (Decimal) aggregateResult.get('totalAmount');
-            totalAmount += value != null ? value : 0;
-        }
-        return totalAmount;
-    }
-
-    private static void applyPartialCommissionAccrual(
-        Id opportunityId,
-        Decimal paymentAmount,
-        Decimal invoiceAmount,
-        Boolean isFinalPayment
-    ) {
-        if (opportunityId == null || paymentAmount == null || paymentAmount <= 0 || invoiceAmount == null || invoiceAmount <= 0) {
-            return;
-        }
-
-        Decimal paymentRatio = paymentAmount / invoiceAmount;
-        List<Commission__c> commissionsToUpdate = new List<Commission__c>();
-        for (Commission__c commissionRecord : [
-            SELECT Id, Commission_Amount__c, Commission_Paid__c
-            FROM Commission__c
-            WHERE Opportunity__c = :opportunityId
-        ]) {
-            Decimal commissionAmount = commissionRecord.Commission_Amount__c != null
-                ? commissionRecord.Commission_Amount__c
-                : 0;
-            Decimal commissionPaid = commissionRecord.Commission_Paid__c != null
-                ? commissionRecord.Commission_Paid__c
-                : 0;
-
-            if (commissionAmount <= 0 || commissionPaid >= commissionAmount) {
-                continue;
-            }
-
-            if (isFinalPayment) {
-                commissionRecord.Commission_Paid__c = commissionAmount;
-                commissionsToUpdate.add(commissionRecord);
-                continue;
-            }
-
-            Decimal accrualAmount = (commissionAmount * paymentRatio).setScale(2);
-            Decimal remainingAmount = commissionAmount - commissionPaid;
-            Decimal commissionDelta = accrualAmount > remainingAmount ? remainingAmount : accrualAmount;
-            if (commissionDelta <= 0) {
-                continue;
-            }
-            commissionRecord.Commission_Paid__c = commissionPaid + commissionDelta;
-            commissionsToUpdate.add(commissionRecord);
-        }
-
-        if (!commissionsToUpdate.isEmpty()) {
-            update commissionsToUpdate;
-        }
+        return BillingControl_Receivables.createCommissionRecords(inputs);
     }
 
     private static List<ServiceAppointmentRowWrapper> buildBillableServiceAppointmentRows() {
@@ -1896,7 +746,7 @@ public with sharing class BillingControl_Invoicing {
             return new List<ServiceAppointmentRowWrapper>();
         }
 
-        Map<Id, Id> workOrderIdByAppointmentId = resolveWorkOrderIdsForAppointments(readyToInvoiceAppointments);
+        Map<Id, Id> workOrderIdByAppointmentId = BillingControl_Attribution.resolveWorkOrderIdsForAppointments(readyToInvoiceAppointments);
         Set<Id> workOrderIds = new Set<Id>(workOrderIdByAppointmentId.values());
         Map<Id, WorkOrder> workOrderById = queryWorkOrdersById(workOrderIds);
         Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = queryJunctionsByWorkOrderId(workOrderIds);
@@ -1910,7 +760,7 @@ public with sharing class BillingControl_Invoicing {
         for (ServiceAppointment appointmentRecord : readyToInvoiceAppointments) {
             Id workOrderId = workOrderIdByAppointmentId.get(appointmentRecord.Id);
             WorkOrder workOrderRecord = workOrderId != null ? workOrderById.get(workOrderId) : null;
-            Id opportunityId = resolveAttributedOpportunityId(
+            Id opportunityId = BillingControl_Attribution.resolveAttributedOpportunityId(
                 appointmentRecord,
                 junctionsByWorkOrderId.get(workOrderId)
             );
@@ -2009,6 +859,8 @@ public with sharing class BillingControl_Invoicing {
                     return false;
                 }
                 continue;
+            } else if (fieldKey == 'OPPORTUNITY.OWNERID') {
+                fieldValue = row.opportunityOwnerId;
             } else {
                 continue;
             }
@@ -2032,35 +884,11 @@ public with sharing class BillingControl_Invoicing {
         return invoicedAmount;
     }
 
-    private static Integer queryReadyToInvoiceCount(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
-        Boolean completedMoreThanTwoDaysOnly
-    ) {
-        return buildBillableServiceAppointmentRows(filterContext, false).size();
-    }
-
-    private static Decimal queryReadyToInvoiceRevenue(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        Map<Id, Decimal> amountByOpportunityId = new Map<Id, Decimal>();
-        for (ServiceAppointmentRowWrapper row : buildBillableServiceAppointmentRows(filterContext, false)) {
-            if (row.opportunityId != null && !amountByOpportunityId.containsKey(row.opportunityId)) {
-                amountByOpportunityId.put(row.opportunityId, row.opportunityAmount);
-            }
-        }
-        Decimal totalRevenue = 0;
-        for (Decimal opportunityAmount : amountByOpportunityId.values()) {
-            totalRevenue += opportunityAmount != null ? opportunityAmount : 0;
-        }
-        return totalRevenue;
-    }
-
     private static Boolean isLegacyInvoicingEligibilityFilter(String fieldKey) {
         return fieldKey == 'ORDER.BILLING_DIARY_STATUS__C'
             || fieldKey == 'ORDER.READY_FOR_BILLING__C'
             || fieldKey == 'ORDER.SERVICE_APPOINTMENT__C'
-            || fieldKey == 'ORDER.INVOICED_AMOUNT__C'
-            || fieldKey == 'SERVICEAPPOINTMENT.ACTUALENDTIME';
+            || fieldKey == 'ORDER.INVOICED_AMOUNT__C';
     }
 
     private static List<ServiceAppointment> queryEligibleInvoicingAppointments(
@@ -2163,7 +991,7 @@ public with sharing class BillingControl_Invoicing {
             return new List<ServiceAppointment>();
         }
 
-        Map<Id, Id> workOrderIdByAppointmentId = resolveWorkOrderIdsForAppointments(candidates);
+        Map<Id, Id> workOrderIdByAppointmentId = BillingControl_Attribution.resolveWorkOrderIdsForAppointments(candidates);
         Set<Id> workOrderIds = new Set<Id>(workOrderIdByAppointmentId.values());
         Map<Id, WorkOrder> workOrderById = queryWorkOrdersById(workOrderIds);
         Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = queryJunctionsByWorkOrderId(workOrderIds);
@@ -2198,7 +1026,7 @@ public with sharing class BillingControl_Invoicing {
                 }
             }
 
-            if (resolveAttributedOpportunityId(appointmentRecord, junctionsByWorkOrderId.get(workOrderId)) == null) {
+            if (BillingControl_Attribution.resolveAttributedOpportunityId(appointmentRecord, junctionsByWorkOrderId.get(workOrderId)) == null) {
                 continue;
             }
             eligible.add(appointmentRecord);
@@ -2258,141 +1086,15 @@ public with sharing class BillingControl_Invoicing {
         return true;
     }
 
-    private static Boolean containsExcludedInvoicingMarkerForAccount(String value) { return value != null && value.contains('NYCDOE'); }
+    public static Boolean containsExcludedInvoicingMarkerForAccount(String value) { return value != null && value.contains('NYCDOE'); }
 
     @TestVisible
-    private static Boolean containsExcludedInvoicingMarker(String value) {
+    public static Boolean containsExcludedInvoicingMarker(String value) {
         if (String.isBlank(value)) {
             return false;
         }
         String normalized = value.toLowerCase();
         return normalized.contains('inv') || normalized.contains('inspection');
-    }
-
-    private static String buildReceivableOrdersWhereClause(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
-        Boolean onlyOutstanding
-    ) {
-        List<String> clauses = new List<String>{
-            'Id IN :billingOrderIds',
-            'OpportunityId != NULL',
-            'Billing_Diary_Status__c != \'' + String.escapeSingleQuotes(ORDER_DIARY_STATUS_CANCELLED) + '\''
-        };
-        if (onlyOutstanding) {
-            clauses.add('Outstanding_Amount__c > 0');
-        }
-        clauses.addAll(
-            BillingControl_DataProvider.buildQueryFilterClauses(filterContext, getReceivableOrderFilterFieldMappings())
-        );
-        return ' WHERE ' + String.join(clauses, ' AND ');
-    }
-
-    private static String buildCommissionWhereClause(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
-        Boolean onlyEarned,
-        Boolean onlyPayable
-    ) {
-        List<String> clauses = new List<String>{ 'Billing_Order__c != NULL' };
-        if (onlyEarned) {
-            clauses.add('Billing_Order__r.Outstanding_Amount__c > 0');
-        }
-        if (onlyPayable) {
-            clauses.add(
-                'Billing_Order__r.Billing_Diary_Status__c = \''
-                + String.escapeSingleQuotes(ORDER_DIARY_STATUS_PAID)
-                + '\''
-            );
-        }
-        clauses.addAll(
-            BillingControl_DataProvider.buildQueryFilterClauses(filterContext, getCommissionFilterFieldMappings())
-        );
-        return ' WHERE ' + String.join(clauses, ' AND ');
-    }
-
-    private static String buildCommissionPrefilterWhereClause(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        List<String> clauses = new List<String>{ 'Billing_Order__c != NULL' };
-        if (filterContext != null && filterContext.filters != null) {
-            for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
-                String fieldKey = normalizeFilterValue(filterRecord.objectApiName) + '.' + normalizeFilterValue(filterRecord.fieldApiName);
-                if (fieldKey != 'ORDER.EFFECTIVEDATE') {
-                    continue;
-                }
-                BillingControl_DataProvider.BillingFilterContextDTO singleFilterContext =
-                    new BillingControl_DataProvider.BillingFilterContextDTO();
-                singleFilterContext.filters.add(filterRecord);
-                List<String> queryClauses = BillingControl_DataProvider.buildQueryFilterClauses(
-                    singleFilterContext,
-                    new Map<String, BillingControl_DataProvider.FilterFieldDescriptor>{
-                        'ORDER.EFFECTIVEDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                            'Billing_Order__r.EffectiveDate',
-                            BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
-                        )
-                    }
-                );
-                clauses.addAll(queryClauses);
-            }
-        }
-        return ' WHERE ' + String.join(clauses, ' AND ');
-    }
-
-    private static Set<Id> queryInvoiceLinkedBillingOrderIds() {
-        Set<Id> billingOrderIds = new Set<Id>();
-        for (Invoice_Line__c invoiceLineRecord : [
-            SELECT Billing_Order__c
-            FROM Invoice_Line__c
-            WHERE Billing_Order__c != NULL
-        ]) {
-            billingOrderIds.add(invoiceLineRecord.Billing_Order__c);
-        }
-        return billingOrderIds;
-    }
-
-    private static Map<String, BillingControl_DataProvider.FilterFieldDescriptor> getReceivableOrderFilterFieldMappings() {
-        return new Map<String, BillingControl_DataProvider.FilterFieldDescriptor>{
-            'ORDER.BILLING_DIARY_STATUS__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'Billing_Diary_Status__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_STRING
-            ),
-            'ORDER.RECEIVED_AMOUNT__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'Received_Amount__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
-            ),
-            'ORDER.OUTSTANDING_AMOUNT__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'Outstanding_Amount__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
-            ),
-            'ORDER.EFFECTIVEDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'EffectiveDate',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
-            )
-        };
-    }
-
-    private static Map<String, BillingControl_DataProvider.FilterFieldDescriptor> getCommissionFilterFieldMappings() {
-        return new Map<String, BillingControl_DataProvider.FilterFieldDescriptor>{
-            'ORDER.BILLING_DIARY_STATUS__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'Billing_Order__r.Billing_Diary_Status__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_STRING
-            ),
-            'ORDER.RECEIVED_AMOUNT__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'Billing_Order__r.Received_Amount__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
-            ),
-            'ORDER.OUTSTANDING_AMOUNT__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'Billing_Order__r.Outstanding_Amount__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
-            ),
-            'ORDER.EFFECTIVEDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'Billing_Order__r.EffectiveDate',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
-            ),
-            'COMMISSION__C.COMMISSION_PAID__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
-                'Commission_Paid__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
-            )
-        };
     }
 
     private static Boolean evaluateDateTimeFilter(
@@ -2417,7 +1119,7 @@ public with sharing class BillingControl_Invoicing {
         return compareComparable(fieldValue.getTime(), comparisonValue.getTime(), operatorValue);
     }
 
-    private static void addRuntimeWarning(
+    public static void addRuntimeWarning(
         BillingControl_DataProvider.BillingFilterContextDTO filterContext,
         String warning
     ) {
@@ -2432,131 +1134,7 @@ public with sharing class BillingControl_Invoicing {
         }
     }
 
-    private static Map<Id, Id> resolveAttributedOpportunitiesForBilling(
-        List<ServiceAppointment> appointmentsToBill,
-        Map<Id, Id> workOrderIdByAppointmentId
-    ) {
-        Map<Id, Id> opportunityIdByAppointmentId = new Map<Id, Id>();
-        if (appointmentsToBill == null || appointmentsToBill.isEmpty()) {
-            return opportunityIdByAppointmentId;
-        }
-
-        Set<Id> workOrderIds = new Set<Id>(workOrderIdByAppointmentId.values());
-        Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = queryJunctionsByWorkOrderId(workOrderIds);
-        for (ServiceAppointment appointmentRecord : appointmentsToBill) {
-            Id workOrderId = workOrderIdByAppointmentId.get(appointmentRecord.Id);
-            Id opportunityId = resolveAttributedOpportunityId(
-                appointmentRecord,
-                junctionsByWorkOrderId.get(workOrderId)
-            );
-            if (opportunityId == null) {
-                Integer junctionCount = 0;
-                List<Opportunity_WorkOrder__c> junctions = junctionsByWorkOrderId.get(workOrderId);
-                if (junctions != null) {
-                    Set<Id> uniqueOpportunityIds = new Set<Id>();
-                    for (Opportunity_WorkOrder__c junctionRecord : junctions) {
-                        if (junctionRecord.Opportunity__c != null) {
-                            uniqueOpportunityIds.add(junctionRecord.Opportunity__c);
-                        }
-                    }
-                    junctionCount = uniqueOpportunityIds.size();
-                }
-                if (junctionCount > 1) {
-                    throw buildHandledException(
-                        'Complete Billing cannot attribute Service Appointment '
-                        + String.valueOf(appointmentRecord.Id)
-                        + ' because the Work Order has multiple Opportunities and the appointment has no Opportunity.'
-                    );
-                }
-                throw buildHandledException(
-                    'Complete Billing requires an attributed Opportunity for Service Appointment '
-                    + String.valueOf(appointmentRecord.Id)
-                    + '.'
-                );
-            }
-            opportunityIdByAppointmentId.put(appointmentRecord.Id, opportunityId);
-        }
-        return opportunityIdByAppointmentId;
-    }
-
-    private static Id resolveAttributedOpportunityId(
-        ServiceAppointment appointmentRecord,
-        List<Opportunity_WorkOrder__c> junctions
-    ) {
-        if (appointmentRecord != null && appointmentRecord.Opportunity__c != null) {
-            return appointmentRecord.Opportunity__c;
-        }
-        Set<Id> uniqueOpportunityIds = new Set<Id>();
-        if (junctions != null) {
-            for (Opportunity_WorkOrder__c junctionRecord : junctions) {
-                if (junctionRecord != null && junctionRecord.Opportunity__c != null) {
-                    uniqueOpportunityIds.add(junctionRecord.Opportunity__c);
-                }
-            }
-        }
-        if (uniqueOpportunityIds.size() == 1) {
-            return new List<Id>(uniqueOpportunityIds)[0];
-        }
-        return null;
-    }
-
-    private static Map<Id, Id> resolveWorkOrderIdsForAppointments(List<ServiceAppointment> appointments) {
-        Set<Id> parentIds = new Set<Id>();
-        if (appointments != null) {
-            for (ServiceAppointment appointmentRecord : appointments) {
-                if (appointmentRecord != null && appointmentRecord.ParentRecordId != null) {
-                    parentIds.add(appointmentRecord.ParentRecordId);
-                }
-            }
-        }
-        Map<Id, Id> workOrderIdByParentId = resolveWorkOrderIds(parentIds);
-        Map<Id, Id> workOrderIdByAppointmentId = new Map<Id, Id>();
-        if (appointments == null) {
-            return workOrderIdByAppointmentId;
-        }
-        for (ServiceAppointment appointmentRecord : appointments) {
-            if (appointmentRecord == null) {
-                continue;
-            }
-            workOrderIdByAppointmentId.put(
-                appointmentRecord.Id,
-                workOrderIdByParentId.get(appointmentRecord.ParentRecordId)
-            );
-        }
-        return workOrderIdByAppointmentId;
-    }
-
-    private static Map<Id, Id> resolveWorkOrderIds(Set<Id> parentIds) {
-        Map<Id, Id> workOrderIdByParentId = new Map<Id, Id>();
-        if (parentIds == null || parentIds.isEmpty()) {
-            return workOrderIdByParentId;
-        }
-        Set<Id> lineItemIds = new Set<Id>();
-        for (Id parentId : parentIds) {
-            if (parentId == null) {
-                continue;
-            }
-            if (parentId.getSObjectType() == WorkOrder.SObjectType) {
-                workOrderIdByParentId.put(parentId, parentId);
-            } else if (parentId.getSObjectType() == WorkOrderLineItem.SObjectType) {
-                lineItemIds.add(parentId);
-            }
-        }
-        if (!lineItemIds.isEmpty()) {
-            for (WorkOrderLineItem lineItem : [
-                SELECT Id, WorkOrderId
-                FROM WorkOrderLineItem
-                WHERE Id IN :lineItemIds
-            ]) {
-                if (lineItem.WorkOrderId != null) {
-                    workOrderIdByParentId.put(lineItem.Id, lineItem.WorkOrderId);
-                }
-            }
-        }
-        return workOrderIdByParentId;
-    }
-
-    private static Map<Id, WorkOrder> queryWorkOrdersById(Set<Id> workOrderIds) {
+    public static Map<Id, WorkOrder> queryWorkOrdersById(Set<Id> workOrderIds) {
         if (workOrderIds == null || workOrderIds.isEmpty()) {
             return new Map<Id, WorkOrder>();
         }
@@ -2576,7 +1154,7 @@ public with sharing class BillingControl_Invoicing {
         ]);
     }
 
-    private static Map<Id, List<Opportunity_WorkOrder__c>> queryJunctionsByWorkOrderId(Set<Id> workOrderIds) {
+    public static Map<Id, List<Opportunity_WorkOrder__c>> queryJunctionsByWorkOrderId(Set<Id> workOrderIds) {
         Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = new Map<Id, List<Opportunity_WorkOrder__c>>();
         if (workOrderIds == null) {
             return junctionsByWorkOrderId;
@@ -2611,7 +1189,7 @@ public with sharing class BillingControl_Invoicing {
                 Id workOrderId = workOrderIdByAppointmentId != null
                     ? workOrderIdByAppointmentId.get(appointmentRecord.Id)
                     : null;
-                Id opportunityId = resolveAttributedOpportunityId(
+                Id opportunityId = BillingControl_Attribution.resolveAttributedOpportunityId(
                     appointmentRecord,
                     junctionsByWorkOrderId != null ? junctionsByWorkOrderId.get(workOrderId) : null
                 );
@@ -2624,7 +1202,7 @@ public with sharing class BillingControl_Invoicing {
             return new Map<Id, Opportunity>();
         }
         return new Map<Id, Opportunity>([
-            SELECT Id, Name, Amount, Billing_Status__c, AccountId
+            SELECT Id, Name, Amount, Billing_Status__c, AccountId, OwnerId
             FROM Opportunity
             WHERE Id IN :opportunityIds
         ]);
@@ -2643,6 +1221,7 @@ public with sharing class BillingControl_Invoicing {
         row.opportunityId = opportunityRecord != null ? opportunityRecord.Id : null;
         row.opportunityName = opportunityRecord != null ? opportunityRecord.Name : null;
         row.opportunityAmount = opportunityRecord != null ? opportunityRecord.Amount : null;
+        row.opportunityOwnerId = opportunityRecord != null ? opportunityRecord.OwnerId : null;
         if (workOrderRecord != null && workOrderRecord.AccountId != null) {
             row.accountId = workOrderRecord.AccountId;
             row.accountName = workOrderRecord.Account != null ? workOrderRecord.Account.Name : null;
@@ -2684,7 +1263,7 @@ public with sharing class BillingControl_Invoicing {
         return row;
     }
 
-    private static Map<Id, Decimal> queryHistoricalInvoiceTotalByOpportunityId(Set<Id> opportunityIds) {
+    public static Map<Id, Decimal> queryHistoricalInvoiceTotalByOpportunityId(Set<Id> opportunityIds) {
         Map<Id, Decimal> totalByOpportunityId = new Map<Id, Decimal>();
         if (opportunityIds == null || opportunityIds.isEmpty()) {
             return totalByOpportunityId;
@@ -2722,7 +1301,7 @@ public with sharing class BillingControl_Invoicing {
         return totalByOpportunityId;
     }
 
-    private static Map<Id, Decimal> allocateInvoiceTotalAcrossAppointments(
+    public static Map<Id, Decimal> allocateInvoiceTotalAcrossAppointments(
         Decimal invoiceTotal,
         List<ServiceAppointment> appointments
     ) {
@@ -2742,7 +1321,7 @@ public with sharing class BillingControl_Invoicing {
         return amountByAppointmentId;
     }
 
-    private static Boolean evaluateFilter(Object fieldValue, BillingControl_DataProvider.BillingFilterDTO filterRecord) {
+    public static Boolean evaluateFilter(Object fieldValue, BillingControl_DataProvider.BillingFilterDTO filterRecord) {
         String operatorValue = normalizeFilterValue(filterRecord.operator);
         if (operatorValue == 'IS NULL') {
             return fieldValue == null;
@@ -2788,7 +1367,7 @@ public with sharing class BillingControl_Invoicing {
         return compareStringValue(String.valueOf(fieldValue), filterRecord, operatorValue);
     }
 
-    private static Boolean evaluateDateFilter(Date fieldValue, BillingControl_DataProvider.BillingFilterDTO filterRecord) {
+    public static Boolean evaluateDateFilter(Date fieldValue, BillingControl_DataProvider.BillingFilterDTO filterRecord) {
         String operatorValue = normalizeFilterValue(filterRecord.operator);
         if (operatorValue == 'IS NULL') {
             return fieldValue == null;
@@ -2951,7 +1530,7 @@ public with sharing class BillingControl_Invoicing {
         return values;
     }
 
-    private static String normalizeFilterValue(String value) {
+    public static String normalizeFilterValue(String value) {
         return value == null ? null : value.trim().toUpperCase();
     }
 
@@ -2963,29 +1542,6 @@ public with sharing class BillingControl_Invoicing {
             return (Decimal) value;
         }
         return Decimal.valueOf(String.valueOf(value));
-    }
-
-    private static String resolveInvoiceNumberForBilling(
-        Id opportunityId,
-        Map<String, String> invoiceNumberByOpportunityId,
-        Integer sequenceForAuto
-    ) {
-        if (invoiceNumberByOpportunityId != null) {
-            String explicit = invoiceNumberByOpportunityId.get(String.valueOf(opportunityId));
-            if (!String.isBlank(explicit)) {
-                return explicit.trim();
-            }
-        }
-        return buildInvoiceNumber(opportunityId, sequenceForAuto);
-    }
-
-    private static String buildInvoiceNumber(Id opportunityId, Integer sequence) {
-        String opportunityKey = String.valueOf(opportunityId);
-        if (opportunityKey.length() > 5) {
-            opportunityKey = opportunityKey.substring(opportunityKey.length() - 5, opportunityKey.length());
-        }
-        String sequenceValue = String.valueOf(sequence).leftPad(2, '0');
-        return 'INV-' + Datetime.now().formatGMT('yyyyMMdd') + '-' + opportunityKey + '-' + sequenceValue;
     }
 
     private class ServiceAppointmentGroupNameComparator implements Comparator<ServiceAppointmentOpportunityGroupWrapper> {
@@ -3100,14 +1656,14 @@ public with sharing class BillingControl_Invoicing {
         return results;
     }
 
-    private static Decimal extractDecimal(List<AggregateResult> results, String fieldName) {
+    public static Decimal extractDecimal(List<AggregateResult> results, String fieldName) {
         if (results.isEmpty() || results[0].get(fieldName) == null) {
             return 0;
         }
         return (Decimal) results[0].get(fieldName);
     }
 
-    private static Integer extractInteger(List<AggregateResult> results, String fieldName) {
+    public static Integer extractInteger(List<AggregateResult> results, String fieldName) {
         if (results.isEmpty() || results[0].get(fieldName) == null) {
             return 0;
         }
@@ -3139,6 +1695,7 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public Decimal commissionAmount;
         @AuraEnabled public Decimal commissionPaid;
         @AuraEnabled public Id commissionId;
+        @AuraEnabled public Id ledgerId;
         @AuraEnabled public List<WorkOrderWrapper> workOrders;
     }
 
@@ -3162,6 +1719,25 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public Integer readyToBill;
         @AuraEnabled public Decimal unbilledRevenue;
         @AuraEnabled public Decimal outstandingAr;
+        @AuraEnabled public Integer completedTodayCount;
+        @AuraEnabled public Decimal completedTodayAmount;
+        @AuraEnabled public Integer completedThisWeekCount;
+        @AuraEnabled public Decimal completedThisWeekAmount;
+        @AuraEnabled public Integer completedLaterCount;
+        @AuraEnabled public Decimal completedLaterAmount;
+
+        public BillingControlMetricsWrapper() {
+            completedMoreThan2Days = 0;
+            readyToBill = 0;
+            unbilledRevenue = 0;
+            outstandingAr = 0;
+            completedTodayCount = 0;
+            completedTodayAmount = 0;
+            completedThisWeekCount = 0;
+            completedThisWeekAmount = 0;
+            completedLaterCount = 0;
+            completedLaterAmount = 0;
+        }
     }
 
     public class CommissionMetricsWrapper {
@@ -3231,6 +1807,7 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public Id opportunityId;
         @AuraEnabled public String opportunityName;
         @AuraEnabled public Decimal opportunityAmount;
+        @AuraEnabled public Id opportunityOwnerId;
         @AuraEnabled public Decimal invoiceableOpportunityAmount;
         @AuraEnabled public Id accountId;
         @AuraEnabled public String accountName;
@@ -3254,6 +1831,7 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public Decimal outstandingAmount;
         @AuraEnabled public Date effectiveDate;
         @AuraEnabled public Integer serviceAppointmentCount;
+        @AuraEnabled public Id ledgerId;
         @AuraEnabled public List<ServiceAppointmentRowWrapper> relatedServiceAppointments;
     }
 
@@ -3301,6 +1879,16 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public List<InvoiceGroupResultWrapper> invoiceGroups { get; set; }
     }
 
+    public class InvSyncResultWrapper {
+        @AuraEnabled public Integer invoicesCreated { get; set; }
+        @AuraEnabled public Integer serviceAppointmentsUpdated { get; set; }
+        @AuraEnabled public Integer skippedCount { get; set; }
+        @AuraEnabled public Boolean queued { get; set; }
+        @AuraEnabled public Id jobId { get; set; }
+        @AuraEnabled public List<String> warnings { get; set; }
+    }
+
+
     public class CommissionInputWrapper {
         @AuraEnabled public Id opportunityId { get; set; }
         @AuraEnabled public Id ownerId { get; set; }
@@ -3326,16 +1914,4 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public String billingStatus { get; set; }
     }
 
-    private class ReceivableOrderSummary {
-        public Id opportunityId;
-        public String opportunityName;
-        public String accountName;
-        public Date closeDate;
-        public Id ownerId;
-        public String ownerName;
-        public String billingStatus;
-        public Decimal amount;
-        public Decimal amountPaid;
-        public Decimal balanceDue;
-    }
 }

@@ -91,15 +91,6 @@
                     <h2 class="table-toolbar__title">{tableTitle}</h2>
                 </div>
                 <div class="table-toolbar__actions">
-                    <lightning-input
-                        class="toolbar-search"
-                        type="search"
-                        label="Search"
-                        variant="label-hidden"
-                        placeholder="Search work order, account, opportunity, owner"
-                        value={searchKey}
-                        onchange={handleSearchChange}>
-                    </lightning-input>
                     <div class="view-by">
                         <p class="view-by__title">View by</p>
                         <p class="view-by__caption">WO View / Account view</p>
@@ -123,6 +114,15 @@
                             <span class={viewSwitchKnobClass} aria-hidden="true"></span>
                         </div>
                     </div>
+                    <lightning-input
+                        class="toolbar-search"
+                        type="search"
+                        label="Search"
+                        variant="label-hidden"
+                        placeholder="Search work order, account, opportunity, owner"
+                        value={searchKey}
+                        onchange={handleSearchChange}>
+                    </lightning-input>
                 </div>
             </div>
 
@@ -191,6 +191,17 @@
                                             <tbody>
                                                 <template for:each={section.filteredRows} for:item="row">
                                                     <tr key={row.displayKey} class={row.rowClass}>
+                                                        <template if:true={row.isWorkTypeGroupHeader}>
+                                                            <td
+                                                                class="grouped-diary-table__cell grouped-diary-table__cell--work-type-group"
+                                                                colspan={row.columnSpan}
+                                                                data-label="Work Type Group">
+                                                                <span class="grouped-diary-table__work-type-group-label">
+                                                                    {row.workTypeGroupLabel}
+                                                                </span>
+                                                            </td>
+                                                        </template>
+                                                        <template if:false={row.isWorkTypeGroupHeader}>
                                                         <template for:each={section.columns} for:item="column">
                                                             <td key={column.key} class={column.cellClass} data-label={column.label}>
                                                                 <template if:true={column.isAccount}>
@@ -236,6 +247,12 @@
                                                                                 </template>
                                                                             </div>
                                                                         </template>
+                                                                    </div>
+                                                                </template>
+
+                                                                <template if:true={column.isWorkType}>
+                                                                    <div class="grouped-diary-table__single-value" title={row.workTypeName}>
+                                                                        <span class="grouped-diary-table__single-text">{row.workTypeName}</span>
                                                                     </div>
                                                                 </template>
 
@@ -317,12 +334,6 @@
                                                                     </div>
                                                                 </template>
 
-                                                                <template if:true={column.isReconciliation}>
-                                                                    <span class="grouped-diary-cell__value grouped-diary-cell__value--nowrap" title={row.reconciliationStatus}>
-                                                                        {row.reconciliationStatus}
-                                                                    </span>
-                                                                </template>
-
                                                                 <template if:true={column.isOpportunityAmount}>
                                                                     <div class="grouped-diary-table__grouped-amount">
                                                                         <template if:true={row.hasOpportunityAmount}>
@@ -356,6 +367,7 @@
                                                                     </div>
                                                                 </template>
                                                             </td>
+                                                        </template>
                                                         </template>
                                                     </tr>
                                                 </template>

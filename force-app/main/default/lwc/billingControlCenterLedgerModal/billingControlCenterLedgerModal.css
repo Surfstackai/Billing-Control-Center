@@ -5,6 +5,15 @@
     width: 95vw;
 }
 
+.ledger-embedded {
+    position: relative;
+}
+
+.ledger-embedded__body {
+    width: 100%;
+    max-width: 100%;
+}
+
 .modal-subtitle {
     color: var(--bcc-text-soft, #54698d);
 }

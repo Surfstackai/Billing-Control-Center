@@ -1,6 +1,6 @@
 <template>
-    <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="ledger-modal-heading" class="slds-modal slds-fade-in-open">
-        <div class="slds-modal__container ledger-modal">
+    <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="ledger-modal-heading" class={dialogClass}>
+        <div class={containerClass}>
             <header class="slds-modal__header">
                 <button class="slds-button slds-button_icon slds-modal__close slds-button_icon-inverse" title="Close" onclick={handleClose}>
                     <lightning-icon icon-name="utility:close" alternative-text="Close" size="small"></lightning-icon>
@@ -73,6 +73,7 @@
                             <thead>
                                 <tr>
                                     <th scope="col">Opportunity</th>
+                                    <th scope="col">Owner</th>
                                     <th scope="col">Amount</th>
                                     <th scope="col">Stage</th>
                                     <th scope="col">Billing Status</th>
@@ -89,6 +90,7 @@
                                                 {opportunity.name}
                                             </template>
                                         </td>
+                                        <td>{opportunity.ownerName}</td>
                                         <td>
                                             <lightning-formatted-number value={opportunity.amount} format-style="currency" currency-code="USD"></lightning-formatted-number>
                                         </td>
@@ -199,9 +201,13 @@
 
             <footer class="slds-modal__footer">
                 <lightning-button label="Close" onclick={handleClose}></lightning-button>
-                <lightning-button class="slds-m-left_small" label="Open Full Ledger" variant="brand" onclick={handleOpenFullLedger} disabled={isOpenDisabled}></lightning-button>
+                <template if:true={showOpenFullLedger}>
+                    <lightning-button class="slds-m-left_small" label="Open Full Ledger" variant="brand" onclick={handleOpenFullLedger} disabled={isOpenDisabled}></lightning-button>
+                </template>
             </footer>
         </div>
     </section>
-    <div class="slds-backdrop slds-backdrop_open"></div>
+    <template if:false={embedded}>
+        <div class="slds-backdrop slds-backdrop_open"></div>
+    </template>
 </template>

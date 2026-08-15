@@ -30,8 +30,6 @@ public with sharing class BillingControl_DataProvider {
     public static final String FILTER_DATA_TYPE_ID = 'ID';
 
     private static final Set<String> ORDERS_SUPPORTED_HANDLER_KEYS = new Set<String>{
-        'BILLINGCONTROL_ORDERS.GETKPIS',
-        'BILLINGCONTROL_ORDERS.GETBUCKETWORKORDERS',
         'BILLINGCONTROL_WORKORDERLEDGER.GETKPIS',
         'BILLINGCONTROL_WORKORDERLEDGER.GETBUCKETWORKORDERS'
     };
@@ -78,11 +76,24 @@ public with sharing class BillingControl_DataProvider {
     }
 
     @AuraEnabled(cacheable=true)
-    public static InvoicingRuntimeDataDTO getInvoicingRuntimeData(Long refreshToken, BillingDateFilterDTO dateFilter) {
+    public static InvoicingRuntimeDataDTO getInvoicingRuntimeData(
+        Long refreshToken,
+        BillingDateFilterDTO dateFilter,
+        String opportunityOwnerId
+    ) {
         InvoicingRuntimeDataDTO result = new InvoicingRuntimeDataDTO();
         BillingControl_ConfigService.TabConfigDTO tabConfig = BillingControl_ConfigService.getTabConfig(INVOICING_TAB_KEY);
         BillingControl_ConfigService.DatasetConfigDTO datasetConfig = findDataset(tabConfig, INVOICING_DATASET_KEY);
         result.filterContext = buildFilterContext(tabConfig, datasetConfig, result.warnings);
+        applyDateFilterToContext(
+            result.filterContext,
+            dateFilter,
+            'ServiceAppointment',
+            'ActualEndTime',
+            true,
+            result.warnings
+        );
+        applyOpportunityOwnerFilterToContext(result.filterContext, opportunityOwnerId);
 
         if (isDatasetConfiguredForHandlers(datasetConfig, INVOICING_DATASET_KEY, INVOICING_SUPPORTED_HANDLER_KEYS, result.warnings)) {
             loadInvoicingRuntimeData(refreshToken, result);
@@ -96,7 +107,11 @@ public with sharing class BillingControl_DataProvider {
     }
 
     @AuraEnabled(cacheable=true)
-    public static ReceivablesRuntimeDataDTO getReceivablesRuntimeData(Long refreshToken, BillingDateFilterDTO dateFilter) {
+    public static ReceivablesRuntimeDataDTO getReceivablesRuntimeData(
+        Long refreshToken,
+        BillingDateFilterDTO dateFilter,
+        String opportunityOwnerId
+    ) {
         ReceivablesRuntimeDataDTO result = new ReceivablesRuntimeDataDTO();
         BillingControl_ConfigService.TabConfigDTO tabConfig = BillingControl_ConfigService.getTabConfig(RECEIVABLES_TAB_KEY);
         BillingControl_ConfigService.DatasetConfigDTO invoicesDataset = findDataset(tabConfig, RECEIVABLES_INVOICES_DATASET_KEY);
@@ -109,19 +124,21 @@ public with sharing class BillingControl_DataProvider {
         applyDateFilterToContext(
             result.invoicesFilterContext,
             dateFilter,
-            'Order',
-            'EffectiveDate',
+            'Invoice__c',
+            'Invoice_Date__c',
             false,
             result.warnings
         );
         applyDateFilterToContext(
             result.commissionsFilterContext,
             dateFilter,
-            'Order',
-            'EffectiveDate',
+            'Opportunity',
+            'CloseDate',
             false,
             result.warnings
         );
+        applyOpportunityOwnerFilterToContext(result.invoicesFilterContext, opportunityOwnerId);
+        applyOpportunityOwnerFilterToContext(result.commissionsFilterContext, opportunityOwnerId);
 
         Boolean invoicesValid = isDatasetConfiguredForHandlers(
             invoicesDataset,
@@ -141,7 +158,7 @@ public with sharing class BillingControl_DataProvider {
             return result;
         }
 
-        result.warnings.add('Order diary dataset missing or invalid.');
+        result.warnings.add('Receivables dataset missing or invalid.');
         result.warnings.add('Legacy fallback disabled.');
         initializeEmptyReceivablesRuntimeData(result);
         return result;
@@ -155,12 +172,20 @@ public with sharing class BillingControl_DataProvider {
         return getOrdersRuntimeData(refreshToken, null, null);
     }
 
+    public static InvoicingRuntimeDataDTO getInvoicingRuntimeData(Long refreshToken, BillingDateFilterDTO dateFilter) {
+        return getInvoicingRuntimeData(refreshToken, dateFilter, null);
+    }
+
     public static InvoicingRuntimeDataDTO getInvoicingRuntimeData(Long refreshToken) {
-        return getInvoicingRuntimeData(refreshToken, null);
+        return getInvoicingRuntimeData(refreshToken, null, null);
+    }
+
+    public static ReceivablesRuntimeDataDTO getReceivablesRuntimeData(Long refreshToken, BillingDateFilterDTO dateFilter) {
+        return getReceivablesRuntimeData(refreshToken, dateFilter, null);
     }
 
     public static ReceivablesRuntimeDataDTO getReceivablesRuntimeData() {
-        return getReceivablesRuntimeData(null, null);
+        return getReceivablesRuntimeData(null, null, null);
     }
 
     @AuraEnabled
@@ -230,7 +255,7 @@ public with sharing class BillingControl_DataProvider {
                 result.warnings.add('No outstanding invoices or commissions found.');
             }
         } catch (Exception ex) {
-            result.warnings.add('Order diary dataset missing or invalid.');
+            result.warnings.add('Receivables dataset missing or invalid.');
             result.warnings.add('Legacy fallback disabled.');
             result.warnings.add('Receivables filter application failed. ' + ex.getMessage());
             initializeEmptyReceivablesRuntimeData(result);
@@ -372,6 +397,9 @@ public with sharing class BillingControl_DataProvider {
         if (context == null || String.isBlank(opportunityOwnerId)) {
             return;
         }
+        if (context.filters == null) {
+            context.filters = new List<BillingFilterDTO>();
+        }
         BillingFilterDTO dto = new BillingFilterDTO();
         dto.developerKey = 'OPPORTUNITY_OWNER';
         dto.objectApiName = 'Opportunity';
@@ -440,6 +468,15 @@ public with sharing class BillingControl_DataProvider {
             ? formatDate(boundaryDate) + (operatorValue == 'Less Or Equal' ? ' 23:59:59' : ' 00:00:00')
             : formatDate(boundaryDate);
         return dto;
+    }
+
+    public static DateRangeDTO resolveDateRangeForInvSync(BillingDateFilterDTO dateFilter) {
+        BillingDateFilterDTO resolvedFilter = dateFilter;
+        if (resolvedFilter == null || String.isBlank(resolvedFilter.filterKey)) {
+            resolvedFilter = new BillingDateFilterDTO();
+            resolvedFilter.filterKey = 'This Year';
+        }
+        return resolveDateRange(resolvedFilter, new List<String>());
     }
 
     private static DateRangeDTO resolveDateRange(BillingDateFilterDTO dateFilter, List<String> responseWarnings) {
@@ -777,44 +814,32 @@ public with sharing class BillingControl_DataProvider {
 
         if (normalizedTabKey == ORDERS_TAB_KEY && normalizedDatasetKey == ORDERS_DATASET_KEY) {
             return new Set<String>{
-                'ORDER.BILLING_DIARY_STATUS__C',
-                'ORDER.READY_FOR_BILLING__C',
-                'ORDER.EFFECTIVEDATE',
-                'ORDER.CREATEDDATE',
-                'OPPORTUNITY.STAGENAME',
-                'OPPORTUNITY.CLOSEDATE',
                 'WORK_ORDER_LEDGER__C.LAST_MATERIAL_ACTIVITY__C',
                 'WORK_ORDER_LEDGER__C.LAST_SERVICE_DATE__C',
-                'WORKORDER.CREATEDDATE'
+                'WORKORDER.CREATEDDATE',
+                'OPPORTUNITY.STAGENAME',
+                'OPPORTUNITY.CLOSEDATE'
             }.contains(normalizedFieldKey);
         }
 
         if (normalizedTabKey == INVOICING_TAB_KEY && normalizedDatasetKey == INVOICING_DATASET_KEY) {
             return new Set<String>{
-                'ORDER.BILLING_DIARY_STATUS__C',
-                'ORDER.READY_FOR_BILLING__C',
-                'ORDER.SERVICE_APPOINTMENT__C',
-                'ORDER.INVOICED_AMOUNT__C',
                 'SERVICEAPPOINTMENT.ACTUALENDTIME'
             }.contains(normalizedFieldKey);
         }
 
         if (normalizedTabKey == RECEIVABLES_TAB_KEY && normalizedDatasetKey == RECEIVABLES_INVOICES_DATASET_KEY) {
             return new Set<String>{
-                'ORDER.BILLING_DIARY_STATUS__C',
-                'ORDER.RECEIVED_AMOUNT__C',
-                'ORDER.OUTSTANDING_AMOUNT__C',
-                'ORDER.EFFECTIVEDATE'
+                'INVOICE__C.INVOICE_DATE__C',
+                'OPPORTUNITY.OWNERID'
             }.contains(normalizedFieldKey);
         }
 
         if (normalizedTabKey == RECEIVABLES_TAB_KEY && normalizedDatasetKey == RECEIVABLES_COMMISSIONS_DATASET_KEY) {
             return new Set<String>{
-                'ORDER.BILLING_DIARY_STATUS__C',
-                'ORDER.RECEIVED_AMOUNT__C',
-                'ORDER.OUTSTANDING_AMOUNT__C',
-                'ORDER.EFFECTIVEDATE',
-                'COMMISSION__C.COMMISSION_PAID__C'
+                'OPPORTUNITY.CLOSEDATE',
+                'COMMISSION__C.COMMISSION_PAID__C',
+                'OPPORTUNITY.OWNERID'
             }.contains(normalizedFieldKey);
         }
 
@@ -831,16 +856,12 @@ public with sharing class BillingControl_DataProvider {
         String normalizedOperator = normalizeKey(operatorValue);
 
         if (
-            normalizedFieldKey == 'ORDER.EFFECTIVEDATE'
-            || normalizedFieldKey == 'ORDER.CREATEDDATE'
-            || normalizedFieldKey == 'OPPORTUNITY.CLOSEDATE'
+            normalizedFieldKey == 'OPPORTUNITY.CLOSEDATE'
             || normalizedFieldKey == 'SERVICEAPPOINTMENT.ACTUALENDTIME'
-            || normalizedFieldKey == 'ORDER.RECEIVED_AMOUNT__C'
-            || normalizedFieldKey == 'ORDER.OUTSTANDING_AMOUNT__C'
             || normalizedFieldKey == 'WORK_ORDER_LEDGER__C.LAST_MATERIAL_ACTIVITY__C'
             || normalizedFieldKey == 'WORK_ORDER_LEDGER__C.LAST_SERVICE_DATE__C'
             || normalizedFieldKey == 'WORKORDER.CREATEDDATE'
-            || normalizedFieldKey == 'ORDER.INVOICED_AMOUNT__C'
+            || normalizedFieldKey == 'INVOICE__C.INVOICE_DATE__C'
             || normalizedFieldKey == 'COMMISSION__C.COMMISSION_PAID__C'
         ) {
             return new Set<String>{
@@ -945,17 +966,12 @@ public with sharing class BillingControl_DataProvider {
         result.kpis.completedNotBilledCount = 0;
         result.bucketSections = new List<BillingControl_Orders.BucketSectionWrapper>{
             new BillingControl_Orders.BucketSectionWrapper('READY_TO_SCHEDULE', 'Ready to Schedule', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
-            new BillingControl_Orders.BucketSectionWrapper('IN_PROGRESS', 'In Progress', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
             new BillingControl_Orders.BucketSectionWrapper(
-                'COMPLETED_NOT_BILLED',
-                'Completed, Not Billed',
+                'SCHEDULED_APPOINTMENTS',
+                'Scheduled Appointments',
                 new List<BillingControl_Orders.WorkOrderRowWrapper>()
             ),
-            new BillingControl_Orders.BucketSectionWrapper(
-                'RELATED_WORK',
-                'Related Work',
-                new List<BillingControl_Orders.WorkOrderRowWrapper>()
-            )
+            new BillingControl_Orders.BucketSectionWrapper('IN_PROGRESS', 'In Progress', new List<BillingControl_Orders.WorkOrderRowWrapper>())
         };
     }
 
@@ -965,6 +981,12 @@ public with sharing class BillingControl_DataProvider {
         result.metrics.readyToBill = 0;
         result.metrics.unbilledRevenue = 0;
         result.metrics.outstandingAr = 0;
+        result.metrics.completedTodayCount = 0;
+        result.metrics.completedTodayAmount = 0;
+        result.metrics.completedThisWeekCount = 0;
+        result.metrics.completedThisWeekAmount = 0;
+        result.metrics.completedLaterCount = 0;
+        result.metrics.completedLaterAmount = 0;
         result.groups = new List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper>{
             new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('AGED_COMPLETED', 'Aged Completed Work (>2 Days)'),
             new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('READY_TO_BILL', 'Billable Service Appointments'),
@@ -983,7 +1005,7 @@ public with sharing class BillingControl_DataProvider {
         result.metrics.commissionPayable = 0;
         result.metrics.commissionPayableCount = 0;
         result.sections = new List<BillingControl_Invoicing.CommissionKpiCategoryWrapper>{
-            new BillingControl_Invoicing.CommissionKpiCategoryWrapper('REVENUE_UNDER_COLLECTION', 'Accounts Receivable (A/R)'),
+            new BillingControl_Invoicing.CommissionKpiCategoryWrapper('REVENUE_UNDER_COLLECTION', 'Receivables Outstanding'),
             new BillingControl_Invoicing.CommissionKpiCategoryWrapper('COMMISSION_EARNED', 'Commission Accrued'),
             new BillingControl_Invoicing.CommissionKpiCategoryWrapper('COMMISSION_PAYABLE', 'Commission Payable')
         };

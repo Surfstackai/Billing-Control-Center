@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>63.0</apiVersion>
+    <isExposed>true</isExposed>
+    <masterLabel>Work Order Ledger Quick View</masterLabel>
+    <description>Launches the existing Work Order Ledger popup from the ledger record.</description>
+    <targets>
+        <target>lightning__RecordAction</target>
+    </targets>
+    <targetConfigs>
+        <targetConfig targets="lightning__RecordAction">
+            <objects>
+                <object>Work_Order_Ledger__c</object>
+            </objects>
+            <actionType>ScreenAction</actionType>
+        </targetConfig>
+    </targetConfigs>
+</LightningComponentBundle>

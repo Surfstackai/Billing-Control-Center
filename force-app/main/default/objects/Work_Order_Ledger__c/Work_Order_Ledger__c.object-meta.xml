@@ -132,16 +132,22 @@
     </actionOverrides>
     <actionOverrides>
         <actionName>View</actionName>
+        <comment>Work Order Ledger Lightning record page</comment>
+        <content>Work_Order_Ledger_Record_Page</content>
         <formFactor>Large</formFactor>
-        <type>Default</type>
+        <skipRecordTypeSelect>false</skipRecordTypeSelect>
+        <type>Flexipage</type>
     </actionOverrides>
     <actionOverrides>
         <actionName>View</actionName>
+        <comment>Work Order Ledger Lightning record page</comment>
+        <content>Work_Order_Ledger_Record_Page</content>
         <formFactor>Small</formFactor>
-        <type>Default</type>
+        <skipRecordTypeSelect>false</skipRecordTypeSelect>
+        <type>Flexipage</type>
     </actionOverrides>
     <allowInChatterGroups>false</allowInChatterGroups>
-    <compactLayoutAssignment>SYSTEM</compactLayoutAssignment>
+    <compactLayoutAssignment>Work_Order_Ledger_Compact</compactLayoutAssignment>
     <deploymentStatus>Deployed</deploymentStatus>
     <description>Accounting reconciliation ledger. One record per Work Order.</description>
     <enableActivities>false</enableActivities>

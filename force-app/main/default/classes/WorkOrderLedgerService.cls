@@ -176,6 +176,31 @@ public without sharing class WorkOrderLedgerService {
         }
     }
 
+    public static void handleWorkOrderDeletes(List<WorkOrder> deletedRecords) {
+        if (deletedRecords == null || deletedRecords.isEmpty()) {
+            return;
+        }
+
+        Set<Id> workOrderIds = new Set<Id>();
+        for (WorkOrder workOrderRecord : deletedRecords) {
+            if (workOrderRecord != null && workOrderRecord.Id != null) {
+                workOrderIds.add(workOrderRecord.Id);
+            }
+        }
+        if (workOrderIds.isEmpty()) {
+            return;
+        }
+
+        List<Work_Order_Ledger__c> ledgersToDelete = [
+            SELECT Id
+            FROM Work_Order_Ledger__c
+            WHERE Work_Order__c IN :workOrderIds
+        ];
+        if (!ledgersToDelete.isEmpty()) {
+            delete ledgersToDelete;
+        }
+    }
+
     public static void handleServiceAppointments(
         List<ServiceAppointment> newRecords,
         Map<Id, ServiceAppointment> oldMap
@@ -581,8 +606,8 @@ public without sharing class WorkOrderLedgerService {
             FROM WorkOrder
             WHERE Id IN :workOrderIds
         ]);
+        Map<Id, OpportunityRollup> opportunityRollupByWorkOrderId = queryOpportunityRollups(workOrderIds);
         Map<Id, List<ServiceAppointment>> appointmentsByWorkOrderId = queryAppointmentsByWorkOrderId(workOrderIds);
-        Map<Id, Integer> opportunityCountByWorkOrderId = queryOpportunityCounts(workOrderIds);
 
         Set<Id> ledgerIds = new Set<Id>();
         for (Work_Order_Ledger__c ledgerRecord : ledgerByWorkOrderId.values()) {
@@ -612,9 +637,9 @@ public without sharing class WorkOrderLedgerService {
             List<ServiceAppointment> appointments = appointmentsByWorkOrderId.containsKey(workOrderId)
                 ? appointmentsByWorkOrderId.get(workOrderId)
                 : new List<ServiceAppointment>();
-            Integer opportunityCount = opportunityCountByWorkOrderId.containsKey(workOrderId)
-                ? opportunityCountByWorkOrderId.get(workOrderId)
-                : 0;
+            OpportunityRollup opportunityRollup = opportunityRollupByWorkOrderId.get(workOrderId);
+            Integer opportunityCount = opportunityRollup == null ? 0 : opportunityRollup.count;
+            Id opportunityOwnerId = opportunityRollup == null ? null : opportunityRollup.ownerId;
             Date lastServiceDate;
             Date nextServiceDate;
             Integer completedCount = 0;
@@ -667,6 +692,7 @@ public without sharing class WorkOrderLedgerService {
                 Account__c = workOrderRecord == null ? existingLedger.Account__c : workOrderRecord.AccountId,
                 Service_Appointment_Count__c = appointments.size(),
                 Opportunity_Count__c = opportunityCount,
+                Opportunity_Owner__c = opportunityOwnerId,
                 Last_Service_Date__c = lastServiceDate,
                 Next_Service_Date__c = nextServiceDate,
                 Last_Material_Activity__c = lastActivityByLedgerId.get(existingLedger.Id),
@@ -1080,27 +1106,53 @@ public without sharing class WorkOrderLedgerService {
         return appointmentsByWorkOrderId;
     }
 
+    private class OpportunityRollup {
+        Integer count;
+        Id ownerId;
+
+        OpportunityRollup() {
+            count = 0;
+        }
+    }
+
     private static Map<Id, Integer> queryOpportunityCounts(Set<Id> workOrderIds) {
         Map<Id, Integer> counts = new Map<Id, Integer>();
-        for (Id workOrderId : workOrderIds) {
-            counts.put(workOrderId, 0);
+        Map<Id, OpportunityRollup> rollups = queryOpportunityRollups(workOrderIds);
+        for (Id workOrderId : rollups.keySet()) {
+            counts.put(workOrderId, rollups.get(workOrderId).count);
         }
+        return counts;
+    }
+
+    private static Map<Id, OpportunityRollup> queryOpportunityRollups(Set<Id> workOrderIds) {
+        Map<Id, OpportunityRollup> rollupsByWorkOrderId = new Map<Id, OpportunityRollup>();
         Map<Id, Set<Id>> opportunityIdsByWorkOrderId = new Map<Id, Set<Id>>();
+        Map<Id, Set<Id>> ownerIdsByWorkOrderId = new Map<Id, Set<Id>>();
+        for (Id workOrderId : workOrderIds) {
+            rollupsByWorkOrderId.put(workOrderId, new OpportunityRollup());
+            opportunityIdsByWorkOrderId.put(workOrderId, new Set<Id>());
+            ownerIdsByWorkOrderId.put(workOrderId, new Set<Id>());
+        }
         for (Opportunity_WorkOrder__c junctionRecord : [
-            SELECT Work_Order__c, Opportunity__c
+            SELECT Work_Order__c, Opportunity__c, Opportunity__r.OwnerId
             FROM Opportunity_WorkOrder__c
             WHERE Work_Order__c IN :workOrderIds
             AND Opportunity__c != null
         ]) {
-            if (!opportunityIdsByWorkOrderId.containsKey(junctionRecord.Work_Order__c)) {
-                opportunityIdsByWorkOrderId.put(junctionRecord.Work_Order__c, new Set<Id>());
-            }
             opportunityIdsByWorkOrderId.get(junctionRecord.Work_Order__c).add(junctionRecord.Opportunity__c);
+            if (junctionRecord.Opportunity__r != null && junctionRecord.Opportunity__r.OwnerId != null) {
+                ownerIdsByWorkOrderId.get(junctionRecord.Work_Order__c).add(junctionRecord.Opportunity__r.OwnerId);
+            }
         }
         for (Id workOrderId : opportunityIdsByWorkOrderId.keySet()) {
-            counts.put(workOrderId, opportunityIdsByWorkOrderId.get(workOrderId).size());
+            OpportunityRollup rollup = rollupsByWorkOrderId.get(workOrderId);
+            rollup.count = opportunityIdsByWorkOrderId.get(workOrderId).size();
+            Set<Id> ownerIds = ownerIdsByWorkOrderId.get(workOrderId);
+            if (ownerIds != null && ownerIds.size() == 1) {
+                rollup.ownerId = new List<Id>(ownerIds)[0];
+            }
         }
-        return counts;
+        return rollupsByWorkOrderId;
     }
 
     private static Map<Id, String> queryOpportunityNames(Set<Id> opportunityIds) {

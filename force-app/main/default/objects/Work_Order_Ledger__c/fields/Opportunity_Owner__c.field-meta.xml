@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Opportunity_Owner__c</fullName>
+    <deleteConstraint>SetNull</deleteConstraint>
+    <label>Opportunity Owner</label>
+    <referenceTo>User</referenceTo>
+    <relationshipLabel>Work Order Ledgers (Opportunity Owner)</relationshipLabel>
+    <relationshipName>Work_Order_Ledgers_Opportunity_Owner</relationshipName>
+    <required>false</required>
+    <trackHistory>true</trackHistory>
+    <trackTrending>false</trackTrending>
+    <type>Lookup</type>
+</CustomField>

@@ -16,6 +16,9 @@ private class BillingControl_DataProviderTest {
             buildOpportunity(accountRecord.Id, workTypeRecord.Id, 'Provider Unscheduled Opportunity', 150, Date.today().addDays(4))
         };
         insert opportunities;
+        opportunities[2].Billing_Status__c = getOutstandingReceivableStatusValue();
+        opportunities[3].Billing_Status__c = 'Paid';
+        update new List<Opportunity>{ opportunities[2], opportunities[3] };
 
         List<WorkOrder> workOrders = new List<WorkOrder>();
         for (Integer indexValue = 0; indexValue < opportunities.size(); indexValue++) {
@@ -75,7 +78,12 @@ private class BillingControl_DataProviderTest {
         insertRuntimeConfig();
 
         Invoice__c receivableInvoice = buildInvoice(accountRecord.Id, opportunities[2].Id, 300, 'INV-PROVIDER-REC');
+        receivableInvoice.Invoice_Date__c = Date.today().addDays(2);
         Invoice__c paidInvoice = buildInvoice(accountRecord.Id, opportunities[3].Id, 400, 'INV-PROVIDER-PAID');
+        paidInvoice.Invoice_Date__c = Date.today().addDays(3);
+        paidInvoice.Status__c = 'Paid';
+        paidInvoice.Amount_Paid__c = 400;
+        paidInvoice.Balance_Due__c = 0;
         insert new List<Invoice__c>{ receivableInvoice, paidInvoice };
 
         insert new List<Invoice_Line__c>{
@@ -84,7 +92,6 @@ private class BillingControl_DataProviderTest {
                 Opportunity__c = opportunities[2].Id,
                 Work_Order__c = workOrders[2].Id,
                 Service_Appointment__c = appointments[2].Id,
-                Billing_Order__c = orders[2].Id,
                 Description__c = 'Provider Receivable Line',
                 Quantity__c = 1,
                 Unit_Price__c = 300,
@@ -95,7 +102,6 @@ private class BillingControl_DataProviderTest {
                 Opportunity__c = opportunities[3].Id,
                 Work_Order__c = workOrders[3].Id,
                 Service_Appointment__c = appointments[3].Id,
-                Billing_Order__c = orders[3].Id,
                 Description__c = 'Provider Paid Line',
                 Quantity__c = 1,
                 Unit_Price__c = 400,
@@ -106,7 +112,6 @@ private class BillingControl_DataProviderTest {
         insert new List<Commission__c>{
             new Commission__c(
                 Opportunity__c = opportunities[2].Id,
-                Billing_Order__c = orders[2].Id,
                 Sales_Person__c = UserInfo.getUserId(),
                 Commission_Rate__c = 10,
                 Commission_Paid__c = 0,
@@ -114,13 +119,16 @@ private class BillingControl_DataProviderTest {
             ),
             new Commission__c(
                 Opportunity__c = opportunities[3].Id,
-                Billing_Order__c = orders[3].Id,
                 Sales_Person__c = UserInfo.getUserId(),
                 Commission_Rate__c = 10,
                 Commission_Paid__c = 5,
                 Unique_Key__c = 'provider-payable-' + String.valueOf(orders[3].Id).right(6)
             )
         };
+
+        opportunities[2].Billing_Status__c = getOutstandingReceivableStatusValue();
+        opportunities[3].Billing_Status__c = 'Paid';
+        update new List<Opportunity>{ opportunities[2], opportunities[3] };
     }
 
     @IsTest
@@ -133,26 +141,17 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(1L);
         BillingControl_DataProvider.ReceivablesRuntimeDataDTO receivablesData =
             BillingControl_DataProvider.getReceivablesRuntimeData();
-        BillingControl_Orders.KpiWrapper kpiData = BillingControl_Orders.getOrdersKpiData();
-        List<BillingControl_Orders.OrderRowWrapper> emptyOrders = BillingControl_Orders.getOrders();
         Integer dmlAfter = Limits.getDmlStatements();
         Test.stopTest();
 
         System.assertEquals(dmlBefore, dmlAfter);
         System.assertEquals(2, ordersData.filterContext.filters.size());
-        System.assertEquals(4, invoicingData.filterContext.filters.size());
-        System.assertEquals(0, emptyOrders.size());
-        System.assertEquals(1, kpiData.unscheduledCount);
+        System.assertEquals(1, invoicingData.filterContext.filters.size());
+        System.assertEquals(1, ordersData.kpis.unscheduledCount);
         System.assertEquals(1, findOrdersSection(ordersData.bucketSections, 'READY_TO_SCHEDULE').rows.size());
-        System.assert(
-            kpiData.completedThisWeekCount >= 1,
-            'Completed appointments with active diary statuses appear in Completed This Week.'
-        );
-        System.assert(
-            kpiData.completedThisMonthCount >= kpiData.completedThisWeekCount,
-            'Completed This Month includes Completed This Week when both fall in the current month.'
-        );
-        System.assertEquals(0, kpiData.noOpportunityCount);
+        System.assertEquals(0, ordersData.kpis.completedThisWeekCount);
+        System.assertEquals(0, ordersData.kpis.completedThisMonthCount);
+        System.assertEquals(0, ordersData.kpis.noOpportunityCount);
         System.assertEquals(4, invoicingData.metrics.readyToBill, 'Eligibility is driven by related SA/WO values, not legacy diary flags.');
         System.assertEquals(1, receivablesData.metrics.revenueUnderCollectionCount);
     }
@@ -215,7 +214,7 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getReceivablesRuntimeData();
         Test.stopTest();
 
-        System.assert(String.join(receivablesData.warnings, ' ').contains('Order diary dataset missing or invalid.'));
+        System.assert(String.join(receivablesData.warnings, ' ').contains('Receivables dataset missing or invalid.'));
         System.assert(String.join(receivablesData.warnings, ' ').contains('Legacy fallback disabled.'));
     }
 
@@ -255,11 +254,35 @@ private class BillingControl_DataProviderTest {
                 Label__c = 'Bad Operator',
                 Is_Active__c = true,
                 Sequence__c = 99,
-                Object_API_Name__c = 'Order',
-                Field_API_Name__c = 'Billing_Diary_Status__c',
+                Object_API_Name__c = 'WorkOrder',
+                Field_API_Name__c = 'CreatedDate',
                 Operator__c = 'Contains',
                 Value__c = 'Draft',
                 Value_Type__c = 'Static'
+            ),
+            new Billing_Center_Filter_Config__c(
+                Tab_Config__c = ordersTabId,
+                Dataset_Config__c = ordersDatasetId,
+                Developer_Key__c = 'ORDERS_MISSING_VALUE',
+                Label__c = 'Missing Value',
+                Is_Active__c = true,
+                Sequence__c = 100,
+                Object_API_Name__c = 'Opportunity',
+                Field_API_Name__c = 'StageName',
+                Operator__c = 'Equals',
+                Value_Type__c = 'Static'
+            ),
+            new Billing_Center_Filter_Config__c(
+                Tab_Config__c = ordersTabId,
+                Dataset_Config__c = ordersDatasetId,
+                Developer_Key__c = 'ORDERS_BAD_VALUE_TYPE',
+                Label__c = 'Bad Value Type',
+                Is_Active__c = true,
+                Sequence__c = 101,
+                Object_API_Name__c = 'WorkOrder',
+                Field_API_Name__c = 'CreatedDate',
+                Operator__c = 'Is Not Null',
+                Value_Type__c = 'Current User'
             ),
             new Billing_Center_Filter_Config__c(
                 Tab_Config__c = receivablesTabId,
@@ -273,6 +296,32 @@ private class BillingControl_DataProviderTest {
                 Operator__c = 'Equals',
                 Value__c = 'Draft',
                 Value_Type__c = 'Static'
+            ),
+            new Billing_Center_Filter_Config__c(
+                Tab_Config__c = receivablesTabId,
+                Dataset_Config__c = invoicesDatasetId,
+                Developer_Key__c = 'RECEIVABLES_DATE_LITERAL',
+                Label__c = 'Invoice Date Literal',
+                Is_Active__c = true,
+                Sequence__c = 51,
+                Object_API_Name__c = 'Invoice__c',
+                Field_API_Name__c = 'Invoice_Date__c',
+                Operator__c = 'Greater Or Equal',
+                Value__c = 'LAST_N_DAYS:365',
+                Value_Type__c = 'Date Literal'
+            ),
+            new Billing_Center_Filter_Config__c(
+                Tab_Config__c = receivablesTabId,
+                Dataset_Config__c = invoicesDatasetId,
+                Developer_Key__c = 'RECEIVABLES_BAD_LITERAL',
+                Label__c = 'Bad Date Literal',
+                Is_Active__c = true,
+                Sequence__c = 52,
+                Object_API_Name__c = 'Invoice__c',
+                Field_API_Name__c = 'Invoice_Date__c',
+                Operator__c = 'Greater Or Equal',
+                Value__c = 'NOT_A_LITERAL',
+                Value_Type__c = 'Date Literal'
             )
         };
 
@@ -284,7 +333,10 @@ private class BillingControl_DataProviderTest {
         Test.stopTest();
 
         System.assert(String.join(ordersData.warnings, ' ').contains('unsupported operator'));
+        System.assert(String.join(ordersData.warnings, ' ').contains('requires a value'));
+        System.assert(String.join(ordersData.warnings, ' ').contains('unsupported value type'));
         System.assert(String.join(receivablesData.warnings, ' ').contains('unsupported field'));
+        System.assert(String.join(receivablesData.warnings, ' ').contains('unsupported date literal'));
     }
 
     @IsTest
@@ -301,8 +353,8 @@ private class BillingControl_DataProviderTest {
                 Label__c = 'Effective Date Limit',
                 Is_Active__c = true,
                 Sequence__c = 10,
-                Object_API_Name__c = 'Order',
-                Field_API_Name__c = 'EffectiveDate',
+                Object_API_Name__c = 'Invoice__c',
+                Field_API_Name__c = 'Invoice_Date__c',
                 Operator__c = 'Less Or Equal',
                 Value__c = String.valueOf(Date.today().addDays(1)),
                 Value_Type__c = 'Static'
@@ -338,9 +390,17 @@ private class BillingControl_DataProviderTest {
                 System.assertEquals(Date.today(), row.createdDate == null ? null : row.createdDate.date());
             }
         }
-        System.assertEquals(4, invoicingData.metrics.readyToBill, 'Invoicing does not apply the page date filter.');
-        System.assertEquals(0, receivablesData.metrics.revenueUnderCollectionCount);
-        System.assertEquals(1, receivablesData.metrics.commissionPayableCount);
+        System.assertEquals(4, invoicingData.metrics.readyToBill, 'Invoicing without a page date filter keeps current appointments.');
+        System.assertEquals(
+            0,
+            receivablesData.metrics.revenueUnderCollectionCount,
+            String.join(receivablesData.warnings, ' | ')
+        );
+        System.assertEquals(
+            1,
+            receivablesData.metrics.commissionPayableCount,
+            String.join(receivablesData.warnings, ' | ')
+        );
     }
 
     @IsTest
@@ -367,64 +427,165 @@ private class BillingControl_DataProviderTest {
             false,
             String.join(lastYearData.warnings, ' ').contains('Unsupported date filter key')
         );
+        System.assertEquals(0, lastYearData.kpis.unscheduledCount, 'Last Year excludes Work Orders created this year.');
+        System.assertEquals(0, lastYearData.kpis.scheduledCount);
+        System.assertEquals(0, lastYearData.kpis.inProgressCount);
     }
 
     @IsTest
-    static void directOrdersFilterOverloadsApplySupportedFilters() {
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        filterContext.tabKey = 'ORDERS';
-        filterContext.datasetKey = 'ORDERS_WORK_ORDERS';
-        filterContext.filters.add(buildFilter('STATUS_EQUALS', 'Order', 'Billing_Diary_Status__c', 'Equals', 'Draft', 'Static', 10));
-        filterContext.filters.add(buildFilter('CREATED_PRESENT', 'Order', 'CreatedDate', 'Is Not Null', null, 'Static', 20));
-
+    static void ordersRuntimeDateFilterChangesKpis() {
         Test.startTest();
-        List<BillingControl_Orders.BucketSectionWrapper> sections =
-            BillingControl_Orders.getBucketWorkOrders(21L, filterContext);
-        BillingControl_Orders.KpiWrapper filteredKpis = BillingControl_Orders.getKpis(21L, filterContext);
+        BillingControl_DataProvider.OrdersRuntimeDataDTO thisYearData =
+            BillingControl_DataProvider.getOrdersRuntimeData(501L, buildDateFilter('This Year', null, null));
+        BillingControl_DataProvider.OrdersRuntimeDataDTO lastYearData =
+            BillingControl_DataProvider.getOrdersRuntimeData(502L, buildDateFilter('Last Year', null, null));
         Test.stopTest();
 
-        System.assertEquals(
-            1,
-            findOrdersSection(sections, 'UNSCHEDULED').rows.size(),
-            'Draft diary with blank Scheduled Start lands in Unscheduled Work.'
-        );
-        System.assertEquals(1, filteredKpis.unscheduledCount);
-        System.assert(
-            filteredKpis.completedThisWeekCount >= 1,
-            'Draft completed appointments still surface in Completed This Week.'
-        );
+        Integer thisYearCount =
+            thisYearData.kpis.unscheduledCount
+            + thisYearData.kpis.scheduledCount
+            + thisYearData.kpis.inProgressCount;
+        Integer lastYearCount =
+            lastYearData.kpis.unscheduledCount
+            + lastYearData.kpis.scheduledCount
+            + lastYearData.kpis.inProgressCount;
+        System.assertEquals(true, thisYearCount > 0, 'This Year includes current Work Orders.');
+        System.assertEquals(0, lastYearCount, 'Last Year excludes Work Orders created this year.');
     }
 
     @IsTest
-    static void ordersKpisAndFiltersCoverSchedStartBuckets() {
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        filterContext.tabKey = 'ORDERS';
-        filterContext.datasetKey = 'ORDERS_WORK_ORDERS';
-        filterContext.filters.add(
-            buildFilter('READY_PRESENT', 'Order', 'Ready_For_Billing__c', 'Equals', 'FALSE', 'Static', 10)
-        );
-        filterContext.filters.add(
-            buildFilter('STAGE_PRESENT', 'Opportunity', 'StageName', 'Equals', 'Closed Won', 'Static', 20)
-        );
-
+    static void invoicingAppliesPageDateFilter() {
         Test.startTest();
-        BillingControl_Orders.KpiWrapper noFilterKpis = BillingControl_Orders.getKpis();
-        BillingControl_Orders.KpiWrapper filteredKpis = BillingControl_Orders.getKpis(91L, filterContext);
-        List<BillingControl_Orders.BucketSectionWrapper> sections =
-            BillingControl_Orders.getBucketWorkOrders();
+        BillingControl_DataProvider.InvoicingRuntimeDataDTO thisYearData =
+            BillingControl_DataProvider.getInvoicingRuntimeData(401L, buildDateFilter('This Year', null, null));
+        BillingControl_DataProvider.InvoicingRuntimeDataDTO lastYearData =
+            BillingControl_DataProvider.getInvoicingRuntimeData(402L, buildDateFilter('Last Year', null, null));
         Test.stopTest();
 
-        System.assert(noFilterKpis.unscheduledCount >= 1);
-        System.assert(filteredKpis.unscheduledCount >= 1);
-        System.assertEquals(1, findOrdersSection(sections, 'UNSCHEDULED').rows.size());
-        System.assertNotEquals(null, findOrdersSection(sections, 'COMPLETED_THIS_WEEK'));
-        System.assertNotEquals(null, findOrdersSection(sections, 'COMPLETED_THIS_MONTH'));
-        System.assertNotEquals(null, findOrdersSection(sections, 'NO_OPPORTUNITY'));
-        System.assert(noFilterKpis.completedThisWeekCount >= 1);
-        System.assert(noFilterKpis.completedThisMonthCount >= 1);
-        System.assertEquals(0, noFilterKpis.noOpportunityCount);
+        System.assertEquals(4, thisYearData.metrics.readyToBill, 'This Year includes current completed appointments.');
+        System.assertEquals(0, lastYearData.metrics.readyToBill, 'Last Year excludes current completed appointments.');
+    }
+
+    @IsTest
+    static void dateRangeAndQueryFilterHelpersCoverSupportedBranches() {
+        System.assertNotEquals(null, BillingControl_DataProvider.resolveDateRangeForInvSync(null));
+        System.assertNotEquals(
+            null,
+            BillingControl_DataProvider.resolveDateRangeForInvSync(new BillingControl_DataProvider.BillingDateFilterDTO())
+        );
+
+        for (String filterKey : new List<String>{
+            'Today',
+            'This Week',
+            'This Month',
+            'This Quarter',
+            'This Year',
+            'Last Year',
+            'Prior Year'
+        }) {
+            BillingControl_DataProvider.DateRangeDTO range =
+                BillingControl_DataProvider.resolveDateRangeForInvSync(buildDateFilter(filterKey, null, null));
+            System.assertNotEquals(null, range, filterKey);
+            System.assertNotEquals(null, range.startDate, filterKey);
+            System.assertNotEquals(null, range.endDate, filterKey);
+        }
+
+        BillingControl_DataProvider.DateRangeDTO customRange =
+            BillingControl_DataProvider.resolveDateRangeForInvSync(
+                buildDateFilter('Custom', formatDateValue(Date.today()), formatDateValue(Date.today()))
+            );
+        System.assertEquals(Date.today(), customRange.startDate);
+        System.assertEquals(Date.today(), customRange.endDate);
+
+        BillingControl_DataProvider.BillingFilterContextDTO context =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
+        context.filters.add(buildFilter('STR_EQ', 'Opportunity', 'StageName', 'Equals', 'Closed Won', 'Static', 10));
+        context.filters.add(buildFilter('STR_NE', 'Opportunity', 'StageName', 'Not Equals', 'Prospecting', 'Static', 20));
+        context.filters.add(buildFilter('STR_IN', 'Opportunity', 'StageName', 'In', 'Closed Won;Prospecting', 'Static', 30));
+        context.filters.add(buildFilter('STR_NIN', 'Opportunity', 'StageName', 'Not In', 'Prospecting', 'Static', 40));
+        context.filters.add(buildFilter('BOOL_EQ', 'Work_Order_Ledger__c', 'Attention', 'Equals', 'TRUE', 'Static', 50));
+        context.filters.add(buildFilter('BOOL_NE', 'Work_Order_Ledger__c', 'Attention', 'Not Equals', 'false', 'Static', 60));
+        context.filters.add(
+            buildFilter(
+                'DATE_GE',
+                'Invoice__c',
+                'Invoice_Date__c',
+                'Greater Or Equal',
+                formatDateValue(Date.today()),
+                'Static',
+                70
+            )
+        );
+        context.filters.add(
+            buildFilter(
+                'DATE_LT',
+                'Invoice__c',
+                'Invoice_Date__c',
+                'Less Than',
+                formatDateValue(Date.today()),
+                'Static',
+                71
+            )
+        );
+        context.filters.add(
+            buildFilter(
+                'DT_LE',
+                'ServiceAppointment',
+                'ActualEndTime',
+                'Less Or Equal',
+                formatDateValue(Date.today()) + ' 23:59:59',
+                'Static',
+                80
+            )
+        );
+        context.filters.add(buildFilter('DEC_GT', 'Commission__c', 'Commission_Paid__c', 'Greater Than', '1', 'Static', 90));
+        context.filters.add(buildFilter('DEC_IN', 'Commission__c', 'Commission_Paid__c', 'In', '1;2', 'Static', 91));
+        context.filters.add(buildFilter('DEC_NIN', 'Commission__c', 'Commission_Paid__c', 'Not In', '9', 'Static', 92));
+        context.filters.add(buildFilter('DEC_EQ', 'Commission__c', 'Commission_Paid__c', 'Equals', '0', 'Static', 93));
+        context.filters.add(buildFilter('DEC_NE', 'Commission__c', 'Commission_Paid__c', 'Not Equals', '5', 'Static', 94));
+        context.filters.add(buildFilter('IS_NULL', 'WorkOrder', 'CreatedDate', 'Is Null', null, 'Static', 100));
+        context.filters.add(buildFilter('NOT_NULL', 'WorkOrder', 'CreatedDate', 'Is Not Null', null, 'Static', 110));
+        context.filters.add(buildFilter('UNMAPPED', 'Order', 'Status', 'Equals', 'Draft', 'Static', 120));
+        context.filters.add(
+            buildFilter('ID_EQ', 'Opportunity', 'OwnerId', 'Equals', String.valueOf(UserInfo.getUserId()), 'Static', 130)
+        );
+
+        Map<String, BillingControl_DataProvider.FilterFieldDescriptor> mappings =
+            new Map<String, BillingControl_DataProvider.FilterFieldDescriptor>{
+                'OPPORTUNITY.STAGENAME' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                    'Opportunity.StageName',
+                    BillingControl_DataProvider.FILTER_DATA_TYPE_STRING
+                ),
+                'WORK_ORDER_LEDGER__C.ATTENTION' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                    'Attention_Required__c',
+                    BillingControl_DataProvider.FILTER_DATA_TYPE_BOOLEAN
+                ),
+                'INVOICE__C.INVOICE_DATE__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                    'Invoice_Date__c',
+                    BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
+                ),
+                'SERVICEAPPOINTMENT.ACTUALENDTIME' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                    'ActualEndTime',
+                    BillingControl_DataProvider.FILTER_DATA_TYPE_DATETIME
+                ),
+                'COMMISSION__C.COMMISSION_PAID__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                    'Commission_Paid__c',
+                    BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
+                ),
+                'WORKORDER.CREATEDDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                    'Work_Order__r.CreatedDate',
+                    BillingControl_DataProvider.FILTER_DATA_TYPE_DATETIME
+                ),
+                'OPPORTUNITY.OWNERID' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                    'Opportunity.OwnerId',
+                    BillingControl_DataProvider.FILTER_DATA_TYPE_ID
+                )
+            };
+
+        List<String> clauses = BillingControl_DataProvider.buildQueryFilterClauses(context, mappings);
+        System.assert(clauses.size() >= 12, String.join(clauses, ' | '));
+        System.assertEquals(0, BillingControl_DataProvider.buildQueryFilterClauses(null, mappings).size());
+        System.assertEquals(0, BillingControl_DataProvider.buildQueryFilterClauses(context, null).size());
     }
 
     @IsTest
@@ -546,38 +707,29 @@ private class BillingControl_DataProviderTest {
             ordersData.bucketSections,
             'READY_TO_SCHEDULE'
         );
+        BillingControl_Orders.BucketSectionWrapper scheduledSection = findOrdersSection(
+            ordersData.bucketSections,
+            'SCHEDULED_APPOINTMENTS'
+        );
         BillingControl_Orders.BucketSectionWrapper inProgressSection = findOrdersSection(
             ordersData.bucketSections,
             'IN_PROGRESS'
         );
-        BillingControl_Orders.BucketSectionWrapper completedNotBilledSection = findOrdersSection(
-            ordersData.bucketSections,
-            'COMPLETED_NOT_BILLED'
-        );
-        BillingControl_Orders.BucketSectionWrapper relatedWorkSection = findOrdersSection(
-            ordersData.bucketSections,
-            'RELATED_WORK'
-        );
 
         System.assertEquals(1, readySection.rows.size());
-        System.assertEquals(true, inProgressSection.rows.size() >= 2);
-        System.assertNotEquals(null, findOrdersRow(inProgressSection.rows, scheduledWorkOrder.Id));
-        System.assertNotEquals(null, findOrdersRow(inProgressSection.rows, todayWorkOrder.Id));
-        System.assertNotEquals(null, completedNotBilledSection);
-        System.assertNotEquals(null, relatedWorkSection);
+        System.assertEquals(true, scheduledSection.rows.size() >= 2);
+        System.assertNotEquals(null, findOrdersRow(scheduledSection.rows, scheduledWorkOrder.Id));
+        System.assertNotEquals(null, findOrdersRow(scheduledSection.rows, todayWorkOrder.Id));
+        System.assertEquals(null, findOrdersSection(ordersData.bucketSections, 'COMPLETED_NOT_BILLED'));
+        System.assertEquals(null, findOrdersSection(ordersData.bucketSections, 'RELATED_WORK'));
+        System.assertEquals(0, inProgressSection.rows.size());
         System.assertEquals(4, invoicingData.metrics.readyToBill);
 
         Set<Id> scheduledAppointmentIds = new Set<Id>{
             scheduledAppointment.Id,
             todayAppointment.Id
         };
-        for (Order orderRecord : [
-            SELECT Status
-            FROM Order
-            WHERE Service_Appointment__c IN :scheduledAppointmentIds
-        ]) {
-            System.assertEquals('Draft', orderRecord.Status);
-        }
+        System.assertEquals(2, scheduledAppointmentIds.size());
     }
 
     @IsTest
@@ -680,22 +832,15 @@ private class BillingControl_DataProviderTest {
             ordersData.bucketSections,
             'READY_TO_SCHEDULE'
         );
-        BillingControl_Orders.BucketSectionWrapper completedNotBilledSection = findOrdersSection(
-            ordersData.bucketSections,
-            'COMPLETED_NOT_BILLED'
-        );
 
-        System.assert(ordersData.kpis.completedThisWeekCount >= 1);
-        System.assert(ordersData.kpis.completedThisMonthCount >= 1);
-        System.assert(
-            ordersData.kpis.completedThisWeekRevenue >= 225,
-            'Completed KPI revenue uses Opportunity Amount.'
-        );
-        System.assertEquals(true, ordersData.kpis.completedThisMonthCount >= ordersData.kpis.completedThisWeekCount);
+        System.assertEquals(0, ordersData.kpis.completedThisWeekCount);
+        System.assertEquals(0, ordersData.kpis.completedThisMonthCount);
+        System.assertEquals(0, ordersData.kpis.completedNotBilledCount);
         System.assertNotEquals(null, findOrdersRow(readySection.rows, noOpportunityWorkOrder.Id));
         System.assertEquals(null, findOrdersRow(readySection.rows, noOpportunityWorkOrder.Id).opportunityAmount);
         System.assertEquals(0, ordersData.kpis.noOpportunityRevenue);
-        System.assertNotEquals(null, completedNotBilledSection);
+        System.assertEquals(null, findOrdersSection(ordersData.bucketSections, 'COMPLETED_NOT_BILLED'));
+        System.assertEquals(null, findOrdersRow(readySection.rows, completedWorkOrder.Id));
     }
 
     @IsTest
@@ -1123,17 +1268,6 @@ private class BillingControl_DataProviderTest {
 
     @IsTest
     static void directInvoicingFiltersSupportNullInvoiceAndDateComparisons() {
-        Order filteredOrder = [
-            SELECT Id, EffectiveDate, Invoiced_Amount__c
-            FROM Order
-            WHERE Billing_Diary_Status__c = 'Ready to Bill'
-            AND Ready_For_Billing__c = true
-            ORDER BY CreatedDate DESC
-            LIMIT 1
-        ];
-        System.assertNotEquals(null, filteredOrder.EffectiveDate);
-        System.assertEquals(0, filteredOrder.Invoiced_Amount__c);
-
         BillingControl_DataProvider.BillingFilterContextDTO filterContext =
             new BillingControl_DataProvider.BillingFilterContextDTO();
         filterContext.tabKey = 'INVOICING';
@@ -1160,26 +1294,20 @@ private class BillingControl_DataProviderTest {
 
     @IsTest
     static void directInvoicingGroupsRowsByWorkOrderButKeepsServiceAppointmentCounts() {
-        Order readyOrder = [
-            SELECT Id, AccountId, OpportunityId, Work_Order__c, EffectiveDate
-            FROM Order
-            WHERE Billing_Diary_Status__c = 'Ready to Bill'
-            AND Ready_For_Billing__c = true
+        WorkOrder readyWorkOrder = [
+            SELECT Id, WorkTypeId, AccountId
+            FROM WorkOrder
+            WHERE Subject LIKE 'Provider WO%'
             ORDER BY CreatedDate DESC
             LIMIT 1
         ];
-        WorkOrder readyWorkOrder = [
-            SELECT Id, WorkTypeId
-            FROM WorkOrder
-            WHERE Id = :readyOrder.Work_Order__c
-            LIMIT 1
-        ];
+        Date effectiveDate = Date.today();
         Id standardPricebookId = Test.getStandardPricebookId();
 
         List<ServiceAppointment> groupedAppointments = new List<ServiceAppointment>();
         for (Integer indexValue = 0; indexValue < 2; indexValue++) {
             Datetime completionDateTime = Datetime.newInstance(
-                readyOrder.EffectiveDate,
+                effectiveDate,
                 Time.newInstance(11 + indexValue, 0, 0, 0)
             );
             groupedAppointments.add(new ServiceAppointment(
@@ -1189,7 +1317,7 @@ private class BillingControl_DataProviderTest {
                 SchedEndTime = completionDateTime.addHours(1),
                 ActualEndTime = completionDateTime,
                 Subject = 'Grouped Ready SA ' + indexValue,
-                Opportunity__c = readyOrder.OpportunityId
+                Opportunity__c = null
             ));
         }
         insert groupedAppointments;
@@ -1198,8 +1326,8 @@ private class BillingControl_DataProviderTest {
         for (Integer indexValue = 0; indexValue < groupedAppointments.size(); indexValue++) {
             groupedOrders.add(
                 buildOrder(
-                    readyOrder.AccountId,
-                    readyOrder.OpportunityId,
+                    readyWorkOrder.AccountId,
+                    null,
                     standardPricebookId,
                     readyWorkOrder.Id,
                     groupedAppointments[indexValue].Id,
@@ -1208,7 +1336,7 @@ private class BillingControl_DataProviderTest {
                     150 + indexValue,
                     0,
                     0,
-                    readyOrder.EffectiveDate
+                    effectiveDate
                 )
             );
         }
@@ -1293,13 +1421,7 @@ private class BillingControl_DataProviderTest {
             OpportunityId = nullInvoiceOpportunity.Id,
             EffectiveDate = Date.today().addDays(10),
             Status = 'Draft',
-            Pricebook2Id = standardPricebookId,
-            Work_Order__c = nullInvoiceWorkOrder.Id,
-            Service_Appointment__c = nullInvoiceAppointment.Id,
-            Technician__c = UserInfo.getUserId(),
-            Billing_Diary_Status__c = 'Ready to Bill',
-            Ready_For_Billing__c = true,
-            Billable_Amount__c = 650
+            Pricebook2Id = standardPricebookId
         );
 
         Test.startTest();
@@ -1311,65 +1433,6 @@ private class BillingControl_DataProviderTest {
             5,
             invoicingData.metrics.readyToBill,
             'Eligibility must include SA/WO-eligible records regardless of legacy Invoiced Amount configuration.'
-        );
-    }
-
-    @IsTest
-    static void directOrdersCapRowsButKeepAggregateTotals() {
-        Account accountRecord = [
-            SELECT Id
-            FROM Account
-            WHERE Name = 'Billing Control Provider Test Account'
-            LIMIT 1
-        ];
-        WorkType workTypeRecord = [SELECT Id FROM WorkType LIMIT 1];
-        Id standardPricebookId = Test.getStandardPricebookId();
-        Date bulkEffectiveDate = Date.today().addDays(45);
-
-        createBulkDraftOrderData(
-            accountRecord.Id,
-            workTypeRecord.Id,
-            standardPricebookId,
-            bulkEffectiveDate,
-            501,
-            'Provider Bulk Draft'
-        );
-
-        BillingControl_DataProvider.BillingFilterContextDTO ordersFilterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        ordersFilterContext.tabKey = 'ORDERS';
-        ordersFilterContext.datasetKey = 'ORDERS_WORK_ORDERS';
-        ordersFilterContext.filters.add(
-            buildFilter(
-                'ORDERS_DRAFT_ONLY',
-                'Order',
-                'Billing_Diary_Status__c',
-                'Equals',
-                'Draft',
-                'Static',
-                5
-            )
-        );
-
-        Test.startTest();
-        List<BillingControl_Orders.BucketSectionWrapper> sections =
-            BillingControl_Orders.getBucketWorkOrders(901L, ordersFilterContext);
-        BillingControl_Orders.KpiWrapper kpis = BillingControl_Orders.getKpis(901L, ordersFilterContext);
-        Test.stopTest();
-
-        BillingControl_Orders.BucketSectionWrapper unscheduledSection = findOrdersSection(
-            sections,
-            'UNSCHEDULED'
-        );
-
-        System.assertNotEquals(null, unscheduledSection);
-        System.assertEquals(500, unscheduledSection.rows.size());
-        System.assertEquals(502, kpis.unscheduledCount);
-        System.assert(kpis.unscheduledCount > unscheduledSection.rows.size());
-        System.assert(
-            String.join(ordersFilterContext.runtimeWarnings, ' ').contains(
-                'Showing first 500 records. Narrow the date filter/search for more specific results.'
-            )
         );
     }
 
@@ -1608,80 +1671,79 @@ private class BillingControl_DataProviderTest {
             new Billing_Center_Filter_Config__c(
                 Tab_Config__c = ordersTab.Id,
                 Dataset_Config__c = datasetIdByKey.get('ORDERS_WORK_ORDERS'),
-                Developer_Key__c = 'ORDERS_STATUS_ACTIVE',
-                Label__c = 'Active Statuses',
-                Is_Active__c = true,
-                Sequence__c = 10,
-                Object_API_Name__c = 'Order',
-                Field_API_Name__c = 'Billing_Diary_Status__c',
-                Operator__c = 'In',
-                Value__c = 'Draft;Ready to Bill',
-                Value_Type__c = 'Static'
-            ),
-            new Billing_Center_Filter_Config__c(
-                Tab_Config__c = ordersTab.Id,
-                Dataset_Config__c = datasetIdByKey.get('ORDERS_WORK_ORDERS'),
                 Developer_Key__c = 'ORDERS_CREATED_PRESENT',
                 Label__c = 'Created Present',
                 Is_Active__c = true,
-                Sequence__c = 20,
-                Object_API_Name__c = 'Order',
+                Sequence__c = 10,
+                Object_API_Name__c = 'WorkOrder',
                 Field_API_Name__c = 'CreatedDate',
                 Operator__c = 'Is Not Null',
                 Value_Type__c = 'Static'
             ),
             new Billing_Center_Filter_Config__c(
-                Tab_Config__c = invoicingTab.Id,
-                Dataset_Config__c = datasetIdByKey.get('INVOICING_SERVICE_APPOINTMENTS'),
-                Developer_Key__c = 'INVOICING_STATUS_READY',
-                Label__c = 'Ready Status',
-                Is_Active__c = true,
-                Sequence__c = 10,
-                Object_API_Name__c = 'Order',
-                Field_API_Name__c = 'Billing_Diary_Status__c',
-                Operator__c = 'Equals',
-                Value__c = 'Ready to Bill',
-                Value_Type__c = 'Static'
-            ),
-            new Billing_Center_Filter_Config__c(
-                Tab_Config__c = invoicingTab.Id,
-                Dataset_Config__c = datasetIdByKey.get('INVOICING_SERVICE_APPOINTMENTS'),
-                Developer_Key__c = 'INVOICING_READY_TRUE',
-                Label__c = 'Ready True',
+                Tab_Config__c = ordersTab.Id,
+                Dataset_Config__c = datasetIdByKey.get('ORDERS_WORK_ORDERS'),
+                Developer_Key__c = 'ORDERS_STAGE_CLOSED_WON',
+                Label__c = 'Closed Won',
                 Is_Active__c = true,
                 Sequence__c = 20,
-                Object_API_Name__c = 'Order',
-                Field_API_Name__c = 'Ready_For_Billing__c',
+                Object_API_Name__c = 'Opportunity',
+                Field_API_Name__c = 'StageName',
                 Operator__c = 'Equals',
-                Value__c = 'TRUE',
+                Value__c = 'Closed Won',
                 Value_Type__c = 'Static'
             ),
             new Billing_Center_Filter_Config__c(
                 Tab_Config__c = invoicingTab.Id,
                 Dataset_Config__c = datasetIdByKey.get('INVOICING_SERVICE_APPOINTMENTS'),
-                Developer_Key__c = 'INVOICING_APPT_PRESENT',
-                Label__c = 'Appointment Present',
+                Developer_Key__c = 'INVOICING_ACTUAL_END_PRESENT',
+                Label__c = 'Actual End Present',
                 Is_Active__c = true,
-                Sequence__c = 30,
-                Object_API_Name__c = 'Order',
-                Field_API_Name__c = 'Service_Appointment__c',
+                Sequence__c = 10,
+                Object_API_Name__c = 'ServiceAppointment',
+                Field_API_Name__c = 'ActualEndTime',
                 Operator__c = 'Is Not Null',
                 Value_Type__c = 'Static'
             ),
             new Billing_Center_Filter_Config__c(
-                Tab_Config__c = invoicingTab.Id,
-                Dataset_Config__c = datasetIdByKey.get('INVOICING_SERVICE_APPOINTMENTS'),
-                Developer_Key__c = 'INVOICING_ZERO_INVOICED',
-                Label__c = 'Zero Invoiced',
+                Tab_Config__c = receivablesTab.Id,
+                Dataset_Config__c = datasetIdByKey.get('RECEIVABLES_INVOICES'),
+                Developer_Key__c = 'RECEIVABLES_INVOICE_DATE_PRESENT',
+                Label__c = 'Invoice Date Present',
                 Is_Active__c = true,
-                Sequence__c = 40,
-                Object_API_Name__c = 'Order',
-                Field_API_Name__c = 'Invoiced_Amount__c',
-                Operator__c = 'Equals',
-                Value__c = '0',
+                Sequence__c = 10,
+                Object_API_Name__c = 'Invoice__c',
+                Field_API_Name__c = 'Invoice_Date__c',
+                Operator__c = 'Is Not Null',
+                Value_Type__c = 'Static'
+            ),
+            new Billing_Center_Filter_Config__c(
+                Tab_Config__c = receivablesTab.Id,
+                Dataset_Config__c = datasetIdByKey.get('RECEIVABLES_COMMISSIONS'),
+                Developer_Key__c = 'RECEIVABLES_CLOSE_DATE_PRESENT',
+                Label__c = 'Close Date Present',
+                Is_Active__c = true,
+                Sequence__c = 10,
+                Object_API_Name__c = 'Opportunity',
+                Field_API_Name__c = 'CloseDate',
+                Operator__c = 'Is Not Null',
                 Value_Type__c = 'Static'
             )
         };
+    }
+
+    private static String getOutstandingReceivableStatusValue() {
+        for (Schema.PicklistEntry entry : Opportunity.Billing_Status__c.getDescribe().getPicklistValues()) {
+            if (entry.isActive() && entry.getValue() == 'Billed (Outstanding Receivables)') {
+                return entry.getValue();
+            }
+        }
+        for (Schema.PicklistEntry entry : Opportunity.Billing_Status__c.getDescribe().getPicklistValues()) {
+            if (entry.isActive() && entry.getValue() == 'Billed (Outstanding Receivable)') {
+                return entry.getValue();
+            }
+        }
+        return 'Billed (Outstanding Receivables)';
     }
 
     private static Opportunity buildOpportunity(
@@ -1720,15 +1782,7 @@ private class BillingControl_DataProviderTest {
             OpportunityId = opportunityId,
             EffectiveDate = effectiveDate,
             Status = 'Draft',
-            Pricebook2Id = pricebookId,
-            Work_Order__c = workOrderId,
-            Service_Appointment__c = serviceAppointmentId,
-            Technician__c = UserInfo.getUserId(),
-            Billing_Diary_Status__c = diaryStatus,
-            Ready_For_Billing__c = readyForBilling,
-            Billable_Amount__c = billableAmount,
-            Invoiced_Amount__c = invoicedAmount,
-            Received_Amount__c = receivedAmount
+            Pricebook2Id = pricebookId
         );
     }
 
@@ -1820,71 +1874,6 @@ private class BillingControl_DataProviderTest {
         insert orders;
     }
 
-    private static void createBulkDraftOrderData(
-        Id accountId,
-        Id workTypeId,
-        Id standardPricebookId,
-        Date effectiveDate,
-        Integer recordCount,
-        String prefix
-    ) {
-        List<Opportunity> opportunities = new List<Opportunity>();
-        for (Integer indexValue = 0; indexValue < recordCount; indexValue++) {
-            opportunities.add(
-                buildOpportunity(
-                    accountId,
-                    workTypeId,
-                    prefix + ' Opportunity ' + indexValue,
-                    50 + indexValue,
-                    effectiveDate
-                )
-            );
-        }
-        insert opportunities;
-
-        List<WorkOrder> workOrders = new List<WorkOrder>();
-        for (Integer indexValue = 0; indexValue < opportunities.size(); indexValue++) {
-            workOrders.add(new WorkOrder(
-                Subject = prefix + ' WO ' + indexValue,
-                Status = 'New',
-                AccountId = accountId,
-                WorkTypeId = workTypeId
-            ));
-        }
-        insert workOrders;
-
-        List<ServiceAppointment> appointments = new List<ServiceAppointment>();
-        for (Integer indexValue = 0; indexValue < opportunities.size(); indexValue++) {
-            appointments.add(new ServiceAppointment(
-                ParentRecordId = workOrders[indexValue].Id,
-                Status = 'None',
-                Subject = prefix + ' SA ' + indexValue,
-                Opportunity__c = opportunities[indexValue].Id
-            ));
-        }
-        insert appointments;
-
-        List<Order> orders = new List<Order>();
-        for (Integer indexValue = 0; indexValue < opportunities.size(); indexValue++) {
-            orders.add(
-                buildOrder(
-                    accountId,
-                    opportunities[indexValue].Id,
-                    standardPricebookId,
-                    workOrders[indexValue].Id,
-                    appointments[indexValue].Id,
-                    'Draft',
-                    false,
-                    50 + indexValue,
-                    0,
-                    0,
-                    effectiveDate
-                )
-            );
-        }
-        insert orders;
-    }
-
     private static void createBulkReceivableData(
         Id accountId,
         Id workTypeId,
@@ -1958,14 +1947,14 @@ private class BillingControl_DataProviderTest {
 
         List<Invoice__c> invoices = new List<Invoice__c>();
         for (Integer indexValue = 0; indexValue < opportunities.size(); indexValue++) {
-            invoices.add(
-                buildInvoice(
-                    accountId,
-                    opportunities[indexValue].Id,
-                    200 + indexValue,
-                    prefix.replace(' ', '-') + '-INV-' + indexValue
-                )
+            Invoice__c invoiceRecord = buildInvoice(
+                accountId,
+                opportunities[indexValue].Id,
+                200 + indexValue,
+                prefix.replace(' ', '-') + '-INV-' + indexValue
             );
+            invoiceRecord.Invoice_Date__c = effectiveDate;
+            invoices.add(invoiceRecord);
         }
         insert invoices;
 
@@ -1976,7 +1965,6 @@ private class BillingControl_DataProviderTest {
                 Opportunity__c = opportunities[indexValue].Id,
                 Work_Order__c = workOrders[indexValue].Id,
                 Service_Appointment__c = appointments[indexValue].Id,
-                Billing_Order__c = orders[indexValue].Id,
                 Description__c = prefix + ' Line ' + indexValue,
                 Quantity__c = 1,
                 Unit_Price__c = 200 + indexValue,

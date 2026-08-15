@@ -3,8 +3,13 @@
     <types>
         <members>BillingControl_Orders</members>
         <members>BillingControl_Invoicing</members>
+        <members>BillingControl_Attribution</members>
+        <members>BillingControl_InvoiceRecordFactory</members>
+        <members>BillingControl_CompleteBilling</members>
+        <members>BillingControl_InvSync</members>
+        <members>BillingControl_Receivables</members>
         <members>BillingControlCenterControllerTest</members>
-        <members>BillingControlCenterServiceTest</members>
+        <members>BillingControl_InvoicingTest</members>
         <members>OpportunitySelectorController</members>
         <members>OpportunitySelectorControllerTest</members>
         <members>LookupSearchController</members>

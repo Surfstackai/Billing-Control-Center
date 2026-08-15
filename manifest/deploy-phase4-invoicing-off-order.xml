@@ -4,7 +4,7 @@
         <members>BillingControl_DataProvider</members>
         <members>BillingControl_DataProviderTest</members>
         <members>BillingControl_Invoicing</members>
-        <members>BillingControlCenterServiceTest</members>
+        <members>BillingControl_InvoicingTest</members>
         <name>ApexClass</name>
     </types>
     <types>

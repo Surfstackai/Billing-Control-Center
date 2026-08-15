@@ -37,7 +37,13 @@ const DEFAULT_SORT_FIELD = 'accountUrl';
 const WORK_ORDER_SORT_FIELD = 'workOrderUrl';
 const LIST_VIEW_ACCOUNT = 'account';
 const LIST_VIEW_WORK_ORDER = 'workOrder';
-const WORK_ORDER_VIEW_LEAD_KEYS = ['WORK_ORDER', 'ACCOUNT', 'OPPORTUNITY', 'SERVICE_APPOINTMENTS'];
+const WORK_ORDER_VIEW_LEAD_KEYS = ['WORK_TYPE', 'WORK_ORDER', 'ACCOUNT', 'OPPORTUNITY', 'SERVICE_APPOINTMENTS'];
+const WORK_TYPE_GROUP_OTHER = 'OTHER';
+const WORK_TYPE_GROUP_PIT_CLEANING = 'PIT_CLEANING';
+const WORK_TYPE_GROUP_LABELS = {
+    [WORK_TYPE_GROUP_OTHER]: 'Other',
+    [WORK_TYPE_GROUP_PIT_CLEANING]: 'Pit Cleaning'
+};
 const DEFAULT_HERO_TITLE = 'Work Order Ledger';
 const DEFAULT_HERO_SUBTITLE = 'Accounting Reconciliation';
 const DEFAULT_TABLE_TITLE = 'Work Order Ledger by bucket';
@@ -100,6 +106,14 @@ const WORK_ORDER_COLUMNS = [
         }
     },
     {
+        developerKey: 'WORK_TYPE',
+        configFieldApiName: 'workTypeName',
+        label: 'Work Type',
+        fieldName: 'workTypeName',
+        type: 'text',
+        sortable: true
+    },
+    {
         developerKey: 'WORK_ORDER',
         configFieldApiName: 'workOrderNumber',
         label: 'Work Order',
@@ -145,14 +159,6 @@ const WORK_ORDER_COLUMNS = [
         wrapText: true
     },
     {
-        developerKey: 'RECONCILIATION',
-        configFieldApiName: 'reconciliationStatus',
-        label: 'Reconciliation Status',
-        fieldName: 'reconciliationStatus',
-        type: 'text',
-        sortable: true
-    },
-    {
         developerKey: 'OPPORTUNITY_AMOUNT',
         configFieldApiName: 'opportunityAmount',
         label: 'Opportunity Amount',
@@ -182,11 +188,11 @@ const WORK_ORDER_COLUMNS = [
 const COL_MODIFIER_BY_KEY = {
     ACCOUNT: 'account',
     OPPORTUNITY: 'opportunity',
+    WORK_TYPE: 'work-type',
     WORK_ORDER: 'work-order',
     SERVICE_APPOINTMENTS: 'service-appointment',
     EARLIEST_START: 'earliest-start',
     SUBJECT: 'subject',
-    RECONCILIATION: 'reconciliation',
     OPPORTUNITY_AMOUNT: 'opportunity-amount',
     OWNER: 'owner',
     VIEW_LEDGER: 'view-ledger'
@@ -198,9 +204,11 @@ const SKIP_CONFIG_COLUMN_KEYS = new Set([
     'PARTS',
     'INVOICE',
     'ATTENTION',
-    'WORK_ORDER_STATUS'
+    'WORK_ORDER_STATUS',
+    'RECONCILIATION',
+    'STATUS',
+    'DIARY_STATUS'
 ]);
-const RECONCILIATION_CONFIG_ALIASES = new Set(['STATUS', 'DIARY_STATUS', 'WORK_ORDER_STATUS']);
 
 function normalizeConfigKey(value) {
     return value ? String(value).trim().toUpperCase() : '';
@@ -229,9 +237,6 @@ function buildConfiguredColumns(configColumns) {
         if (developerKey && !SKIP_CONFIG_COLUMN_KEYS.has(developerKey)) {
             configByKey.set(developerKey, configColumn);
         }
-        if (RECONCILIATION_CONFIG_ALIASES.has(developerKey)) {
-            configByKey.set('RECONCILIATION', configColumn);
-        }
         if (developerKey === 'CREATED_DATE' || developerKey === 'COMPLETED_DATE') {
             configByKey.set('EARLIEST_START', configColumn);
         }
@@ -245,14 +250,14 @@ function buildConfiguredColumns(configColumns) {
         const configRecord =
             configByKey.get(developerKey) || configByField.get(column.configFieldApiName);
         const lockedLabel =
-            developerKey === 'RECONCILIATION'
-                ? 'Reconciliation Status'
-                : developerKey === 'VIEW_LEDGER'
-                  ? 'Ledger'
-                  : developerKey === 'OPPORTUNITY_AMOUNT'
-                    ? 'Opportunity Amount'
-                    : developerKey === 'EARLIEST_START'
-                      ? 'Earliest Start Permitted'
+            developerKey === 'VIEW_LEDGER'
+                ? 'Ledger'
+                : developerKey === 'OPPORTUNITY_AMOUNT'
+                  ? 'Opportunity Amount'
+                  : developerKey === 'EARLIEST_START'
+                    ? 'Earliest Start Permitted'
+                    : developerKey === 'WORK_TYPE'
+                      ? 'Work Type'
                       : null;
         return {
             ...column,
@@ -283,13 +288,13 @@ function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) 
             sortAltText: isAscending ? 'Sorted ascending' : 'Sorted descending',
             isAccount: developerKey === 'ACCOUNT',
             isOpportunity: developerKey === 'OPPORTUNITY',
+            isWorkType: developerKey === 'WORK_TYPE',
             isWorkOrder: developerKey === 'WORK_ORDER',
             isServiceAppointment: developerKey === 'SERVICE_APPOINTMENTS',
             isEarliestStart: developerKey === 'EARLIEST_START',
             isSubject: developerKey === 'SUBJECT',
             isOpportunityAmount,
             isOwner: developerKey === 'OWNER',
-            isReconciliation: developerKey === 'RECONCILIATION',
             isLedgerAction: developerKey === 'VIEW_LEDGER',
             colClass: `grouped-diary-table__col grouped-diary-table__col--${colModifier}`,
             colStyle: widthStyle,
@@ -395,9 +400,9 @@ function normalizeAppointmentRows(row) {
     const searchIndex = [
         row.accountName,
         row.opportunityName,
+        row.workTypeName,
         row.workOrderNumber,
         row.subject,
-        row.reconciliationStatus,
         row.accountOwnerName,
         row.ownerName,
         ...appointmentSearchTerms,
@@ -493,6 +498,36 @@ function sortWorkOrderRows(rows, fieldName, direction, groupByAccount = true) {
         const tieRight = right?.rowKey != null ? String(right.rowKey) : String(right?.key || '');
         return tieLeft.localeCompare(tieRight);
     });
+}
+
+function isPitCleaningWorkType(workTypeName) {
+    return /pit\s*clean/i.test(String(workTypeName || ''));
+}
+
+function workTypeGroupKey(row) {
+    return isPitCleaningWorkType(row?.workTypeName)
+        ? WORK_TYPE_GROUP_PIT_CLEANING
+        : WORK_TYPE_GROUP_OTHER;
+}
+
+function decorateWorkTypeGroups(otherRows, pitRows, columnCount) {
+    const result = [];
+    const appendGroup = (groupKey, groupRows) => {
+        if (!groupRows.length) {
+            return;
+        }
+        result.push({
+            displayKey: `work-type-group-${groupKey}`,
+            isWorkTypeGroupHeader: true,
+            workTypeGroupLabel: `${WORK_TYPE_GROUP_LABELS[groupKey]} (${groupRows.length})`,
+            columnSpan: columnCount,
+            rowClass: 'grouped-diary-table__row grouped-diary-table__row--work-type-group'
+        });
+        result.push(...groupRows);
+    };
+    appendGroup(WORK_TYPE_GROUP_OTHER, otherRows);
+    appendGroup(WORK_TYPE_GROUP_PIT_CLEANING, pitRows);
+    return result;
 }
 
 function columnsForListView(columns, listViewMode) {
@@ -717,15 +752,17 @@ export default class BillingControlCenterOrders extends LightningElement {
     }
 
     get totalWorkOrderRows() {
-        return this.accordionSections.reduce((sum, section) => sum + section.filteredRows.length, 0);
+        return this.accordionSections.reduce(
+            (sum, section) => sum + (section.visibleWorkOrderCount || 0),
+            0
+        );
     }
 
     get searchSummary() {
         if (!this.searchKey.trim()) {
             return `${this.totalWorkOrderRows} work order rows across buckets`;
         }
-        const shownCount = this.accordionSections.reduce((sum, s) => sum + s.filteredRows.length, 0);
-        return `Showing ${shownCount} matching work order rows`;
+        return `Showing ${this.totalWorkOrderRows} matching work order rows`;
     }
 
     handleSearchChange(event) {
@@ -862,20 +899,37 @@ export default class BillingControlCenterOrders extends LightningElement {
             bucketSort.sortDirection,
             this.columnWidths
         );
-        const preparedRows = rows.map(row => ({
+        const preparedRow = (row) => ({
             ...row,
             displayKey: row.rowKey,
             reconciliationStatus: row.reconciliationStatus || row.status,
             isLedgerActionDisabled: !row.ledgerId
-        }));
-        const displayRows = groupByAccount
-            ? decorateAccountGroups(preparedRows)
-            : preparedRows.map(row => ({
-                  ...row,
-                  showAccountName: true,
-                  isAccountGroupStart: true,
-                  rowClass: 'slds-hint-parent grouped-diary-table__row'
-              }));
+        });
+        const decorateGroupRows = (groupRows) => {
+            const preparedRows = groupRows.map(preparedRow);
+            return groupByAccount
+                ? decorateAccountGroups(preparedRows)
+                : preparedRows.map(row => ({
+                      ...row,
+                      showAccountName: true,
+                      isAccountGroupStart: true,
+                      rowClass: 'slds-hint-parent grouped-diary-table__row'
+                  }));
+        };
+        const otherRows = [];
+        const pitRows = [];
+        rows.forEach(row => {
+            if (workTypeGroupKey(row) === WORK_TYPE_GROUP_PIT_CLEANING) {
+                pitRows.push(row);
+            } else {
+                otherRows.push(row);
+            }
+        });
+        const displayRows = decorateWorkTypeGroups(
+            decorateGroupRows(otherRows),
+            decorateGroupRows(pitRows),
+            columns.length
+        );
 
         return {
             bucketKey: section.bucketKey,
@@ -883,6 +937,7 @@ export default class BillingControlCenterOrders extends LightningElement {
             titleWithCount: `${label} (${visibleAppointmentCount})`,
             filteredRows: displayRows,
             isEmpty: rows.length === 0,
+            visibleWorkOrderCount: rows.length,
             sortedBy: bucketSort.sortedBy,
             sortDirection: bucketSort.sortDirection,
             columns: columns,

@@ -1,4 +1,9 @@
-trigger WorkOrderLedger on WorkOrder (after insert, after update) {
+trigger WorkOrderLedger on WorkOrder (before delete, after insert, after update) {
+    if (Trigger.isDelete) {
+        WorkOrderLedgerService.handleWorkOrderDeletes(Trigger.old);
+        return;
+    }
+
     if (!WorkOrderLedgerAutomationControl.shouldRunSyncAutomation()) {
         return;
     }

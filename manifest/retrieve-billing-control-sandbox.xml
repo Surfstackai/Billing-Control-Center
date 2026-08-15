@@ -6,13 +6,18 @@
         <members>BillingControl_DataProvider</members>
         <members>BillingControl_DataProviderTest</members>
         <members>BillingControl_Invoicing</members>
+        <members>BillingControl_Attribution</members>
+        <members>BillingControl_InvoiceRecordFactory</members>
+        <members>BillingControl_CompleteBilling</members>
+        <members>BillingControl_InvSync</members>
+        <members>BillingControl_Receivables</members>
         <members>BillingControl_Orders</members>
         <members>BillingControlCenterController</members>
         <members>BillingControlCenterControllerShimTest</members>
         <members>BillingControlCenterControllerTest</members>
         <members>BillingControlCenterService</members>
         <members>BillingControlCenterServiceShimTest</members>
-        <members>BillingControlCenterServiceTest</members>
+        <members>BillingControl_InvoicingTest</members>
         <members>EstimatorFilesController</members>
         <members>EstimatorFilesControllerTest</members>
         <name>ApexClass</name>

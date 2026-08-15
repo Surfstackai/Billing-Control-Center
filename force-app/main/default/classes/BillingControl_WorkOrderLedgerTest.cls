@@ -3,7 +3,6 @@ private class BillingControl_WorkOrderLedgerTest {
     @IsTest
     static void compactListUsesWorkOrderGrainWithoutOrders() {
         WorkOrderLedgerAutomationControl.disableForTests();
-        OrderDiaryAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Tab Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Tab Type', 1);
@@ -16,6 +15,7 @@ private class BillingControl_WorkOrderLedgerTest {
         WorkOrder noAppointmentWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'No SA Ledger WO');
         WorkOrder noOpportunityWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'No Opp Ledger WO');
         WorkOrder scheduledTodayWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Scheduled Today Ledger WO');
+        WorkOrder inProgressWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'In Progress Ledger WO');
         WorkOrder woliWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'WOLI Parent Ledger WO');
         WorkOrder completedWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Completed Week Ledger WO');
 
@@ -25,6 +25,7 @@ private class BillingControl_WorkOrderLedgerTest {
             new Opportunity_WorkOrder__c(Work_Order__c = multiOppWorkOrder.Id, Opportunity__c = secondOpportunity.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = noAppointmentWorkOrder.Id, Opportunity__c = firstOpportunity.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = scheduledTodayWorkOrder.Id, Opportunity__c = firstOpportunity.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = inProgressWorkOrder.Id, Opportunity__c = firstOpportunity.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = woliWorkOrder.Id, Opportunity__c = firstOpportunity.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = completedWorkOrder.Id, Opportunity__c = firstOpportunity.Id)
         };
@@ -36,12 +37,22 @@ private class BillingControl_WorkOrderLedgerTest {
         WorkOrderLineItem lineItem = new WorkOrderLineItem(WorkOrderId = woliWorkOrder.Id);
         insert lineItem;
 
+        ServiceAppointment inProgressAppointment = buildAppointment(
+            inProgressWorkOrder.Id,
+            'Scheduled',
+            todayStart,
+            null,
+            'In Progress SA'
+        );
+        inProgressAppointment.ActualStartTime = todayStart;
+
         insert new List<ServiceAppointment>{
             buildAppointment(multiSaWorkOrder.Id, 'None', null, null, 'Unscheduled SA One'),
             buildAppointment(multiSaWorkOrder.Id, 'Scheduled', futureStart, null, 'Future SA Two'),
             buildAppointment(multiOppWorkOrder.Id, 'None', null, null, 'Multi Opp SA'),
             buildAppointment(noOpportunityWorkOrder.Id, 'None', null, null, 'No Opp SA'),
             buildAppointment(scheduledTodayWorkOrder.Id, 'Scheduled', todayStart, null, 'Today SA'),
+            inProgressAppointment,
             buildAppointment(lineItem.Id, 'None', null, null, 'WOLI SA'),
             buildAppointment(completedWorkOrder.Id, 'Completed', weekEnd.addHours(-2), weekEnd, 'Completed SA')
         };
@@ -53,6 +64,7 @@ private class BillingControl_WorkOrderLedgerTest {
                 noAppointmentWorkOrder.Id,
                 noOpportunityWorkOrder.Id,
                 scheduledTodayWorkOrder.Id,
+                inProgressWorkOrder.Id,
                 woliWorkOrder.Id,
                 completedWorkOrder.Id
             }
@@ -63,23 +75,38 @@ private class BillingControl_WorkOrderLedgerTest {
         Test.stopTest();
 
         System.assertEquals(true, runtime.kpis.unscheduledCount >= 1);
+        System.assertEquals(true, runtime.kpis.scheduledCount >= 1);
         System.assertEquals(true, runtime.kpis.inProgressCount >= 1);
-        System.assertEquals(true, runtime.kpis.completedNotBilledCount >= 1);
-        System.assertEquals(true, runtime.kpis.completedThisWeekCount >= 1);
-        System.assertEquals(true, runtime.kpis.completedThisMonthCount >= 1);
+        System.assertEquals(0, runtime.kpis.completedNotBilledCount);
+        System.assertEquals(0, runtime.kpis.completedThisWeekCount);
+        System.assertEquals(0, runtime.kpis.completedThisMonthCount);
         System.assertEquals(0, runtime.kpis.noOpportunityCount);
         System.assertEquals(0, runtime.kpis.noServiceAppointmentCount);
         System.assertEquals(0, runtime.kpis.multipleOpportunitiesCount);
 
         BillingControl_Orders.WorkOrderRowWrapper multiSaRow = findRow(
-            findSection(runtime.sections, 'IN_PROGRESS').rows,
+            findSection(runtime.sections, 'SCHEDULED_APPOINTMENTS').rows,
             multiSaWorkOrder.Id
         );
         System.assertNotEquals(null, multiSaRow);
-        System.assertEquals(1, countRows(findSection(runtime.sections, 'IN_PROGRESS').rows, multiSaWorkOrder.Id));
+        System.assertEquals(1, countRows(findSection(runtime.sections, 'SCHEDULED_APPOINTMENTS').rows, multiSaWorkOrder.Id));
         System.assertEquals(0, countRows(findSection(runtime.sections, 'READY_TO_SCHEDULE').rows, multiSaWorkOrder.Id));
         System.assertEquals(1, countOperationalOccurrences(runtime.sections, multiSaWorkOrder.Id));
         System.assertEquals(2, multiSaRow.relatedServiceAppointments.size());
+        Boolean sawNoneDisplay = false;
+        Boolean sawScheduledDisplay = false;
+        for (BillingControl_Orders.WorkOrderRowWrapper appointmentRow : multiSaRow.relatedServiceAppointments) {
+            if (appointmentRow.serviceAppointmentDisplay != null
+                && appointmentRow.serviceAppointmentDisplay.contains('(none)')) {
+                sawNoneDisplay = true;
+            }
+            if (appointmentRow.serviceAppointmentDisplay != null
+                && appointmentRow.serviceAppointmentDisplay.contains('(Scheduled -')) {
+                sawScheduledDisplay = true;
+            }
+        }
+        System.assertEquals(true, sawNoneDisplay);
+        System.assertEquals(true, sawScheduledDisplay);
         System.assertEquals(1000, multiSaRow.opportunityAmount);
         System.assertEquals(firstOpportunity.Name, multiSaRow.opportunityName);
         System.assertEquals(firstOpportunity.Id, multiSaRow.opportunityId);
@@ -90,7 +117,9 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertNotEquals(null, multiSaRow.ledgerId);
         System.assertEquals(multiSaRow.reconciliationStatus, multiSaRow.status);
         System.assertNotEquals(null, multiSaRow.createdDate);
+        System.assertNotEquals(null, multiSaRow.earliestStartTime);
         System.assertEquals('Multi SA Ledger WO', multiSaRow.subject);
+        System.assertEquals('Ledger Tab Type', multiSaRow.workTypeName);
 
         BillingControl_Orders.WorkOrderRowWrapper multiOppRow = findRow(
             findSection(runtime.sections, 'READY_TO_SCHEDULE').rows,
@@ -121,7 +150,7 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(null, noOppRow.opportunityAmount);
 
         BillingControl_Orders.WorkOrderRowWrapper todayRow = findRow(
-            findSection(runtime.sections, 'IN_PROGRESS').rows,
+            findSection(runtime.sections, 'SCHEDULED_APPOINTMENTS').rows,
             scheduledTodayWorkOrder.Id
         );
         System.assertNotEquals(null, todayRow);
@@ -130,6 +159,15 @@ private class BillingControl_WorkOrderLedgerTest {
             todayRow.relatedServiceAppointments[0].schedStartTime.date(),
             'Scheduled today must honor the running user timezone.'
         );
+        System.assertEquals(true, todayRow.relatedServiceAppointments[0].serviceAppointmentDisplay.contains('(Scheduled -'));
+
+        BillingControl_Orders.WorkOrderRowWrapper inProgressRow = findRow(
+            findSection(runtime.sections, 'IN_PROGRESS').rows,
+            inProgressWorkOrder.Id
+        );
+        System.assertNotEquals(null, inProgressRow);
+        System.assertEquals(1, countOperationalOccurrences(runtime.sections, inProgressWorkOrder.Id));
+        System.assertEquals(true, inProgressRow.relatedServiceAppointments[0].serviceAppointmentDisplay.contains('(In Progress -'));
 
         BillingControl_Orders.WorkOrderRowWrapper woliRow = findRow(
             findSection(runtime.sections, 'READY_TO_SCHEDULE').rows,
@@ -138,30 +176,45 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertNotEquals(null, woliRow);
         System.assertEquals(1, woliRow.relatedServiceAppointments.size());
 
-        System.assertNotEquals(
+        System.assertEquals(
             null,
-            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, completedWorkOrder.Id)
+            findAnyRow(runtime.sections, completedWorkOrder.Id),
+            'Completed Service Appointments belong on Invoicing, not Work Order Ledger.'
         );
-        System.assertEquals(1, countOperationalOccurrences(runtime.sections, completedWorkOrder.Id));
+        System.assertEquals(0, countOperationalOccurrences(runtime.sections, completedWorkOrder.Id));
+        System.assertNotEquals(null, BillingControl_WorkOrderLedger.getLedgerIdsByWorkOrderId(
+            new Set<Id>{ multiOppWorkOrder.Id }
+        ).get(multiOppWorkOrder.Id));
+        System.assertNotEquals(null, BillingControl_WorkOrderLedger.getLedgerIdsByOpportunityId(
+            new Set<Id>{ firstOpportunity.Id }
+        ).get(firstOpportunity.Id));
     }
 
     @IsTest
     static void dateFilterUsesCompletedServiceDate() {
         WorkOrderLedgerAutomationControl.disableForTests();
-        OrderDiaryAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Date Filter Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Date Filter Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Date Filter Opp', 500);
         WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Completed Today Ledger WO');
+        WorkOrder siblingReadyWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Sibling Ready Ledger WO');
         Datetime completedEnd = Datetime.newInstance(Date.today(), Time.newInstance(14, 0, 0, 0));
-        insert buildAppointment(
-            workOrderRecord.Id,
-            'Completed',
-            completedEnd.addHours(-2),
-            completedEnd,
-            'Completed Today SA'
-        );
-        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+        insert new List<ServiceAppointment>{
+            buildAppointment(
+                workOrderRecord.Id,
+                'Completed',
+                completedEnd.addHours(-2),
+                completedEnd,
+                'Completed Today SA'
+            ),
+            buildAppointment(siblingReadyWorkOrder.Id, 'None', null, null, 'Sibling Ready SA')
+        };
+        insert new List<Opportunity_WorkOrder__c>{
+            new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = siblingReadyWorkOrder.Id, Opportunity__c = opportunityRecord.Id)
+        };
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id, siblingReadyWorkOrder.Id });
 
         Date todayDate = Date.today();
         BillingControl_DataProvider.BillingFilterContextDTO thisYearContext =
@@ -220,14 +273,19 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(
             true,
             countAllRows(thisYearRuntime.sections) >= 1,
-            'This Year should include Work Orders completed today.'
+            'This Year should include related Work Orders for Opportunities completed today.'
+        );
+        System.assertEquals(
+            null,
+            findAnyRow(thisYearRuntime.sections, workOrderRecord.Id),
+            'Completed Work Orders stay off Work Order Ledger.'
         );
         System.assertNotEquals(
             null,
-            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_NOT_BILLED').rows, workOrderRecord.Id)
+            findRow(findSection(thisYearRuntime.sections, 'READY_TO_SCHEDULE').rows, siblingReadyWorkOrder.Id)
         );
-        System.assertEquals(true, thisYearRuntime.kpis.completedThisWeekCount >= 1);
-        System.assertEquals(true, thisYearRuntime.kpis.completedThisMonthCount >= 1);
+        System.assertEquals(0, thisYearRuntime.kpis.completedThisWeekCount);
+        System.assertEquals(0, thisYearRuntime.kpis.completedThisMonthCount);
         System.assertEquals(
             0,
             countAllRows(lastYearRuntime.sections),
@@ -238,13 +296,12 @@ private class BillingControl_WorkOrderLedgerTest {
     @IsTest
     static void dateFilterExpandsOpportunityWorkAndHonorsOwner() {
         WorkOrderLedgerAutomationControl.disableForTests();
-        OrderDiaryAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Expand Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Expand Type', 1);
 
         List<User> otherUsers = [
-            SELECT Id
+            SELECT Id, Name
             FROM User
             WHERE Id != :UserInfo.getUserId()
             AND IsActive = true
@@ -277,6 +334,7 @@ private class BillingControl_WorkOrderLedgerTest {
             new Opportunity_WorkOrder__c(Work_Order__c = siblingRelatedWorkOrder.Id, Opportunity__c = opportunityA.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = sharedWorkOrder.Id, Opportunity__c = opportunityA.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = sharedWorkOrder.Id, Opportunity__c = opportunityB.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = sharedWorkOrder.Id, Opportunity__c = opportunityOtherOwner.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = opportunityBOnlyWorkOrder.Id, Opportunity__c = opportunityB.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = billedOnlyWorkOrder.Id, Opportunity__c = opportunityB.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = otherOwnerWorkOrder.Id, Opportunity__c = opportunityOtherOwner.Id)
@@ -371,23 +429,19 @@ private class BillingControl_WorkOrderLedgerTest {
             BillingControl_WorkOrderLedger.getRuntime(62L, ownerContext);
         Test.stopTest();
 
-        System.assertNotEquals(
-            null,
-            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_NOT_BILLED').rows, matchingWorkOrder.Id)
-        );
-        System.assertEquals(1, countOperationalOccurrences(thisYearRuntime.sections, matchingWorkOrder.Id));
         System.assertEquals(
             null,
-            findRow(findSection(thisYearRuntime.sections, 'COMPLETED_NOT_BILLED').rows, siblingRelatedWorkOrder.Id),
-            'Billed completed leftover must not enter Completed, Not Billed.'
+            findAnyRow(thisYearRuntime.sections, matchingWorkOrder.Id),
+            'Completed Work Orders stay off Work Order Ledger.'
         );
-        BillingControl_Orders.WorkOrderRowWrapper relatedRow = findRow(
-            findSection(thisYearRuntime.sections, 'RELATED_WORK').rows,
-            siblingRelatedWorkOrder.Id
+        System.assertEquals(0, countOperationalOccurrences(thisYearRuntime.sections, matchingWorkOrder.Id));
+        System.assertEquals(
+            null,
+            findAnyRow(thisYearRuntime.sections, siblingRelatedWorkOrder.Id),
+            'Invoiced Work Orders stay off Work Order Ledger.'
         );
-        System.assertNotEquals(null, relatedRow, 'Billed completed leftover lands in Related Work.');
-        System.assertEquals(true, thisYearRuntime.kpis.completedThisWeekCount >= 1);
-        System.assertEquals(true, thisYearRuntime.kpis.completedThisMonthCount >= 1);
+        System.assertEquals(0, thisYearRuntime.kpis.completedThisWeekCount);
+        System.assertEquals(0, thisYearRuntime.kpis.completedThisMonthCount);
 
         BillingControl_Orders.WorkOrderRowWrapper sharedRow = findRow(
             findSection(thisYearRuntime.sections, 'READY_TO_SCHEDULE').rows,
@@ -396,27 +450,56 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertNotEquals(null, sharedRow);
         System.assertEquals(true, sharedRow.opportunityName.contains(opportunityA.Name));
         System.assertEquals(true, sharedRow.opportunityName.contains(opportunityB.Name));
+        System.assertEquals(true, sharedRow.opportunityName.contains(opportunityOtherOwner.Name));
         System.assertEquals(true, sharedRow.ownerName.contains(UserInfo.getName()));
 
-        System.assertEquals(
+        System.assertNotEquals(
             null,
-            findAnyRow(thisYearRuntime.sections, opportunityBOnlyWorkOrder.Id),
-            'Opportunity B Work Orders stay out unless Opportunity B also matches.'
+            findRow(findSection(thisYearRuntime.sections, 'SCHEDULED_APPOINTMENTS').rows, opportunityBOnlyWorkOrder.Id),
+            'Work Orders created or scheduled in range stay on Work Order Ledger.'
         );
         System.assertEquals(
             null,
             findAnyRow(thisYearRuntime.sections, billedOnlyWorkOrder.Id),
             'Billed completed appointments do not qualify an Opportunity.'
         );
-        System.assertNotEquals(
+        System.assertEquals(
             null,
             findAnyRow(thisYearRuntime.sections, noOpportunityWorkOrder.Id),
-            'No-opportunity completed work stays visible when no owner filter is set.'
+            'Completed Work Orders stay off Work Order Ledger even without an Opportunity.'
         );
-        System.assertNotEquals(null, findAnyRow(thisYearRuntime.sections, otherOwnerWorkOrder.Id));
+        System.assertEquals(
+            null,
+            findAnyRow(thisYearRuntime.sections, otherOwnerWorkOrder.Id),
+            'Completed Work Orders stay off Work Order Ledger.'
+        );
 
-        System.assertNotEquals(null, findAnyRow(ownerRuntime.sections, matchingWorkOrder.Id));
-        System.assertNotEquals(null, findAnyRow(ownerRuntime.sections, siblingRelatedWorkOrder.Id));
+        System.assertEquals(
+            null,
+            findAnyRow(ownerRuntime.sections, matchingWorkOrder.Id),
+            'Completed Work Orders stay off Work Order Ledger.'
+        );
+        System.assertEquals(
+            null,
+            findAnyRow(ownerRuntime.sections, siblingRelatedWorkOrder.Id),
+            'Invoiced Work Orders stay off Work Order Ledger.'
+        );
+        System.assertNotEquals(null, findAnyRow(ownerRuntime.sections, sharedWorkOrder.Id));
+        BillingControl_Orders.WorkOrderRowWrapper ownerSharedRow = findAnyRow(ownerRuntime.sections, sharedWorkOrder.Id);
+        System.assertEquals(true, ownerSharedRow.opportunityName.contains(opportunityA.Name));
+        System.assertEquals(true, ownerSharedRow.opportunityName.contains(opportunityB.Name));
+        System.assertEquals(
+            false,
+            ownerSharedRow.opportunityName.contains(opportunityOtherOwner.Name),
+            'Owner filter shows only that salesperson\'s opportunities on mixed Work Orders.'
+        );
+        System.assertEquals(1600, ownerSharedRow.opportunityAmount);
+        System.assertEquals(true, ownerSharedRow.ownerName.contains(UserInfo.getName()));
+        System.assertEquals(
+            false,
+            ownerSharedRow.ownerName != null && ownerSharedRow.ownerName.contains(otherUsers[0].Name),
+            'Owner filter hides other salespeople on mixed Work Orders.'
+        );
         System.assertEquals(
             null,
             findAnyRow(ownerRuntime.sections, otherOwnerWorkOrder.Id),
@@ -427,15 +510,11 @@ private class BillingControl_WorkOrderLedgerTest {
             findAnyRow(ownerRuntime.sections, noOpportunityWorkOrder.Id),
             'No-opportunity rows drop when an owner is selected.'
         );
-
-        BillingControl_Orders.WorkOrderRowWrapper matchingRow = findAnyRow(thisYearRuntime.sections, matchingWorkOrder.Id);
-        System.assertEquals(UserInfo.getName(), matchingRow.ownerName);
     }
 
     @IsTest
     static void ledgerDetailLoadsOnDemandForOneLedger() {
         WorkOrderLedgerAutomationControl.disableForTests();
-        OrderDiaryAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Detail Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Detail Type', 1);
@@ -536,6 +615,7 @@ private class BillingControl_WorkOrderLedgerTest {
             System.assertEquals(partsStatus, detail.partsStatus);
         }
         System.assertEquals(2, detail.opportunities.size());
+        System.assertEquals(UserInfo.getName(), detail.opportunities[0].ownerName);
         System.assertEquals(2, detail.appointments.size());
         System.assertEquals(true, detail.timeline.size() >= 2);
         System.assertEquals(otherWorkOrder.Id, otherDetail.workOrderId);
@@ -577,33 +657,31 @@ private class BillingControl_WorkOrderLedgerTest {
     }
 
     @IsTest
-    static void operationalClassificationIsExclusiveAndWeekMonthAreBillingAgnostic() {
+    static void operationalBucketsExcludeInvoicedAndCompleted() {
         WorkOrderLedgerAutomationControl.disableForTests();
-        OrderDiaryAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Classify Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Classify Type', 1);
 
         Opportunity unbilledOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Unbilled Completed Opp', 400);
         Opportunity billedOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Billed Completed Opp', 250);
-        Opportunity multiCompleteOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Multi Complete Opp', 300);
+        Opportunity woInvoiceOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'WO Invoice Opp', 300);
 
         WorkOrder unbilledWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Unbilled Completed WO');
         WorkOrder billedWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Billed Completed WO');
-        WorkOrder multiCompleteWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Multi Complete WO');
+        WorkOrder woInvoiceWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'WO Invoice WO');
 
         insert new List<Opportunity_WorkOrder__c>{
             new Opportunity_WorkOrder__c(Work_Order__c = unbilledWorkOrder.Id, Opportunity__c = unbilledOpportunity.Id),
             new Opportunity_WorkOrder__c(Work_Order__c = billedWorkOrder.Id, Opportunity__c = billedOpportunity.Id),
-            new Opportunity_WorkOrder__c(Work_Order__c = multiCompleteWorkOrder.Id, Opportunity__c = multiCompleteOpportunity.Id)
+            new Opportunity_WorkOrder__c(Work_Order__c = woInvoiceWorkOrder.Id, Opportunity__c = woInvoiceOpportunity.Id)
         };
 
         Datetime weekEnd = Datetime.newInstance(Date.today(), Time.newInstance(14, 0, 0, 0));
         insert new List<ServiceAppointment>{
             buildAppointment(unbilledWorkOrder.Id, 'Completed', weekEnd.addHours(-2), weekEnd, 'Unbilled Completed SA'),
             buildAppointment(billedWorkOrder.Id, 'Completed', weekEnd.addHours(-2), weekEnd, 'Billed Completed SA'),
-            buildAppointment(multiCompleteWorkOrder.Id, 'Completed', weekEnd.addHours(-3), weekEnd.addHours(-1), 'Multi Complete SA One'),
-            buildAppointment(multiCompleteWorkOrder.Id, 'Completed', weekEnd.addHours(-2), weekEnd, 'Multi Complete SA Two')
+            buildAppointment(woInvoiceWorkOrder.Id, 'None', null, null, 'Ready But Invoiced SA')
         };
         ServiceAppointment billedAppointment = [
             SELECT Id
@@ -613,59 +691,31 @@ private class BillingControl_WorkOrderLedgerTest {
         ];
         billedAppointment.Invoice_Number__c = 'INV-CLASSIFY-BILLED';
         update billedAppointment;
+        woInvoiceWorkOrder.Invoice_Number__c = 'INV-WO-CLASSIFY';
+        update woInvoiceWorkOrder;
 
         WorkOrderLedgerService.backfillWorkOrders(
-            new Set<Id>{ unbilledWorkOrder.Id, billedWorkOrder.Id, multiCompleteWorkOrder.Id }
+            new Set<Id>{ unbilledWorkOrder.Id, billedWorkOrder.Id, woInvoiceWorkOrder.Id }
         );
 
         Test.startTest();
         BillingControl_WorkOrderLedger.RuntimeBundle runtime = BillingControl_WorkOrderLedger.getRuntime(71L, null);
         Test.stopTest();
 
-        System.assertEquals(1, countOperationalOccurrences(runtime.sections, unbilledWorkOrder.Id));
-        System.assertEquals(1, countOperationalOccurrences(runtime.sections, billedWorkOrder.Id));
-        System.assertEquals(1, countOperationalOccurrences(runtime.sections, multiCompleteWorkOrder.Id));
-        System.assertNotEquals(
-            null,
-            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, unbilledWorkOrder.Id)
-        );
-        System.assertNotEquals(
-            null,
-            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, multiCompleteWorkOrder.Id)
-        );
-        System.assertEquals(
-            1,
-            countRows(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, multiCompleteWorkOrder.Id),
-            'Multiple completed Service Appointments still produce one Work Order row.'
-        );
-        System.assertEquals(
-            null,
-            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, billedWorkOrder.Id)
-        );
-        BillingControl_Orders.WorkOrderRowWrapper billedRow = findRow(
-            findSection(runtime.sections, 'RELATED_WORK').rows,
-            billedWorkOrder.Id
-        );
-        System.assertNotEquals(null, billedRow);
-        System.assertEquals(true, billedRow.relatedServiceAppointments[0].billedBadge);
-        System.assertEquals(
-            false,
-            findRow(findSection(runtime.sections, 'COMPLETED_NOT_BILLED').rows, unbilledWorkOrder.Id)
-                .relatedServiceAppointments[0].billedBadge
-        );
-
-        System.assertEquals(true, runtime.kpis.completedNotBilledCount >= 2);
-        System.assertEquals(true, runtime.kpis.completedNotBilledRevenue >= 700);
-        System.assertEquals(true, runtime.kpis.completedThisWeekCount >= 3);
-        System.assertEquals(true, runtime.kpis.completedThisMonthCount >= runtime.kpis.completedThisWeekCount);
-        System.assertEquals(true, runtime.kpis.completedThisWeekRevenue >= 950);
-        System.assertEquals(true, runtime.kpis.completedThisMonthRevenue >= 950);
+        System.assertEquals(0, countOperationalOccurrences(runtime.sections, unbilledWorkOrder.Id));
+        System.assertEquals(0, countOperationalOccurrences(runtime.sections, billedWorkOrder.Id));
+        System.assertEquals(0, countOperationalOccurrences(runtime.sections, woInvoiceWorkOrder.Id));
+        System.assertEquals(null, findAnyRow(runtime.sections, unbilledWorkOrder.Id));
+        System.assertEquals(null, findAnyRow(runtime.sections, billedWorkOrder.Id));
+        System.assertEquals(null, findAnyRow(runtime.sections, woInvoiceWorkOrder.Id));
+        System.assertEquals(0, runtime.kpis.completedNotBilledCount);
+        System.assertEquals(0, runtime.kpis.completedThisWeekCount);
+        System.assertEquals(0, runtime.kpis.completedThisMonthCount);
     }
 
     @IsTest
     static void validationCountsAreAvailableForDiagnostics() {
         WorkOrderLedgerAutomationControl.disableForTests();
-        OrderDiaryAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Validation Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Validation Type', 1);
@@ -689,6 +739,87 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(LEDGER_QUERY_LIMIT_FOR_ASSERT, counts.listWindowLimit);
         System.assertEquals(false, counts.listTruncated);
         System.assertEquals(true, counts.openLedgerCount >= 1);
+    }
+
+    @IsTest
+    static void dateFilterIncludesWoliParentScheduledInRange() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger WOLI Date Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger WOLI Date Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'WOLI Date Opp', 400);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'WOLI Date Ledger WO');
+        WorkOrderLineItem lineItem = new WorkOrderLineItem(WorkOrderId = workOrderRecord.Id);
+        insert lineItem;
+        Datetime scheduledStart = Datetime.newInstance(Date.today(), Time.newInstance(10, 0, 0, 0));
+        insert buildAppointment(lineItem.Id, 'Scheduled', scheduledStart, null, 'WOLI Date SA');
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime =
+            BillingControl_WorkOrderLedger.getRuntime(61L, thisYearDateContext(Date.today()));
+        Test.stopTest();
+
+        System.assertNotEquals(
+            null,
+            findAnyRow(runtime.sections, workOrderRecord.Id),
+            'A WOLI-parented in-range Service Appointment must include its Work Order.'
+        );
+    }
+
+    @IsTest
+    static void dateFilterSchedStartOnlyDoesNotRequireActualEnd() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger SchedStart Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger SchedStart Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'SchedStart Opp', 350);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'SchedStart Ledger WO');
+        Datetime scheduledStart = Datetime.newInstance(Date.today(), Time.newInstance(11, 0, 0, 0));
+        insert buildAppointment(workOrderRecord.Id, 'Scheduled', scheduledStart, null, 'SchedStart Only SA');
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime =
+            BillingControl_WorkOrderLedger.getRuntime(62L, thisYearDateContext(Date.today()));
+        Test.stopTest();
+
+        System.assertNotEquals(
+            null,
+            findAnyRow(runtime.sections, workOrderRecord.Id),
+            'SchedStartTime in range must include the Work Order even when ActualEndTime is blank.'
+        );
+    }
+
+    @IsTest
+    static void dateFilterExcludesClosedWorkOrderAppointments() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        String closedStatus = firstClosedWorkOrderStatus();
+        System.assertNotEquals(null, closedStatus, 'Need a configured closed Work Order status.');
+
+        Account accountRecord = new Account(Name = 'Ledger Closed Date Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Closed Date Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Closed Date Opp', 275);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Closed Date Ledger WO');
+        Datetime scheduledStart = Datetime.newInstance(Date.today(), Time.newInstance(9, 0, 0, 0));
+        insert buildAppointment(workOrderRecord.Id, 'Scheduled', scheduledStart, null, 'Closed Date SA');
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+        update new WorkOrder(Id = workOrderRecord.Id, Status = closedStatus);
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime =
+            BillingControl_WorkOrderLedger.getRuntime(63L, thisYearDateContext(Date.today()));
+        Test.stopTest();
+
+        System.assertEquals(
+            null,
+            findAnyRow(runtime.sections, workOrderRecord.Id),
+            'Closed Work Orders must stay out of date-filtered ledger results.'
+        );
     }
 
     private static final Integer LEDGER_QUERY_LIMIT_FOR_ASSERT = 10000;
@@ -920,6 +1051,16 @@ private class BillingControl_WorkOrderLedgerTest {
             }
         }
         return 'New';
+    }
+
+    private static String firstClosedWorkOrderStatus() {
+        Set<String> closedStatuses = WorkOrderLedgerService.getClosedWorkOrderStatusValues();
+        for (Schema.PicklistEntry picklistEntry : WorkOrder.Status.getDescribe().getPicklistValues()) {
+            if (picklistEntry.isActive() && closedStatuses.contains(picklistEntry.getValue())) {
+                return picklistEntry.getValue();
+            }
+        }
+        return null;
     }
 
     private static String firstOpportunityStage() {

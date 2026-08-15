@@ -26,7 +26,7 @@ const KPI_CONFIG = [
         key: 'revenueUnderCollection',
         developerKey: 'ACCOUNTS_RECEIVABLE',
         countKey: 'revenueUnderCollectionCount',
-        title: 'Accounts Receivable (A/R)',
+        title: 'Receivables Outstanding',
         icon: 'utility:moneybag',
         hint: 'Opportunity Amount where Billing Status = Billed (Outstanding Receivable)'
     },
@@ -56,10 +56,12 @@ const CATEGORY_KEYS = {
 
 const DEFAULT_HERO_TITLE = 'Receivables';
 const DEFAULT_HERO_SUBTITLE = 'Track open invoices, posted receipts, and commission payouts.';
-const DEFAULT_TABLE_TITLE = 'Outstanding Opportunities and Payment Status';
+const DEFAULT_TABLE_TITLE = 'Receivables Outstanding';
 const DEFAULT_REFRESH_LABEL = 'Refresh';
 const DEFAULT_POST_RECEIPT_LABEL = 'Post Receipt';
 const DEFAULT_PAY_COMMISSION_LABEL = 'Pay Commission';
+const DEFAULT_DATE_FILTER = { filterKey: 'This Year' };
+const VISIBLE_KPI_DEVELOPER_KEYS = new Set(['ACCOUNTS_RECEIVABLE', 'OUTSTANDING_RECEIVABLES']);
 const RECEIVABLES_DATASET_KEYS = {
     INVOICES: 'RECEIVABLES_INVOICES',
     COMMISSIONS: 'RECEIVABLES_COMMISSIONS'
@@ -97,14 +99,26 @@ function cloneRuntimeData(value) {
     return value ? JSON.parse(JSON.stringify(value)) : value;
 }
 
-function buildRuntimeCacheKey(dateFilter) {
-    return JSON.stringify(dateFilter || null);
+function buildRuntimeCacheKey(dateFilter, opportunityOwnerId) {
+    return JSON.stringify({
+        dateFilter: dateFilter || null,
+        opportunityOwnerId: opportunityOwnerId || null
+    });
 }
 
 export default class BillingControlCenterCommission extends NavigationMixin(LightningElement) {
-    _dateFilter;
-    _dateFilterSignature = '';
+    _dateFilter = { ...DEFAULT_DATE_FILTER };
+    _dateFilterSignature = JSON.stringify(DEFAULT_DATE_FILTER);
     _isConnected = false;
+    opportunityOwnerId;
+    userPickerDisplayInfo = {
+        primaryField: 'Name',
+        additionalFields: ['Username']
+    };
+    userPickerMatchingInfo = {
+        primaryField: { fieldPath: 'Name' },
+        additionalFields: [{ fieldPath: 'Username' }]
+    };
 
     @api useExternalToolbar = false;
 
@@ -118,6 +132,8 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     isActionLoading = false;
     isPostReceiptModalOpen = false;
     selectedOpportunityForReceipt = null;
+    selectedLedgerId;
+    showLedgerModal = false;
     errorMessage;
     providerWarnings = [];
     receivablesTabConfig;
@@ -151,6 +167,18 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         }
     }
 
+    get dateFilterKey() {
+        return this.dateFilter?.filterKey || DEFAULT_DATE_FILTER.filterKey;
+    }
+
+    get dateFilterStart() {
+        return this.dateFilter?.startDate || '';
+    }
+
+    get dateFilterEnd() {
+        return this.dateFilter?.endDate || '';
+    }
+
     connectedCallback() {
         this._isConnected = true;
         this.columnWidths = loadColumnWidths(RECEIVABLES_COLUMN_WIDTHS_KEY);
@@ -170,7 +198,8 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             invoiceAmount: columnWidthStyle(this.columnWidths.invoiceAmount),
             commissionAmount: columnWidthStyle(this.columnWidths.commissionAmount),
             commissionPaid: columnWidthStyle(this.columnWidths.commissionPaid),
-            outstandingCommission: columnWidthStyle(this.columnWidths.outstandingCommission)
+            outstandingCommission: columnWidthStyle(this.columnWidths.outstandingCommission),
+            ledger: columnWidthStyle(this.columnWidths.ledger)
         };
     }
 
@@ -184,12 +213,12 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
 
     get kpiTiles() {
         if (!this.receivablesConfigLoaded) {
-            return KPI_CONFIG.map(tile => this.buildKpiTile(tile));
+            return [this.buildKpiTile(KPI_CONFIG[0])];
         }
 
         const configuredKpis = this.receivablesTabConfig?.kpis || [];
         if (configuredKpis.length === 0) {
-            return [];
+            return [this.buildKpiTile(KPI_CONFIG[0])];
         }
 
         const tiles = [];
@@ -204,6 +233,10 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                 return;
             }
 
+            if (!VISIBLE_KPI_DEVELOPER_KEYS.has(developerKey)) {
+                return;
+            }
+
             if (definition.datasetKey && !this.receivablesDatasetsByKey[definition.datasetKey]) {
                 return;
             }
@@ -211,7 +244,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             tiles.push(this.buildKpiTile(definition, configRecord));
         });
 
-        return tiles;
+        return tiles.length > 0 ? tiles : [this.buildKpiTile(KPI_CONFIG[0])];
     }
 
     get heroTitle() {
@@ -223,17 +256,6 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     get tableTitle() {
-        const invoicesLabel = this.receivablesSectionsByKey.INVOICES?.label;
-        const commissionsLabel = this.receivablesSectionsByKey.COMMISSIONS?.label;
-        if (invoicesLabel && commissionsLabel) {
-            return `${invoicesLabel} and ${commissionsLabel}`;
-        }
-        if (invoicesLabel) {
-            return invoicesLabel;
-        }
-        if (commissionsLabel) {
-            return commissionsLabel;
-        }
         return DEFAULT_TABLE_TITLE;
     }
 
@@ -505,6 +527,23 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         window.open(url, '_blank');
     }
 
+    handleViewLedger(event) {
+        const host =
+            event.currentTarget?.closest?.('[data-ledger-id]') ||
+            event.target?.closest?.('[data-ledger-id]');
+        const ledgerId = host?.dataset?.ledgerId;
+        if (!ledgerId) {
+            return;
+        }
+        this.selectedLedgerId = ledgerId;
+        this.showLedgerModal = true;
+    }
+
+    handleCloseLedgerModal() {
+        this.showLedgerModal = false;
+        this.selectedLedgerId = undefined;
+    }
+
     async handleRefresh() {
         if (this.isRefreshing) {
             return;
@@ -530,6 +569,27 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     handleHeroActionClick(event) {
         if (event.detail?.key === 'refresh') {
             this.handleRefresh();
+        }
+    }
+
+    handleDateFilterChange(event) {
+        const detail = event.detail || {};
+        const filterKey = detail.filterKey || DEFAULT_DATE_FILTER.filterKey;
+        this.dateFilter = {
+            filterKey,
+            startDate: filterKey === 'Custom' ? detail.startDate || null : null,
+            endDate: filterKey === 'Custom' ? detail.endDate || null : null
+        };
+    }
+
+    handleOpportunityOwnerChange(event) {
+        const nextOwnerId = event.detail?.recordId || null;
+        if (nextOwnerId === this.opportunityOwnerId) {
+            return;
+        }
+        this.opportunityOwnerId = nextOwnerId;
+        if (this._isConnected) {
+            this.loadData();
         }
     }
 
@@ -630,7 +690,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     buildKpiTile(definition, configRecord) {
         return {
             ...definition,
-            title: configRecord?.label || definition.title,
+            title: definition.title,
             icon: configRecord?.iconName || definition.icon,
             metricText: CURRENCY_FORMATTER.format(this.metrics[definition.key] || 0),
             countText: this.buildKpiCountText(definition.countKey)
@@ -638,52 +698,49 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     getRenderableCommissionSections() {
+        let sections;
         if (!this.receivablesConfigLoaded) {
-            return this.commissionSections;
-        }
+            sections = this.commissionSections;
+        } else {
+            const configuredSections = this.receivablesTabConfig?.sections || [];
+            if (configuredSections.length === 0) {
+                sections = this.commissionSections;
+            } else {
+                const supportedSectionKeys = new Set();
+                configuredSections.forEach(configRecord => {
+                    const developerKey = normalizeConfigKey(configRecord?.developerKey);
+                    if (developerKey === 'INVOICES' || developerKey === 'COMMISSIONS') {
+                        supportedSectionKeys.add(developerKey);
+                        return;
+                    }
 
-        const configuredSections = this.receivablesTabConfig?.sections || [];
-        if (configuredSections.length === 0) {
-            return [];
-        }
+                    console.warn(
+                        `Skipping unsupported Receivables section config: ${configRecord?.developerKey || 'unknown'}`
+                    );
+                });
 
-        const supportedSectionKeys = new Set();
-        configuredSections.forEach(configRecord => {
-            const developerKey = normalizeConfigKey(configRecord?.developerKey);
-            if (developerKey === 'INVOICES' || developerKey === 'COMMISSIONS') {
-                supportedSectionKeys.add(developerKey);
-                return;
+                if (supportedSectionKeys.size === 0) {
+                    sections = this.commissionSections;
+                } else {
+                    sections = this.commissionSections.filter(section => {
+                        const sectionKey = RECEIVABLES_SECTION_KEY_BY_CATEGORY[section.categoryKey];
+                        if (!sectionKey || !supportedSectionKeys.has(sectionKey)) {
+                            return false;
+                        }
+
+                        const datasetKey = RECEIVABLES_DATASET_KEYS[sectionKey];
+                        return Boolean(this.receivablesDatasetsByKey[datasetKey]);
+                    });
+                }
             }
-
-            console.warn(
-                `Skipping unsupported Receivables section config: ${configRecord?.developerKey || 'unknown'}`
-            );
-        });
-
-        if (supportedSectionKeys.size === 0) {
-            return this.commissionSections;
         }
 
-        return this.commissionSections
-            .filter(section => {
-                const sectionKey = RECEIVABLES_SECTION_KEY_BY_CATEGORY[section.categoryKey];
-                if (!sectionKey || !supportedSectionKeys.has(sectionKey)) {
-                    return false;
-                }
-
-                const datasetKey = RECEIVABLES_DATASET_KEYS[sectionKey];
-                return Boolean(this.receivablesDatasetsByKey[datasetKey]);
-            })
-            .map(section => {
-                const sectionKey = RECEIVABLES_SECTION_KEY_BY_CATEGORY[section.categoryKey];
-                if (sectionKey === 'INVOICES') {
-                    return {
-                        ...section,
-                        categoryLabel: this.receivablesSectionsByKey.INVOICES?.label || section.categoryLabel
-                    };
-                }
-                return section;
-            });
+        return sections
+            .filter(section => section.categoryKey === CATEGORY_KEYS.REVENUE_UNDER_COLLECTION)
+            .map(section => ({
+                ...section,
+                categoryLabel: 'Receivables Outstanding'
+            }));
     }
 
     normalizeSections(data) {
@@ -706,7 +763,8 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                                 opportunityName: opportunity.opportunityName || opportunity.name,
                                 commissionAmount,
                                 commissionPaid,
-                                outstandingCommission: commissionAmount - commissionPaid
+                                outstandingCommission: commissionAmount - commissionPaid,
+                                isLedgerActionDisabled: !opportunity.ledgerId
                             };
                         }),
                     'slds-theme_shade grouped-diary-table__row'
@@ -784,7 +842,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this.isMetricsLoading = true;
         this.isDataLoading = true;
         this.errorMessage = undefined;
-        const cacheKey = buildRuntimeCacheKey(this.dateFilter);
+        const cacheKey = buildRuntimeCacheKey(this.dateFilter, this.opportunityOwnerId);
 
         try {
             if (forceRefresh) {
@@ -797,7 +855,8 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             const refreshToken = forceRefresh ? Date.now() : null;
             const data = await getReceivablesRuntimeData({
                 refreshToken,
-                dateFilter: this.dateFilter || null
+                dateFilter: this.dateFilter || null,
+                opportunityOwnerId: this.opportunityOwnerId || null
             });
             receivablesRuntimeCache.set(cacheKey, cloneRuntimeData(data));
             this.applyRuntimeData(data);

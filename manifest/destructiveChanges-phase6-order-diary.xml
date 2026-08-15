@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Package xmlns="http://soap.sforce.com/2006/04/metadata">
+    <types>
+        <members>BillingControlCenterController</members>
+        <members>BillingControlCenterControllerShimTest</members>
+        <members>BillingControlCenterControllerTest</members>
+        <members>OrderDiaryAutomationControl</members>
+        <members>OrderDiaryAutomationTest</members>
+        <members>OrderDiaryFinancialSyncService</members>
+        <members>OrderDiarySyncService</members>
+        <members>OrderDiarySyncServiceTest</members>
+        <name>ApexClass</name>
+    </types>
+    <types>
+        <members>InvoiceLineOrderDiary</members>
+        <members>InvoicePaymentOrderDiary</members>
+        <members>OpportunityWorkOrderOrderDiary</members>
+        <members>ServiceAppointmentOrderDiary</members>
+        <members>WorkOrderOrderDiary</members>
+        <name>ApexTrigger</name>
+    </types>
+    <version>62.0</version>
+</Package>

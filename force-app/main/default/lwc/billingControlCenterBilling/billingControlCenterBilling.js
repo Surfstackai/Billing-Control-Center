@@ -4,6 +4,7 @@ import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Bil
 
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
 import getInvoicingRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getInvoicingRuntimeData';
+import syncExistingInvoiceNumbers from '@salesforce/apex/BillingControl_Invoicing.syncExistingInvoiceNumbers';
 import {
     MIN_COLUMN_WIDTH,
     INVOICING_COLUMN_WIDTHS_KEY,
@@ -22,28 +23,31 @@ const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
 
 const KPI_CONFIG = [
     {
-        key: 'completedMoreThan2Days',
-        developerKey: 'AGED_COMPLETED_WORK',
-        title: 'Aged Ready to Bill (>2 Days)',
-        icon: 'utility:clock',
-        hint: 'Ready-to-bill work older than 2 days.',
-        isCurrency: false
+        key: 'completedToday',
+        developerKey: 'COMPLETED_TODAY',
+        title: 'Completed Today',
+        icon: 'utility:event',
+        hint: 'Ready-to-bill completions today.',
+        countKey: 'completedTodayCount',
+        amountKey: 'completedTodayAmount'
     },
     {
-        key: 'readyToBill',
-        developerKey: 'BILLABLE_SERVICE_APPOINTMENTS',
-        title: 'Ready to Bill',
+        key: 'completedThisWeek',
+        developerKey: 'COMPLETED_THIS_WEEK',
+        title: 'Completed This Week',
+        icon: 'utility:weeklyview',
+        hint: 'Ready-to-bill completions in the current calendar week, including today.',
+        countKey: 'completedThisWeekCount',
+        amountKey: 'completedThisWeekAmount'
+    },
+    {
+        key: 'completedLater',
+        developerKey: 'COMPLETED_LATER',
+        title: 'Completed Later',
         icon: 'utility:check',
-        hint: 'Completed Service Appointments ready to invoice.',
-        isCurrency: false
-    },
-    {
-        key: 'unbilledRevenue',
-        developerKey: 'UNINVOICED_REVENUE',
-        title: 'Uninvoiced Amount',
-        icon: 'utility:money',
-        hint: 'Current Opportunity Amount, counted once per Opportunity.',
-        isCurrency: true
+        hint: 'All ready-to-bill completions in the current date range, including today.',
+        countKey: 'completedLaterCount',
+        amountKey: 'completedLaterAmount'
     }
 ];
 
@@ -59,6 +63,7 @@ const DEFAULT_TABLE_TITLE = 'Ready-to-bill Service Appointments';
 const DEFAULT_REFRESH_LABEL = 'Refresh';
 const DEFAULT_COMPLETE_BILLING_LABEL = 'Complete Billing';
 const DEFAULT_INV_SYNC_LABEL = 'INV-Sync';
+const DEFAULT_DATE_FILTER = { filterKey: 'This Year' };
 
 const WORK_ORDER_COLUMNS = [
     {
@@ -160,6 +165,14 @@ const WORK_ORDER_COLUMNS = [
         fieldName: 'ownerName',
         type: 'text',
         sortable: true
+    },
+    {
+        developerKey: 'VIEW_LEDGER',
+        configFieldApiName: 'viewLedger',
+        label: 'Ledger',
+        fieldName: 'ledgerId',
+        type: 'action',
+        sortable: false
     }
 ];
 
@@ -173,7 +186,8 @@ const COL_MODIFIER_BY_KEY = {
     SUBJECT: 'subject',
     WORK_ORDER_STATUS: 'status',
     OPPORTUNITY_AMOUNT: 'opportunity-amount',
-    OWNER: 'owner'
+    OWNER: 'owner',
+    VIEW_LEDGER: 'view-ledger'
 };
 
 function normalizeConfigKey(value) {
@@ -184,8 +198,11 @@ function cloneRuntimeData(value) {
     return value ? JSON.parse(JSON.stringify(value)) : value;
 }
 
-function buildRuntimeCacheKey(dateFilter) {
-    return JSON.stringify(dateFilter || null);
+function buildRuntimeCacheKey(dateFilter, opportunityOwnerId) {
+    return JSON.stringify({
+        dateFilter: dateFilter || null,
+        opportunityOwnerId: opportunityOwnerId || null
+    });
 }
 
 function buildConfigMap(records) {
@@ -245,7 +262,7 @@ function buildConfiguredColumns(configColumns) {
     if (matchedColumns.length === 0) {
         return WORK_ORDER_COLUMNS;
     }
-    return injectInvoiceNumberColumn(matchedColumns);
+    return injectViewLedgerColumn(injectInvoiceNumberColumn(matchedColumns));
 }
 
 function injectInvoiceNumberColumn(columns) {
@@ -269,6 +286,19 @@ function injectInvoiceNumberColumn(columns) {
         nextColumns.splice(2, 0, invoiceNumberColumn);
     }
     return nextColumns;
+}
+
+function injectViewLedgerColumn(columns) {
+    const hasViewLedger = columns.some(
+        column => normalizeConfigKey(column.developerKey) === 'VIEW_LEDGER'
+    );
+    if (hasViewLedger) {
+        return columns;
+    }
+    const viewLedgerColumn = WORK_ORDER_COLUMNS.find(
+        column => column.developerKey === 'VIEW_LEDGER'
+    );
+    return viewLedgerColumn ? [...columns, viewLedgerColumn] : columns;
 }
 
 function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) {
@@ -301,6 +331,7 @@ function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) 
             isStatus: developerKey === 'WORK_ORDER_STATUS',
             isOpportunityAmount,
             isOwner: developerKey === 'OWNER',
+            isLedgerAction: developerKey === 'VIEW_LEDGER',
             colClass: `grouped-diary-table__col grouped-diary-table__col--${colModifier}`,
             colStyle: widthStyle,
             headerStyle: widthStyle,
@@ -486,9 +517,18 @@ function resolveInvSyncNumber(row) {
 }
 
 export default class BillingControlCenterBilling extends LightningElement {
-    _dateFilter;
-    _dateFilterSignature = '';
+    _dateFilter = { ...DEFAULT_DATE_FILTER };
+    _dateFilterSignature = JSON.stringify(DEFAULT_DATE_FILTER);
     _isConnected = false;
+    opportunityOwnerId;
+    userPickerDisplayInfo = {
+        primaryField: 'Name',
+        additionalFields: ['Username']
+    };
+    userPickerMatchingInfo = {
+        primaryField: { fieldPath: 'Name' },
+        additionalFields: [{ fieldPath: 'Username' }]
+    };
 
     @api useExternalToolbar = false;
 
@@ -496,11 +536,13 @@ export default class BillingControlCenterBilling extends LightningElement {
     appointmentSections = [];
     selectedRowKeys = new Set();
     selectedServiceAppointments = [];
-    invSyncApplied = false;
+    isInvSyncRunning = false;
     sortState = defaultSortState();
     searchKey = '';
     isLoading = true;
     isCompleteBillingModalOpen = false;
+    selectedLedgerId;
+    showLedgerModal = false;
     errorMessage;
     providerWarnings = [];
     configWarnings = [];
@@ -536,6 +578,18 @@ export default class BillingControlCenterBilling extends LightningElement {
         if (this._isConnected) {
             this.loadData();
         }
+    }
+
+    get dateFilterKey() {
+        return this.dateFilter?.filterKey || DEFAULT_DATE_FILTER.filterKey;
+    }
+
+    get dateFilterStart() {
+        return this.dateFilter?.startDate || '';
+    }
+
+    get dateFilterEnd() {
+        return this.dateFilter?.endDate || '';
     }
 
     connectedCallback() {
@@ -629,8 +683,8 @@ export default class BillingControlCenterBilling extends LightningElement {
                 key: 'invSync',
                 label: DEFAULT_INV_SYNC_LABEL,
                 variant: 'neutral',
-                disabled: this.isCompleteBillingDisabled,
-                title: 'Copy invoice numbers from Service Appointment or Work Order'
+                disabled: this.isLoading || this.isInvSyncRunning,
+                title: 'Create invoices from existing SA/WO INV numbers in the current date range'
             },
             {
                 key: 'completeBilling',
@@ -652,27 +706,13 @@ export default class BillingControlCenterBilling extends LightningElement {
         }
 
         const configuredKpis = this.invoicingTabConfig?.kpis || [];
-        if (configuredKpis.length === 0) {
-            return [];
-        }
+        const configByKey = new Map(
+            configuredKpis.map(configRecord => [normalizeConfigKey(configRecord?.developerKey), configRecord])
+        );
 
-        const tiles = [];
-        configuredKpis.forEach(configRecord => {
-            const definition = KPI_CONFIG.find(
-                tile => normalizeConfigKey(tile.developerKey) === normalizeConfigKey(configRecord?.developerKey)
-            );
-
-            if (!definition) {
-                console.warn(
-                    `Skipping unsupported Invoicing KPI config: ${configRecord?.developerKey || 'unknown'}`
-                );
-                return;
-            }
-
-            tiles.push(this.buildKpiTile(definition, configRecord));
-        });
-
-        return tiles;
+        return KPI_CONFIG.map(definition =>
+            this.buildKpiTile(definition, configByKey.get(normalizeConfigKey(definition.developerKey)))
+        );
     }
 
     get isCompleteBillingDisabled() {
@@ -706,7 +746,8 @@ export default class BillingControlCenterBilling extends LightningElement {
             rows = decorateAccountGroups(
                 rows.map(row => ({
                     ...row,
-                    isSelected: row.rowKey ? this.selectedRowKeys.has(row.rowKey) : false
+                    isSelected: row.rowKey ? this.selectedRowKeys.has(row.rowKey) : false,
+                    isLedgerActionDisabled: !row.ledgerId
                 }))
             );
             const visibleAppointmentCount = countAppointments(rows);
@@ -764,7 +805,7 @@ export default class BillingControlCenterBilling extends LightningElement {
             technicianName: row.technicianName,
             opportunityAmount: row.opportunityAmount,
             invoiceableOpportunityAmount: row.invoiceableOpportunityAmount,
-            invoiceNumber: this.invSyncApplied ? resolveInvSyncNumber(row) : ''
+            invoiceNumber: resolveInvSyncNumber(row)
         }));
     }
 
@@ -788,6 +829,23 @@ export default class BillingControlCenterBilling extends LightningElement {
         this.searchKey = event.target.value || '';
     }
 
+    handleViewLedger(event) {
+        const host =
+            event.currentTarget?.closest?.('[data-ledger-id]') ||
+            event.target?.closest?.('[data-ledger-id]');
+        const ledgerId = host?.dataset?.ledgerId;
+        if (!ledgerId) {
+            return;
+        }
+        this.selectedLedgerId = ledgerId;
+        this.showLedgerModal = true;
+    }
+
+    handleCloseLedgerModal() {
+        this.showLedgerModal = false;
+        this.selectedLedgerId = undefined;
+    }
+
     handleOpenCompleteBillingModal() {
         if (this.isCompleteBillingDisabled) {
             return;
@@ -796,49 +854,63 @@ export default class BillingControlCenterBilling extends LightningElement {
         if (this.selectedServiceAppointments.length === 0) {
             return;
         }
-        this.invSyncApplied = false;
         this.isCompleteBillingModalOpen = true;
     }
 
-    handleInvSync() {
-        if (this.isCompleteBillingDisabled) {
-            return;
-        }
-        this.selectedServiceAppointments = this.buildSelectedServiceAppointments();
-        if (this.selectedServiceAppointments.length === 0) {
+    async handleInvSync() {
+        if (this.isLoading || this.isInvSyncRunning) {
             return;
         }
 
-        const opportunityIds = new Set();
-        const missingOpportunityIds = new Set();
-        for (const row of this.selectedServiceAppointments) {
-            const opportunityId = row.opportunityId;
-            if (!opportunityId) {
-                continue;
+        this.isInvSyncRunning = true;
+        try {
+            const result = await syncExistingInvoiceNumbers({
+                dateFilter: this.dateFilter || null,
+                opportunityOwnerId: this.opportunityOwnerId || null
+            });
+            const createdCount = result?.invoicesCreated || 0;
+            const skippedCount = result?.skippedCount || 0;
+            const stampedCount = result?.serviceAppointmentsUpdated || 0;
+            if (result?.queued) {
+                this.dispatchEvent(
+                    new ShowToastEvent({
+                        title: 'INV-Sync started',
+                        message: 'Refresh Invoicing and Receivables when the job finishes.',
+                        variant: 'success'
+                    })
+                );
+            } else {
+                const parts = [`Created ${createdCount} invoice${createdCount === 1 ? '' : 's'}`];
+                if (stampedCount > 0) {
+                    parts.push(`stamped ${stampedCount} appointment${stampedCount === 1 ? '' : 's'}`);
+                }
+                if (skippedCount > 0) {
+                    parts.push(`skipped ${skippedCount}`);
+                }
+                this.dispatchEvent(
+                    new ShowToastEvent({
+                        title: 'INV-Sync',
+                        message: parts.join('. ') + '.',
+                        variant: skippedCount > 0 && createdCount === 0 ? 'warning' : 'success'
+                    })
+                );
             }
-            opportunityIds.add(opportunityId);
-            if (!resolveInvSyncNumber(row)) {
-                missingOpportunityIds.add(opportunityId);
-            }
-        }
-
-        this.invSyncApplied = true;
-        this.isCompleteBillingModalOpen = true;
-
-        if (missingOpportunityIds.size > 0) {
+            await this.loadData(true);
+        } catch (error) {
             this.dispatchEvent(
                 new ShowToastEvent({
-                    title: 'INV-Sync',
-                    message: `No INV value found for ${missingOpportunityIds.size} of ${opportunityIds.size} selected opportunities. Invoice Number left blank.`,
-                    variant: 'warning'
+                    title: 'INV-Sync failed',
+                    message: error?.body?.message || error?.message || 'Unable to sync existing invoice numbers.',
+                    variant: 'error'
                 })
             );
+        } finally {
+            this.isInvSyncRunning = false;
         }
     }
 
     handleCompleteBillingClose() {
         this.isCompleteBillingModalOpen = false;
-        this.invSyncApplied = false;
     }
 
     async handleCompleteBillingSuccess() {
@@ -865,6 +937,27 @@ export default class BillingControlCenterBilling extends LightningElement {
         }
     }
 
+    handleDateFilterChange(event) {
+        const detail = event.detail || {};
+        const filterKey = detail.filterKey || DEFAULT_DATE_FILTER.filterKey;
+        this.dateFilter = {
+            filterKey,
+            startDate: filterKey === 'Custom' ? detail.startDate || null : null,
+            endDate: filterKey === 'Custom' ? detail.endDate || null : null
+        };
+    }
+
+    handleOpportunityOwnerChange(event) {
+        const nextOwnerId = event.detail?.recordId || null;
+        if (nextOwnerId === this.opportunityOwnerId) {
+            return;
+        }
+        this.opportunityOwnerId = nextOwnerId;
+        if (this._isConnected) {
+            this.loadData();
+        }
+    }
+
     handleTableActionClick(event) {
         if (event.detail?.key === 'invSync') {
             this.handleInvSync();
@@ -880,17 +973,15 @@ export default class BillingControlCenterBilling extends LightningElement {
             ...definition,
             title: configRecord?.label || definition.title,
             icon: configRecord?.iconName || definition.icon,
-            metricText: definition.isCurrency
-                ? CURRENCY_FORMATTER.format(this.metrics[definition.key] || 0)
-                : NUMBER_FORMATTER.format(this.metrics[definition.key] || 0),
-            countText: 'Appointments'
+            metricText: NUMBER_FORMATTER.format(this.metrics[definition.countKey] || 0),
+            countText: CURRENCY_FORMATTER.format(this.metrics[definition.amountKey] || 0)
         };
     }
 
     handleHeaderSort(event) {
         const categoryKey = event.currentTarget?.dataset?.bucket;
         const fieldName = event.currentTarget?.dataset?.field;
-        if (!categoryKey || !fieldName || !this.sortState[categoryKey]) {
+        if (!categoryKey || !fieldName || fieldName === 'ledgerId' || !this.sortState[categoryKey]) {
             return;
         }
 
@@ -981,7 +1072,7 @@ export default class BillingControlCenterBilling extends LightningElement {
     async loadData(forceRefresh = false) {
         this.isLoading = true;
         this.errorMessage = undefined;
-        const cacheKey = buildRuntimeCacheKey(this.dateFilter);
+        const cacheKey = buildRuntimeCacheKey(this.dateFilter, this.opportunityOwnerId);
         const refreshToken = forceRefresh ? Date.now() : null;
 
         try {
@@ -994,7 +1085,8 @@ export default class BillingControlCenterBilling extends LightningElement {
 
             const runtimeData = await getInvoicingRuntimeData({
                 refreshToken,
-                dateFilter: this.dateFilter || null
+                dateFilter: this.dateFilter || null,
+                opportunityOwnerId: this.opportunityOwnerId || null
             });
             invoicingRuntimeCache.set(cacheKey, cloneRuntimeData(runtimeData));
             this.applyRuntimeData(runtimeData);

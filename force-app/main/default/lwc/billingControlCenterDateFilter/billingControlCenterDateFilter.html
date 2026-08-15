@@ -1,38 +1,41 @@
 <template>
     <section class={containerClass}>
-        <lightning-button-menu
-            class="bcc-date-filter__menu"
-            label={menuLabel}
-            alternative-text="Date filter"
-            icon-name="utility:date_input"
-            menu-alignment="right"
-            onselect={handleMenuSelect}>
-            <template for:each={options} for:item="option">
-                <lightning-menu-item
-                    key={option.value}
-                    value={option.value}
-                    label={option.label}
-                    checked={option.checked}>
-                </lightning-menu-item>
+        <span class="bcc-date-filter__label">Date Range</span>
+        <div class="bcc-date-filter__controls">
+            <lightning-button-menu
+                class="bcc-date-filter__menu"
+                label={menuLabel}
+                alternative-text="Date filter"
+                icon-name="utility:date_input"
+                menu-alignment="right"
+                onselect={handleMenuSelect}>
+                <template for:each={options} for:item="option">
+                    <lightning-menu-item
+                        key={option.value}
+                        value={option.value}
+                        label={option.label}
+                        checked={option.checked}>
+                    </lightning-menu-item>
+                </template>
+            </lightning-button-menu>
+            <template if:true={isCustomRange}>
+                <lightning-input
+                    class="bcc-date-filter__date"
+                    type="date"
+                    label="Start date"
+                    variant="label-hidden"
+                    value={currentStartDate}
+                    onchange={handleStartDateChange}>
+                </lightning-input>
+                <lightning-input
+                    class="bcc-date-filter__date"
+                    type="date"
+                    label="End date"
+                    variant="label-hidden"
+                    value={currentEndDate}
+                    onchange={handleEndDateChange}>
+                </lightning-input>
             </template>
-        </lightning-button-menu>
-        <template if:true={isCustomRange}>
-            <lightning-input
-                class="bcc-date-filter__date"
-                type="date"
-                label="Start date"
-                variant="label-hidden"
-                value={currentStartDate}
-                onchange={handleStartDateChange}>
-            </lightning-input>
-            <lightning-input
-                class="bcc-date-filter__date"
-                type="date"
-                label="End date"
-                variant="label-hidden"
-                value={currentEndDate}
-                onchange={handleEndDateChange}>
-            </lightning-input>
-        </template>
+        </div>
     </section>
 </template>

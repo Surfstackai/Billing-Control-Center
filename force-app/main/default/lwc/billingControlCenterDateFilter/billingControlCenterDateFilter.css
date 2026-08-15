@@ -2,6 +2,20 @@
 
 .bcc-date-filter {
     display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+}
+
+.bcc-date-filter__label {
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--bcc-muted, #706e6b);
+    line-height: 1.25;
+}
+
+.bcc-date-filter__controls {
+    display: flex;
     align-items: center;
     gap: 0.5rem;
     flex-wrap: wrap;

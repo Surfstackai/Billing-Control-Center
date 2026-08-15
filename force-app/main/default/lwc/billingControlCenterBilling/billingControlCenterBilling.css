@@ -7,10 +7,15 @@
 
 .hero__controls {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: flex-end;
     gap: 0.75rem;
     flex-wrap: wrap;
+}
+
+.owner-picker {
+    min-width: 16rem;
+    max-width: 22rem;
 }
 
 .billing-console-shell {
@@ -49,6 +54,10 @@
 
 .grouped-diary-table__col--select {
     width: 3.5rem;
+}
+
+.grouped-diary-table__col--view-ledger {
+    width: 8.5rem;
 }
 
 .grouped-diary-table__col--account {
@@ -199,6 +208,10 @@
     margin: 0.5rem 0 0;
     color: var(--bcc-muted);
     font-size: 0.875rem;
+}
+
+.ledger-action {
+    display: inline-flex;
 }
 
 @media (max-width: 720px) {

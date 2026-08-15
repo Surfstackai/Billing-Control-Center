@@ -46,10 +46,10 @@ Shim Apex classes and shim-only tests were **removed** from this repository afte
 After shim removal, run the impacted test classes (they exercise `BillingControl_Orders` and `BillingControl_Invoicing`):
 
 ```bash
-sf apex run test --tests BillingControlCenterControllerTest --tests BillingControlCenterServiceTest --result-format human --synchronous
+sf apex run test --tests BillingControl_InvoicingTest --result-format human --synchronous
 ```
 
-Example successful run (sandbox): **17/17 passed** — `BillingControlCenterControllerTest` + `BillingControlCenterServiceTest`.
+Example successful run (sandbox): run `BillingControl_InvoicingTest` after the invoicing domain split.
 
 **Production deploy:** validate with your manifest, then quick-deploy; smoke-test Orders, Invoicing, Receivables (see checklist above).
 
