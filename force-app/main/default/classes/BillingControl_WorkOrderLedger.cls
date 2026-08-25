@@ -1143,7 +1143,7 @@ public with sharing class BillingControl_WorkOrderLedger {
             row,
             junctions,
             visitCountByOpportunityId,
-            amountTotal
+            row.opportunityAmount
         );
         return row;
     }
