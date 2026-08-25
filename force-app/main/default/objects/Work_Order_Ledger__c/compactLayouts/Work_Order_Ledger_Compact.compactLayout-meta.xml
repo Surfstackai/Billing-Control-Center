@@ -4,6 +4,7 @@
     <fields>Name</fields>
     <fields>Work_Order__c</fields>
     <fields>Account__c</fields>
+    <fields>Account_Owner__c</fields>
     <fields>Opportunity_Owner__c</fields>
     <fields>Reconciliation_Status__c</fields>
     <label>Work Order Ledger Compact</label>

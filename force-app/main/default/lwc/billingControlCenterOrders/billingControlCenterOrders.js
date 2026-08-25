@@ -179,8 +179,8 @@ const WORK_ORDER_COLUMNS = [
     {
         developerKey: 'OWNER',
         configFieldApiName: 'ownerName',
-        label: 'Opportunity Owner',
-        fieldName: 'ownerName',
+        label: 'Account Owner',
+        fieldName: 'accountOwnerName',
         type: 'text',
         sortable: true
     },
@@ -264,7 +264,9 @@ function buildConfiguredColumns(configColumns) {
         const lockedLabel =
             developerKey === 'VIEW_LEDGER'
                 ? 'Ledger'
-                : developerKey === 'OPPORTUNITY_AMOUNT'
+                : developerKey === 'OWNER'
+                  ? 'Account Owner'
+                  : developerKey === 'OPPORTUNITY_AMOUNT'
                   ? 'Opportunity Amount'
                   : developerKey === 'VISIT_AMOUNT'
                     ? 'Visit Amount'

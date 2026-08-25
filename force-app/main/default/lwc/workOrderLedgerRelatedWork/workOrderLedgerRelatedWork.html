@@ -21,6 +21,10 @@
                         </template>
                     </div>
                     <div>
+                        <div class="ledger-kicker">Account Owner</div>
+                        <span>{detail.accountOwnerName}</span>
+                    </div>
+                    <div>
                         <div class="ledger-kicker">Work Order</div>
                         <template if:true={workOrderUrl}>
                             <a href={workOrderUrl} target="_blank" rel="noopener noreferrer">{detail.workOrderNumber}</a>
