@@ -61,7 +61,18 @@ const DEFAULT_REFRESH_LABEL = 'Refresh';
 const DEFAULT_POST_RECEIPT_LABEL = 'Post Receipt';
 const DEFAULT_PAY_COMMISSION_LABEL = 'Pay Commission';
 const DEFAULT_DATE_FILTER = { filterKey: 'This Year' };
-const VISIBLE_KPI_DEVELOPER_KEYS = new Set(['ACCOUNTS_RECEIVABLE', 'OUTSTANDING_RECEIVABLES']);
+const VISIBLE_KPI_DEVELOPER_KEYS = new Set([
+    'ACCOUNTS_RECEIVABLE',
+    'OUTSTANDING_RECEIVABLES',
+    'COMMISSION_ACCRUED',
+    'OUTSTANDING_COMMISSION',
+    'COMMISSION_PAYABLE'
+]);
+const SECTION_DISPLAY_ORDER = [
+    CATEGORY_KEYS.REVENUE_UNDER_COLLECTION,
+    CATEGORY_KEYS.COMMISSION_EARNED,
+    CATEGORY_KEYS.COMMISSION_PAYABLE
+];
 const RECEIVABLES_DATASET_KEYS = {
     INVOICES: 'RECEIVABLES_INVOICES',
     COMMISSIONS: 'RECEIVABLES_COMMISSIONS'
@@ -213,12 +224,12 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
 
     get kpiTiles() {
         if (!this.receivablesConfigLoaded) {
-            return [this.buildKpiTile(KPI_CONFIG[0])];
+            return KPI_CONFIG.map(definition => this.buildKpiTile(definition));
         }
 
         const configuredKpis = this.receivablesTabConfig?.kpis || [];
         if (configuredKpis.length === 0) {
-            return [this.buildKpiTile(KPI_CONFIG[0])];
+            return KPI_CONFIG.map(definition => this.buildKpiTile(definition));
         }
 
         const tiles = [];
@@ -735,12 +746,12 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             }
         }
 
-        return sections
-            .filter(section => section.categoryKey === CATEGORY_KEYS.REVENUE_UNDER_COLLECTION)
-            .map(section => ({
-                ...section,
-                categoryLabel: 'Receivables Outstanding'
-            }));
+        return [...sections].sort((left, right) => {
+            const leftIndex = SECTION_DISPLAY_ORDER.indexOf(left.categoryKey);
+            const rightIndex = SECTION_DISPLAY_ORDER.indexOf(right.categoryKey);
+            return (leftIndex === -1 ? SECTION_DISPLAY_ORDER.length : leftIndex)
+                - (rightIndex === -1 ? SECTION_DISPLAY_ORDER.length : rightIndex);
+        });
     }
 
     normalizeSections(data) {

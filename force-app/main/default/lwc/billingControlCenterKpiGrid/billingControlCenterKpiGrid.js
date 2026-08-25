@@ -7,12 +7,15 @@ export default class BillingControlCenterKpiGrid extends LightningElement {
     get normalizedTiles() {
         return (this.tiles || []).map((tile, index) => {
             const lines = Array.isArray(tile?.lines) ? tile.lines : [];
+            const splitColumns = Array.isArray(tile?.splitColumns) ? tile.splitColumns : [];
             return {
                 ...tile,
                 key: tile?.key || `tile-${index}`,
                 countText: tile?.countText || '',
                 hint: tile?.hint || '',
-                useLines: lines.length > 0,
+                useSplit: splitColumns.length > 0,
+                useLines: splitColumns.length === 0 && lines.length > 0,
+                splitColumns,
                 lines
             };
         });

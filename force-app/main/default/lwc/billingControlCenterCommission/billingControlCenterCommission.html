@@ -6,25 +6,29 @@
                 <h1 class="hero__title">{heroTitle}</h1>
                 <p class="hero__subtitle">{heroSubtitle}</p>
             </div>
-            <template if:true={useExternalToolbar}>
-                <div class="hero__controls">
-                    <c-billing-control-center-date-filter
-                        compact
-                        selected-filter-key={dateFilterKey}
-                        start-date={dateFilterStart}
-                        end-date={dateFilterEnd}
-                        ondatefilterchange={handleDateFilterChange}>
-                    </c-billing-control-center-date-filter>
-                    <lightning-record-picker
-                        class="owner-picker"
-                        label="Opportunity Owner"
-                        placeholder="Opportunity Owner"
-                        object-api-name="User"
-                        value={opportunityOwnerId}
-                        display-info={userPickerDisplayInfo}
-                        matching-info={userPickerMatchingInfo}
-                        onchange={handleOpportunityOwnerChange}>
-                    </lightning-record-picker>
+            <div class="hero__controls">
+                <c-billing-control-center-date-filter
+                    compact
+                    selected-filter-key={dateFilterKey}
+                    start-date={dateFilterStart}
+                    end-date={dateFilterEnd}
+                    ondatefilterchange={handleDateFilterChange}>
+                </c-billing-control-center-date-filter>
+                <lightning-record-picker
+                    class="owner-picker"
+                    label="Opportunity Owner"
+                    placeholder="Opportunity Owner"
+                    object-api-name="User"
+                    value={opportunityOwnerId}
+                    display-info={userPickerDisplayInfo}
+                    matching-info={userPickerMatchingInfo}
+                    onchange={handleOpportunityOwnerChange}>
+                </lightning-record-picker>
+                <c-billing-control-center-action-bar
+                    actions={tableActions}
+                    onactionclick={handleTableActionClick}>
+                </c-billing-control-center-action-bar>
+                <template if:true={useExternalToolbar}>
                     <lightning-button
                         label={refreshLabel}
                         icon-name="utility:refresh"
@@ -32,33 +36,14 @@
                         disabled={isLoading}
                         onclick={handleRefresh}>
                     </lightning-button>
-                </div>
-            </template>
-            <template if:false={useExternalToolbar}>
-                <div class="hero__controls">
-                    <c-billing-control-center-date-filter
-                        compact
-                        selected-filter-key={dateFilterKey}
-                        start-date={dateFilterStart}
-                        end-date={dateFilterEnd}
-                        ondatefilterchange={handleDateFilterChange}>
-                    </c-billing-control-center-date-filter>
-                    <lightning-record-picker
-                        class="owner-picker"
-                        label="Opportunity Owner"
-                        placeholder="Opportunity Owner"
-                        object-api-name="User"
-                        value={opportunityOwnerId}
-                        display-info={userPickerDisplayInfo}
-                        matching-info={userPickerMatchingInfo}
-                        onchange={handleOpportunityOwnerChange}>
-                    </lightning-record-picker>
+                </template>
+                <template if:false={useExternalToolbar}>
                     <c-billing-control-center-action-bar
                         actions={heroActions}
                         onactionclick={handleHeroActionClick}>
                     </c-billing-control-center-action-bar>
-                </div>
-            </template>
+                </template>
+            </div>
         </div>
 
         <template if:true={errorMessage}>
@@ -87,19 +72,6 @@
         <template if:true={showTableShell}>
             <section class="table-shell billing-console-shell">
                 <div class="billing-tab-panel">
-                    <div class="table-toolbar">
-                        <div class="table-toolbar__copy">
-                            <p class="table-toolbar__eyebrow">Receivables</p>
-                            <h2 class="table-toolbar__title">{tableTitle}</h2>
-                        </div>
-                        <div class="table-toolbar__actions">
-                            <c-billing-control-center-action-bar
-                                actions={tableActions}
-                                onactionclick={handleTableActionClick}>
-                            </c-billing-control-center-action-bar>
-                        </div>
-                    </div>
-
                     <div class="table-meta">
                         <span><lightning-formatted-number value={salespersonCount}></lightning-formatted-number> Salespeople</span>
                         <span><lightning-formatted-number value={opportunityCount}></lightning-formatted-number> Opportunities</span>

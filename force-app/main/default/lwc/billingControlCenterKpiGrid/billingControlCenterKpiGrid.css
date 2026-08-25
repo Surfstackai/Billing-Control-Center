@@ -46,3 +46,28 @@
 .kpi-grid_compact .kpi-tile__line {
     font-size: 0.9rem;
 }
+
+.kpi-tile__split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+    align-items: start;
+}
+
+.kpi-tile__split-col + .kpi-tile__split-col {
+    padding-left: 0.75rem;
+    border-left: 1px solid var(--bcc-border);
+}
+
+.kpi-tile__split-label {
+    margin-bottom: 0.35rem;
+    color: var(--bcc-muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+}
+
+.kpi-grid_compact .kpi-tile__split-col .kpi-tile__metric {
+    font-size: 1.15rem;
+}

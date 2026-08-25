@@ -279,13 +279,14 @@ function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) 
 
         return {
             ...column,
-            key: `${developerKey || fieldName || 'column'}-${index}`,
+            key: developerKey || fieldName || `column-${index}`,
             fieldName,
             developerKey,
             isSorted,
             ariaSort: isSorted ? (isAscending ? 'ascending' : 'descending') : 'none',
             sortIcon: isAscending ? 'utility:arrowup' : 'utility:arrowdown',
             sortAltText: isAscending ? 'Sorted ascending' : 'Sorted descending',
+            isLeadColumn: index === 0,
             isAccount: developerKey === 'ACCOUNT',
             isOpportunity: developerKey === 'OPPORTUNITY',
             isWorkType: developerKey === 'WORK_TYPE',
@@ -500,34 +501,77 @@ function sortWorkOrderRows(rows, fieldName, direction, groupByAccount = true) {
     });
 }
 
-function isPitCleaningWorkType(workTypeName) {
-    return /pit\s*clean/i.test(String(workTypeName || ''));
+function isPitCleaningText(value) {
+    const text = String(value || '').trim();
+    return /pit\s*clean/i.test(text) || /preventa?tive\s+maintenance/i.test(text);
+}
+
+function isPitCleaningWorkType(row) {
+    const values = [
+        row?.workTypeName,
+        row?.subject,
+        row?.opportunityName,
+        ...((row?.relatedOpportunities || []).map(opportunity => opportunity.opportunityName))
+    ];
+    return values.some(value => isPitCleaningText(value));
 }
 
 function workTypeGroupKey(row) {
-    return isPitCleaningWorkType(row?.workTypeName)
-        ? WORK_TYPE_GROUP_PIT_CLEANING
-        : WORK_TYPE_GROUP_OTHER;
+    return isPitCleaningWorkType(row) ? WORK_TYPE_GROUP_PIT_CLEANING : WORK_TYPE_GROUP_OTHER;
 }
 
-function decorateWorkTypeGroups(otherRows, pitRows, columnCount) {
-    const result = [];
-    const appendGroup = (groupKey, groupRows) => {
-        if (!groupRows.length) {
-            return;
+function summarizeWorkTypeSplit(rows) {
+    const pit = { count: 0, amount: 0 };
+    const other = { count: 0, amount: 0 };
+    (rows || []).forEach(row => {
+        const target = isPitCleaningWorkType(row) ? pit : other;
+        target.count += 1;
+        const amount = Number(row.opportunityAmount);
+        if (Number.isFinite(amount)) {
+            target.amount += amount;
         }
-        result.push({
-            displayKey: `work-type-group-${groupKey}`,
-            isWorkTypeGroupHeader: true,
-            workTypeGroupLabel: `${WORK_TYPE_GROUP_LABELS[groupKey]} (${groupRows.length})`,
-            columnSpan: columnCount,
-            rowClass: 'grouped-diary-table__row grouped-diary-table__row--work-type-group'
-        });
-        result.push(...groupRows);
+    });
+    return { pit, other };
+}
+
+function formatSplitColumn(key, label, summary) {
+    return {
+        key,
+        label,
+        metricText: CURRENCY_FORMATTER.format(summary.amount || 0),
+        countText: `${NUMBER_FORMATTER.format(summary.count || 0)} records`
     };
-    appendGroup(WORK_TYPE_GROUP_OTHER, otherRows);
-    appendGroup(WORK_TYPE_GROUP_PIT_CLEANING, pitRows);
-    return result;
+}
+
+function sumOpportunityAmount(rows) {
+    return (rows || []).reduce((sum, row) => {
+        const amount = Number(row.opportunityAmountValue ?? row.opportunityAmount);
+        return Number.isFinite(amount) ? sum + amount : sum;
+    }, 0);
+}
+
+function buildWorkTypeGroups(pitRows, otherRows, bucketKey, expandedKeys) {
+    return [
+        { groupKey: WORK_TYPE_GROUP_PIT_CLEANING, rows: pitRows },
+        { groupKey: WORK_TYPE_GROUP_OTHER, rows: otherRows }
+    ].map(({ groupKey, rows }) => {
+        const key = `${bucketKey}-${groupKey}`;
+        const isExpanded = expandedKeys.has(key);
+        const totalAmount = sumOpportunityAmount(rows);
+        return {
+            key,
+            groupKey,
+            label: WORK_TYPE_GROUP_LABELS[groupKey],
+            rows,
+            rowCount: rows.length,
+            appointmentCount: countAppointments(rows),
+            totalAmount,
+            hasAmount: rows.some(row => row.hasOpportunityAmount),
+            isExpanded,
+            expandIcon: isExpanded ? 'utility:chevrondown' : 'utility:chevronright',
+            expandAltText: isExpanded ? `Collapse ${WORK_TYPE_GROUP_LABELS[groupKey]}` : `Expand ${WORK_TYPE_GROUP_LABELS[groupKey]}`
+        };
+    });
 }
 
 function columnsForListView(columns, listViewMode) {
@@ -588,10 +632,12 @@ export default class BillingControlCenterOrders extends LightningElement {
     workOrderColumns = WORK_ORDER_COLUMNS;
     /** @type {{ bucketKey: string, sectionLabel: string, rows: object[] }[]} */
     sections = [];
-    /** @type {Record<string, { sortedBy: string, sortDirection: string }>} */
-    sortState = defaultSortState();
     searchKey = '';
-    listViewMode = LIST_VIEW_ACCOUNT;
+    viewState = {
+        listViewMode: LIST_VIEW_ACCOUNT,
+        sortState: defaultSortState(),
+        expandedWorkTypeGroups: []
+    };
     kpiState = {};
     errorMessage;
     providerWarnings = [];
@@ -606,9 +652,31 @@ export default class BillingControlCenterOrders extends LightningElement {
     columnWidths = {};
     selectedLedgerId;
     showLedgerModal = false;
+    _sectionRev = 0;
+    _sectionCacheKey = '';
+    _cachedAccordionSections = [];
     _resizeState;
     _boundResizeMove;
     _boundResizeEnd;
+
+    get listViewMode() {
+        return this.viewState.listViewMode;
+    }
+
+    get sortState() {
+        return this.viewState.sortState;
+    }
+
+    get expandedWorkTypeGroups() {
+        return this.viewState.expandedWorkTypeGroups;
+    }
+
+    setViewState(patch) {
+        this.viewState = {
+            ...this.viewState,
+            ...patch
+        };
+    }
 
     @api
     get dateFilter() {
@@ -721,6 +789,30 @@ export default class BillingControlCenterOrders extends LightningElement {
     }
 
     get accordionSections() {
+        const cacheKey = this.buildSectionCacheKey();
+        if (cacheKey === this._sectionCacheKey) {
+            return this._cachedAccordionSections;
+        }
+        const sections = this.computeAccordionSections();
+        this._sectionCacheKey = cacheKey;
+        this._cachedAccordionSections = sections;
+        return sections;
+    }
+
+    buildSectionCacheKey() {
+        return JSON.stringify({
+            rev: this._sectionRev,
+            mode: this.listViewMode,
+            sort: this.sortState,
+            search: this.searchKey,
+            expanded: this.expandedWorkTypeGroups,
+            configLoaded: this.ordersConfigLoaded,
+            datasetActive: this.ordersDatasetIsActive,
+            widths: this.columnWidths
+        });
+    }
+
+    computeAccordionSections() {
         const q = this.searchKey.trim().toLowerCase();
         const sectionsByKey = new Map(
             (this.sections || []).map(section => [normalizeConfigKey(section.bucketKey), section])
@@ -776,7 +868,6 @@ export default class BillingControlCenterOrders extends LightningElement {
         }
         const previousDefault = defaultSortFieldForView(this.listViewMode);
         const nextDefault = defaultSortFieldForView(next);
-        this.listViewMode = next;
         const nextSort = {};
         for (const key of BUCKET_KEYS) {
             const current = this.sortState[key] || { sortedBy: previousDefault, sortDirection: 'asc' };
@@ -785,7 +876,11 @@ export default class BillingControlCenterOrders extends LightningElement {
                     ? { sortedBy: nextDefault, sortDirection: 'asc' }
                     : { ...current };
         }
-        this.sortState = nextSort;
+        this.viewState = {
+            listViewMode: next,
+            sortState: nextSort,
+            expandedWorkTypeGroups: []
+        };
     }
 
     handleViewLedger(event) {
@@ -871,12 +966,21 @@ export default class BillingControlCenterOrders extends LightningElement {
             };
         }
 
+        const section = (this.sections || []).find(
+            candidate => normalizeConfigKey(candidate.bucketKey) === normalizeConfigKey(definition.developerKey)
+        );
+        const split = summarizeWorkTypeSplit(section?.rows);
+
         return {
             ...definition,
             title: configRecord?.label || definition.title,
             icon: configRecord?.iconName || definition.icon,
             metricText: CURRENCY_FORMATTER.format(this.kpiState[definition.revenueKey] || 0),
-            countText: `${NUMBER_FORMATTER.format(this.kpiState[definition.countKey] || 0)} records`
+            countText: `${NUMBER_FORMATTER.format(this.kpiState[definition.countKey] || 0)} records`,
+            splitColumns: [
+                formatSplitColumn('pit-cleaning', 'Pit Cleaning', split.pit),
+                formatSplitColumn('other', 'Other', split.other)
+            ]
         };
     }
 
@@ -925,17 +1029,19 @@ export default class BillingControlCenterOrders extends LightningElement {
                 otherRows.push(row);
             }
         });
-        const displayRows = decorateWorkTypeGroups(
-            decorateGroupRows(otherRows),
+        const workTypeGroups = buildWorkTypeGroups(
             decorateGroupRows(pitRows),
-            columns.length
+            decorateGroupRows(otherRows),
+            section.bucketKey,
+            new Set(this.expandedWorkTypeGroups)
         );
 
         return {
             bucketKey: section.bucketKey,
             sectionLabel: label,
             titleWithCount: `${label} (${visibleAppointmentCount})`,
-            filteredRows: displayRows,
+            workTypeGroups,
+            filteredRows: workTypeGroups.flatMap(group => group.rows),
             isEmpty: rows.length === 0,
             visibleWorkOrderCount: rows.length,
             sortedBy: bucketSort.sortedBy,
@@ -944,6 +1050,20 @@ export default class BillingControlCenterOrders extends LightningElement {
             visibleAppointmentCount,
             sectionOrder
         };
+    }
+
+    handleToggleWorkTypeGroup(event) {
+        const groupKey = event.currentTarget?.dataset?.groupKey;
+        if (!groupKey) {
+            return;
+        }
+        const nextExpanded = new Set(this.expandedWorkTypeGroups);
+        if (nextExpanded.has(groupKey)) {
+            nextExpanded.delete(groupKey);
+        } else {
+            nextExpanded.add(groupKey);
+        }
+        this.setViewState({ expandedWorkTypeGroups: Array.from(nextExpanded) });
     }
 
     handleHeaderSort(event) {
@@ -956,10 +1076,12 @@ export default class BillingControlCenterOrders extends LightningElement {
         const currentSort = this.sortState[bucketKey];
         const sortDirection =
             currentSort.sortedBy === fieldName && currentSort.sortDirection === 'asc' ? 'desc' : 'asc';
-        this.sortState = {
-            ...this.sortState,
-            [bucketKey]: { sortedBy: fieldName, sortDirection }
-        };
+        this.setViewState({
+            sortState: {
+                ...this.sortState,
+                [bucketKey]: { sortedBy: fieldName, sortDirection }
+            }
+        });
     }
 
     handleColumnResizeStart(event) {
@@ -1039,7 +1161,11 @@ export default class BillingControlCenterOrders extends LightningElement {
             this.providerWarnings = [];
             this.kpiState = {};
             this.sections = [];
-            this.sortState = defaultSortState();
+            this._sectionRev += 1;
+            this.setViewState({
+                sortState: defaultSortState(this.listViewMode),
+                expandedWorkTypeGroups: []
+            });
             this.errorMessage = this.reduceError(error);
         } finally {
             this.isLoading = false;
@@ -1072,7 +1198,11 @@ export default class BillingControlCenterOrders extends LightningElement {
             })
         }));
         this.sections = [...normalizedSections];
-        this.sortState = defaultSortState();
+        this._sectionRev += 1;
+        this.setViewState({
+            sortState: defaultSortState(this.listViewMode),
+            expandedWorkTypeGroups: []
+        });
     }
 
     async loadOrdersConfig() {
@@ -1119,6 +1249,7 @@ export default class BillingControlCenterOrders extends LightningElement {
             this.ordersActionsByKey = {};
             this.workOrderColumns = WORK_ORDER_COLUMNS;
         }
+        this._sectionRev += 1;
     }
 
     reduceError(error) {

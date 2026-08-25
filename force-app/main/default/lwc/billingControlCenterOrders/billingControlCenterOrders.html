@@ -6,25 +6,57 @@
                 <h1 class="hero__title">{heroTitle}</h1>
                 <p class="hero__subtitle">{heroSubtitle}</p>
             </div>
-            <template if:true={useExternalToolbar}>
-                <div class="hero__controls">
-                    <c-billing-control-center-date-filter
-                        compact
-                        selected-filter-key={dateFilterKey}
-                        start-date={dateFilterStart}
-                        end-date={dateFilterEnd}
-                        ondatefilterchange={handleDateFilterChange}>
-                    </c-billing-control-center-date-filter>
-                    <lightning-record-picker
-                        class="owner-picker"
-                        label="Opportunity Owner"
-                        placeholder="Opportunity Owner"
-                        object-api-name="User"
-                        value={opportunityOwnerId}
-                        display-info={userPickerDisplayInfo}
-                        matching-info={userPickerMatchingInfo}
-                        onchange={handleOpportunityOwnerChange}>
-                    </lightning-record-picker>
+            <div class="hero__controls">
+                <c-billing-control-center-date-filter
+                    compact
+                    selected-filter-key={dateFilterKey}
+                    start-date={dateFilterStart}
+                    end-date={dateFilterEnd}
+                    ondatefilterchange={handleDateFilterChange}>
+                </c-billing-control-center-date-filter>
+                <lightning-record-picker
+                    class="owner-picker"
+                    label="Opportunity Owner"
+                    placeholder="Opportunity Owner"
+                    object-api-name="User"
+                    value={opportunityOwnerId}
+                    display-info={userPickerDisplayInfo}
+                    matching-info={userPickerMatchingInfo}
+                    onchange={handleOpportunityOwnerChange}>
+                </lightning-record-picker>
+                <div class="view-by">
+                    <p class="view-by__title">View by</p>
+                    <p class="view-by__caption">WO View / Account view</p>
+                    <div class="view-by__switch" role="group" aria-label="View by">
+                        <button
+                            type="button"
+                            class={woViewButtonClass}
+                            data-view="workOrder"
+                            aria-pressed={isWorkOrderView}
+                            onclick={handleListViewSelect}>
+                            <span class="slds-assistive-text">Work order view</span>
+                        </button>
+                        <button
+                            type="button"
+                            class={accountViewButtonClass}
+                            data-view="account"
+                            aria-pressed={isAccountView}
+                            onclick={handleListViewSelect}>
+                            <span class="slds-assistive-text">Account view</span>
+                        </button>
+                        <span class={viewSwitchKnobClass} aria-hidden="true"></span>
+                    </div>
+                </div>
+                <lightning-input
+                    class="toolbar-search"
+                    type="search"
+                    label="Search"
+                    variant="label-hidden"
+                    placeholder="Search work order, account, opportunity, owner"
+                    value={searchKey}
+                    onchange={handleSearchChange}>
+                </lightning-input>
+                <template if:true={useExternalToolbar}>
                     <lightning-button
                         label={refreshLabel}
                         icon-name="utility:refresh"
@@ -32,33 +64,14 @@
                         disabled={isLoading}
                         onclick={handleRefresh}>
                     </lightning-button>
-                </div>
-            </template>
-            <template if:false={useExternalToolbar}>
-                <div class="hero__controls">
-                    <c-billing-control-center-date-filter
-                        compact
-                        selected-filter-key={dateFilterKey}
-                        start-date={dateFilterStart}
-                        end-date={dateFilterEnd}
-                        ondatefilterchange={handleDateFilterChange}>
-                    </c-billing-control-center-date-filter>
-                    <lightning-record-picker
-                        class="owner-picker"
-                        label="Opportunity Owner"
-                        placeholder="Opportunity Owner"
-                        object-api-name="User"
-                        value={opportunityOwnerId}
-                        display-info={userPickerDisplayInfo}
-                        matching-info={userPickerMatchingInfo}
-                        onchange={handleOpportunityOwnerChange}>
-                    </lightning-record-picker>
+                </template>
+                <template if:false={useExternalToolbar}>
                     <c-billing-control-center-action-bar
                         actions={heroActions}
                         onactionclick={handleHeroActionClick}>
                     </c-billing-control-center-action-bar>
-                </div>
-            </template>
+                </template>
+            </div>
         </div>
 
         <template if:true={errorMessage}>
@@ -85,47 +98,6 @@
         </div>
 
         <section class="table-shell">
-            <div class="table-toolbar">
-                <div class="table-toolbar__copy">
-                    <p class="table-toolbar__eyebrow">Work Order Ledger</p>
-                    <h2 class="table-toolbar__title">{tableTitle}</h2>
-                </div>
-                <div class="table-toolbar__actions">
-                    <div class="view-by">
-                        <p class="view-by__title">View by</p>
-                        <p class="view-by__caption">WO View / Account view</p>
-                        <div class="view-by__switch" role="group" aria-label="View by">
-                            <button
-                                type="button"
-                                class={woViewButtonClass}
-                                data-view="workOrder"
-                                aria-pressed={isWorkOrderView}
-                                onclick={handleListViewSelect}>
-                                <span class="slds-assistive-text">Work order view</span>
-                            </button>
-                            <button
-                                type="button"
-                                class={accountViewButtonClass}
-                                data-view="account"
-                                aria-pressed={isAccountView}
-                                onclick={handleListViewSelect}>
-                                <span class="slds-assistive-text">Account view</span>
-                            </button>
-                            <span class={viewSwitchKnobClass} aria-hidden="true"></span>
-                        </div>
-                    </div>
-                    <lightning-input
-                        class="toolbar-search"
-                        type="search"
-                        label="Search"
-                        variant="label-hidden"
-                        placeholder="Search work order, account, opportunity, owner"
-                        value={searchKey}
-                        onchange={handleSearchChange}>
-                    </lightning-input>
-                </div>
-            </div>
-
             <div class="table-meta">
                 <span>{searchSummary}</span>
             </div>
@@ -146,12 +118,16 @@
                                             class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout grouped-diary-table"
                                             aria-label={section.sectionLabel}>
                                             <colgroup>
+                                                <col class="grouped-diary-table__col grouped-diary-table__col--expand" />
                                                 <template for:each={section.columns} for:item="column">
                                                     <col key={column.key} class={column.colClass} style={column.colStyle} />
                                                 </template>
                                             </colgroup>
                                             <thead>
                                                 <tr class="slds-line-height_reset">
+                                                    <th scope="col" class="grouped-diary-table__header grouped-diary-table__header--expand">
+                                                        <span class="slds-assistive-text">Expand work type group</span>
+                                                    </th>
                                                     <template for:each={section.columns} for:item="column">
                                                         <th
                                                             key={column.key}
@@ -189,19 +165,44 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                <template for:each={section.filteredRows} for:item="row">
-                                                    <tr key={row.displayKey} class={row.rowClass}>
-                                                        <template if:true={row.isWorkTypeGroupHeader}>
-                                                            <td
-                                                                class="grouped-diary-table__cell grouped-diary-table__cell--work-type-group"
-                                                                colspan={row.columnSpan}
-                                                                data-label="Work Type Group">
-                                                                <span class="grouped-diary-table__work-type-group-label">
-                                                                    {row.workTypeGroupLabel}
-                                                                </span>
+                                                <template for:each={section.workTypeGroups} for:item="group">
+                                                    <tr key={group.key} class="slds-hint-parent grouped-diary-table__row grouped-diary-table__row--work-type-parent">
+                                                        <td class="grouped-diary-table__cell grouped-diary-table__cell--expand">
+                                                            <lightning-button-icon
+                                                                icon-name={group.expandIcon}
+                                                                variant="bare"
+                                                                alternative-text={group.expandAltText}
+                                                                title={group.expandAltText}
+                                                                data-group-key={group.key}
+                                                                onclick={handleToggleWorkTypeGroup}>
+                                                            </lightning-button-icon>
+                                                        </td>
+                                                        <template for:each={section.columns} for:item="column">
+                                                            <td key={column.key} class={column.cellClass} data-label={column.label}>
+                                                                <template if:true={column.isLeadColumn}>
+                                                                    <span class="grouped-diary-table__work-type-parent-label">{group.label}</span>
+                                                                </template>
+                                                                <template if:true={column.isWorkOrder}>
+                                                                    <lightning-formatted-number value={group.rowCount}></lightning-formatted-number>
+                                                                </template>
+                                                                <template if:true={column.isOpportunityAmount}>
+                                                                    <template if:true={group.hasAmount}>
+                                                                        <div class="grouped-diary-table__grouped-amount">
+                                                                            <lightning-formatted-number
+                                                                                value={group.totalAmount}
+                                                                                format-style="currency"
+                                                                                currency-code="USD">
+                                                                            </lightning-formatted-number>
+                                                                        </div>
+                                                                    </template>
+                                                                </template>
                                                             </td>
                                                         </template>
-                                                        <template if:false={row.isWorkTypeGroupHeader}>
+                                                    </tr>
+                                                    <template if:true={group.isExpanded}>
+                                                <template for:each={group.rows} for:item="row">
+                                                    <tr key={row.displayKey} class={row.rowClass}>
+                                                        <td class="grouped-diary-table__cell grouped-diary-table__cell--expand"></td>
                                                         <template for:each={section.columns} for:item="column">
                                                             <td key={column.key} class={column.cellClass} data-label={column.label}>
                                                                 <template if:true={column.isAccount}>
@@ -368,8 +369,9 @@
                                                                 </template>
                                                             </td>
                                                         </template>
-                                                        </template>
                                                     </tr>
+                                                </template>
+                                                    </template>
                                                 </template>
                                             </tbody>
                                         </table>

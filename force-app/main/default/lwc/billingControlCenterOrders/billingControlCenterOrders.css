@@ -116,6 +116,29 @@
     table-layout: fixed;
 }
 
+.grouped-diary-table__col--expand {
+    width: 3rem;
+}
+
+.grouped-diary-table__header--expand,
+.grouped-diary-table__cell--expand {
+    width: 3rem;
+    text-align: center;
+    vertical-align: middle;
+}
+
+.grouped-diary-table__row--work-type-parent td {
+    background: #eef3f8;
+    font-weight: 700;
+    vertical-align: middle;
+}
+
+.grouped-diary-table__work-type-parent-label {
+    display: block;
+    font-size: 0.8125rem;
+    letter-spacing: 0.02em;
+}
+
 .grouped-diary-table__col--work-type {
     width: 12rem;
 }
@@ -266,22 +289,6 @@
     text-align: center;
     white-space: nowrap;
     font-variant-numeric: tabular-nums;
-}
-
-.grouped-diary-table__row--work-type-group td {
-    background: #eef3f8;
-    border-top: 1px solid var(--bcc-border);
-    padding-top: 0.5rem;
-    padding-bottom: 0.5rem;
-}
-
-.grouped-diary-table__work-type-group-label {
-    display: block;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--bcc-muted);
 }
 
 .bucket-empty {
