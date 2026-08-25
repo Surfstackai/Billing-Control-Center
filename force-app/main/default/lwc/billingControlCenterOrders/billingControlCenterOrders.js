@@ -168,6 +168,15 @@ const WORK_ORDER_COLUMNS = [
         typeAttributes: { currencyCode: 'USD' }
     },
     {
+        developerKey: 'VISIT_AMOUNT',
+        configFieldApiName: 'visitAmount',
+        label: 'Visit Amount',
+        fieldName: 'visitAmount',
+        type: 'currency',
+        sortable: true,
+        typeAttributes: { currencyCode: 'USD' }
+    },
+    {
         developerKey: 'OWNER',
         configFieldApiName: 'ownerName',
         label: 'Opportunity Owner',
@@ -194,6 +203,7 @@ const COL_MODIFIER_BY_KEY = {
     EARLIEST_START: 'earliest-start',
     SUBJECT: 'subject',
     OPPORTUNITY_AMOUNT: 'opportunity-amount',
+    VISIT_AMOUNT: 'visit-amount',
     OWNER: 'owner',
     VIEW_LEDGER: 'view-ledger'
 };
@@ -254,7 +264,9 @@ function buildConfiguredColumns(configColumns) {
                 ? 'Ledger'
                 : developerKey === 'OPPORTUNITY_AMOUNT'
                   ? 'Opportunity Amount'
-                  : developerKey === 'EARLIEST_START'
+                  : developerKey === 'VISIT_AMOUNT'
+                    ? 'Visit Amount'
+                    : developerKey === 'EARLIEST_START'
                     ? 'Earliest Start Permitted'
                     : developerKey === 'WORK_TYPE'
                       ? 'Work Type'
@@ -274,6 +286,8 @@ function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) 
         const isAscending = sortDirection === 'asc';
 
         const isOpportunityAmount = developerKey === 'OPPORTUNITY_AMOUNT';
+        const isVisitAmount = developerKey === 'VISIT_AMOUNT';
+        const isCurrencyAmount = isOpportunityAmount || isVisitAmount;
         const colModifier = COL_MODIFIER_BY_KEY[developerKey] || 'default';
         const widthStyle = columnWidthStyle(columnWidths?.[developerKey]);
 
@@ -295,13 +309,14 @@ function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) 
             isEarliestStart: developerKey === 'EARLIEST_START',
             isSubject: developerKey === 'SUBJECT',
             isOpportunityAmount,
+            isVisitAmount,
             isOwner: developerKey === 'OWNER',
             isLedgerAction: developerKey === 'VIEW_LEDGER',
             colClass: `grouped-diary-table__col grouped-diary-table__col--${colModifier}`,
             colStyle: widthStyle,
             headerStyle: widthStyle,
-            headerClass: `grouped-diary-table__header bcc-resizable-header${isOpportunityAmount ? ' grouped-diary-table__header--opportunity-amount' : ''}`,
-            cellClass: `grouped-diary-table__cell${isOpportunityAmount ? ' grouped-diary-table__cell--opportunity-amount' : ''}`
+            headerClass: `grouped-diary-table__header bcc-resizable-header${isCurrencyAmount ? ' grouped-diary-table__header--opportunity-amount' : ''}`,
+            cellClass: `grouped-diary-table__cell${isCurrencyAmount ? ' grouped-diary-table__cell--opportunity-amount' : ''}`
         };
     });
 }
@@ -419,6 +434,8 @@ function normalizeAppointmentRows(row) {
         relatedOpportunities,
         opportunityAmountValue: row.opportunityAmount,
         hasOpportunityAmount: row.opportunityAmount !== undefined && row.opportunityAmount !== null,
+        visitAmountValue: row.visitAmount,
+        hasVisitAmount: row.visitAmount !== undefined && row.visitAmount !== null,
         serviceAppointmentCount: row.serviceAppointmentCount || relatedServiceAppointments.length,
         searchIndex
     };
@@ -453,7 +470,7 @@ function compareRowValues(left, right, fieldName, directionMultiplier) {
         return -1 * directionMultiplier;
     }
 
-    if (sortField === 'opportunityAmount') {
+    if (sortField === 'opportunityAmount' || sortField === 'visitAmount') {
         const leftNumber = Number(leftValue);
         const rightNumber = Number(rightValue);
         if (leftNumber < rightNumber) {
@@ -526,7 +543,7 @@ function summarizeWorkTypeSplit(rows) {
     (rows || []).forEach(row => {
         const target = isPitCleaningWorkType(row) ? pit : other;
         target.count += 1;
-        const amount = Number(row.opportunityAmount);
+        const amount = Number(row.visitAmount ?? row.opportunityAmount);
         if (Number.isFinite(amount)) {
             target.amount += amount;
         }
@@ -550,6 +567,13 @@ function sumOpportunityAmount(rows) {
     }, 0);
 }
 
+function sumVisitAmount(rows) {
+    return (rows || []).reduce((sum, row) => {
+        const amount = Number(row.visitAmountValue ?? row.visitAmount ?? row.opportunityAmountValue ?? row.opportunityAmount);
+        return Number.isFinite(amount) ? sum + amount : sum;
+    }, 0);
+}
+
 function buildWorkTypeGroups(pitRows, otherRows, bucketKey, expandedKeys) {
     return [
         { groupKey: WORK_TYPE_GROUP_PIT_CLEANING, rows: pitRows },
@@ -558,6 +582,7 @@ function buildWorkTypeGroups(pitRows, otherRows, bucketKey, expandedKeys) {
         const key = `${bucketKey}-${groupKey}`;
         const isExpanded = expandedKeys.has(key);
         const totalAmount = sumOpportunityAmount(rows);
+        const totalVisitAmount = sumVisitAmount(rows);
         return {
             key,
             groupKey,
@@ -566,7 +591,9 @@ function buildWorkTypeGroups(pitRows, otherRows, bucketKey, expandedKeys) {
             rowCount: rows.length,
             appointmentCount: countAppointments(rows),
             totalAmount,
+            totalVisitAmount,
             hasAmount: rows.some(row => row.hasOpportunityAmount),
+            hasVisitAmount: rows.some(row => row.hasVisitAmount),
             isExpanded,
             expandIcon: isExpanded ? 'utility:chevrondown' : 'utility:chevronright',
             expandAltText: isExpanded ? `Collapse ${WORK_TYPE_GROUP_LABELS[groupKey]}` : `Expand ${WORK_TYPE_GROUP_LABELS[groupKey]}`

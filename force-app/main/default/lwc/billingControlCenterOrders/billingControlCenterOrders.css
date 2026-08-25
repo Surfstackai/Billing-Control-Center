@@ -172,7 +172,8 @@
     width: 16rem;
 }
 
-.grouped-diary-table__col--opportunity-amount {
+.grouped-diary-table__col--opportunity-amount,
+.grouped-diary-table__col--visit-amount {
     width: 12rem;
 }
 

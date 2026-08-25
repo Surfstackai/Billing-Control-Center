@@ -1,9 +1,9 @@
 import { LightningElement, api } from 'lwc';
 
 const OPTIONS = [
+    { label: 'Current Year', value: 'This Year' },
     { label: 'This Month', value: 'This Month' },
     { label: 'This Quarter', value: 'This Quarter' },
-    { label: 'Current Year', value: 'This Year' },
     { label: 'Prior Year', value: 'Last Year' },
     { label: 'Date Range', value: 'Custom' }
 ];
@@ -26,6 +26,7 @@ export default class BillingControlCenterDateFilter extends LightningElement {
     currentStartDate = '';
     currentEndDate = '';
     @api compact = false;
+    @api label = 'Date Range';
 
     @api
     get selectedFilterKey() {

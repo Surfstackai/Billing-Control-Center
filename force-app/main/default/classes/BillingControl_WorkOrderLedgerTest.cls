@@ -108,6 +108,7 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(true, sawNoneDisplay);
         System.assertEquals(true, sawScheduledDisplay);
         System.assertEquals(1000, multiSaRow.opportunityAmount);
+        System.assertEquals(1000, multiSaRow.visitAmount);
         System.assertEquals(firstOpportunity.Name, multiSaRow.opportunityName);
         System.assertEquals(firstOpportunity.Id, multiSaRow.opportunityId);
         System.assertEquals(null, multiSaRow.depositAmount);
@@ -133,6 +134,7 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(true, multiOppRow.opportunityName.contains(firstOpportunity.Name));
         System.assertEquals(true, multiOppRow.opportunityName.contains(secondOpportunity.Name));
         System.assertEquals(1500, multiOppRow.opportunityAmount);
+        System.assertEquals(1500, multiOppRow.visitAmount);
 
         BillingControl_Orders.WorkOrderRowWrapper noSaRow = findRow(
             findSection(runtime.sections, 'READY_TO_SCHEDULE').rows,
@@ -148,6 +150,7 @@ private class BillingControl_WorkOrderLedgerTest {
         );
         System.assertNotEquals(null, noOppRow);
         System.assertEquals(null, noOppRow.opportunityAmount);
+        System.assertEquals(null, noOppRow.visitAmount);
 
         BillingControl_Orders.WorkOrderRowWrapper todayRow = findRow(
             findSection(runtime.sections, 'SCHEDULED_APPOINTMENTS').rows,
@@ -188,6 +191,57 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertNotEquals(null, BillingControl_WorkOrderLedger.getLedgerIdsByOpportunityId(
             new Set<Id>{ firstOpportunity.Id }
         ).get(firstOpportunity.Id));
+    }
+
+    @IsTest
+    static void visitAmountSplitsPitCleaningOpportunityAcrossWorkOrders() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Pit Cleaning Visit Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Pit Cleaning', 1);
+        Opportunity opportunityRecord = insertOpportunity(
+            accountRecord.Id,
+            workTypeRecord.Id,
+            'Annual Pit Cleaning Contract',
+            1200
+        );
+
+        List<WorkOrder> visitWorkOrders = new List<WorkOrder>{
+            insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Pit Cleaning Visit 1'),
+            insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Pit Cleaning Visit 2'),
+            insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Pit Cleaning Visit 3'),
+            insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Pit Cleaning Visit 4')
+        };
+        List<Opportunity_WorkOrder__c> junctions = new List<Opportunity_WorkOrder__c>();
+        Set<Id> visitWorkOrderIds = new Set<Id>();
+        for (WorkOrder visitWorkOrder : visitWorkOrders) {
+            visitWorkOrderIds.add(visitWorkOrder.Id);
+            junctions.add(new Opportunity_WorkOrder__c(
+                Work_Order__c = visitWorkOrder.Id,
+                Opportunity__c = opportunityRecord.Id
+            ));
+        }
+        insert junctions;
+        WorkOrderLedgerService.backfillWorkOrders(visitWorkOrderIds);
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime = BillingControl_WorkOrderLedger.getRuntime(71L, null);
+        Test.stopTest();
+
+        BillingControl_Orders.BucketSectionWrapper readySection = findSection(runtime.sections, 'READY_TO_SCHEDULE');
+        Decimal visitTotal = 0;
+        for (WorkOrder visitWorkOrder : visitWorkOrders) {
+            BillingControl_Orders.WorkOrderRowWrapper row = findRow(readySection.rows, visitWorkOrder.Id);
+            System.assertNotEquals(null, row, 'Pit Cleaning visit Work Orders should appear on the ledger.');
+            System.assertEquals(1200, row.opportunityAmount);
+            System.assertEquals(300, row.visitAmount);
+            visitTotal += row.visitAmount;
+        }
+        System.assertEquals(1200, visitTotal);
+        System.assertEquals(1200, runtime.kpis.unscheduledRevenue);
+        System.assertEquals(true, BillingControl_WorkOrderLedger.matchesPitCleaningText('Preventative Maintenance'));
+        System.assertEquals(true, BillingControl_WorkOrderLedger.matchesPitCleaningText('Pit Cleaning'));
+        System.assertEquals(false, BillingControl_WorkOrderLedger.matchesPitCleaningText('Plumbing'));
     }
 
     @IsTest
@@ -273,7 +327,7 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(
             true,
             countAllRows(thisYearRuntime.sections) >= 1,
-            'This Year should include related Work Orders for Opportunities completed today.'
+            'This Year should include Work Orders whose actual completion or in-range schedule is this year.'
         );
         System.assertEquals(
             null,

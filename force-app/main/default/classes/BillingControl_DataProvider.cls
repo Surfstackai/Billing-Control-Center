@@ -56,7 +56,7 @@ public with sharing class BillingControl_DataProvider {
         result.filterContext = buildFilterContext(tabConfig, datasetConfig, result.warnings);
         applyDateFilterToContext(
             result.filterContext,
-            dateFilter,
+            defaultThisYearDateFilter(dateFilter),
             'ServiceAppointment',
             'ActualEndTime',
             true,
@@ -87,7 +87,7 @@ public with sharing class BillingControl_DataProvider {
         result.filterContext = buildFilterContext(tabConfig, datasetConfig, result.warnings);
         applyDateFilterToContext(
             result.filterContext,
-            dateFilter,
+            defaultThisYearDateFilter(dateFilter),
             'ServiceAppointment',
             'ActualEndTime',
             true,
@@ -411,6 +411,15 @@ public with sharing class BillingControl_DataProvider {
         context.filters.add(dto);
     }
 
+    private static BillingDateFilterDTO defaultThisYearDateFilter(BillingDateFilterDTO dateFilter) {
+        if (dateFilter != null && !String.isBlank(dateFilter.filterKey)) {
+            return dateFilter;
+        }
+        BillingDateFilterDTO fallback = new BillingDateFilterDTO();
+        fallback.filterKey = 'This Year';
+        return fallback;
+    }
+
     private static void applyDateFilterToContext(
         BillingFilterContextDTO context,
         BillingDateFilterDTO dateFilter,
@@ -502,7 +511,7 @@ public with sharing class BillingControl_DataProvider {
             Date startOfQuarter = Date.newInstance(todayDate.year(), startMonth, 1);
             return new DateRangeDTO(startOfQuarter, startOfQuarter.addMonths(3).addDays(-1));
         }
-        if (normalizedKey == 'THIS YEAR') {
+        if (normalizedKey == 'THIS YEAR' || normalizedKey == 'CURRENT YEAR') {
             Date startOfYear = Date.newInstance(todayDate.year(), 1, 1);
             return new DateRangeDTO(startOfYear, Date.newInstance(todayDate.year(), 12, 31));
         }

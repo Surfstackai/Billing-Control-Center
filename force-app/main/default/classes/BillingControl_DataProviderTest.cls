@@ -145,8 +145,8 @@ private class BillingControl_DataProviderTest {
         Test.stopTest();
 
         System.assertEquals(dmlBefore, dmlAfter);
-        System.assertEquals(2, ordersData.filterContext.filters.size());
-        System.assertEquals(1, invoicingData.filterContext.filters.size());
+        System.assertEquals(4, ordersData.filterContext.filters.size());
+        System.assertEquals(3, invoicingData.filterContext.filters.size());
         System.assertEquals(1, ordersData.kpis.unscheduledCount);
         System.assertEquals(1, findOrdersSection(ordersData.bucketSections, 'READY_TO_SCHEDULE').rows.size());
         System.assertEquals(0, ordersData.kpis.completedThisWeekCount);
@@ -173,7 +173,7 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(11L);
         Test.stopTest();
 
-        System.assertEquals(0, invoicingData.filterContext.filters.size());
+        System.assertEquals(2, invoicingData.filterContext.filters.size());
         System.assertEquals(4, invoicingData.metrics.readyToBill, 'Disabling legacy configuration must not change SA/WO eligibility.');
     }
 
@@ -480,6 +480,7 @@ private class BillingControl_DataProviderTest {
             'This Month',
             'This Quarter',
             'This Year',
+            'Current Year',
             'Last Year',
             'Prior Year'
         }) {

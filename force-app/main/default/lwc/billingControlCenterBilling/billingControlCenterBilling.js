@@ -121,9 +121,9 @@ const WORK_ORDER_COLUMNS = [
     },
     {
         developerKey: 'CREATED_DATE',
-        configFieldApiName: 'createdDate',
-        label: 'Created Date',
-        fieldName: 'createdDate',
+        configFieldApiName: 'completionDateTime',
+        label: 'Actual Completion Date',
+        fieldName: 'completionDateTime',
         type: 'date',
         sortable: true,
         typeAttributes: {
@@ -251,7 +251,9 @@ function buildConfiguredColumns(configColumns) {
                 ? 'Opportunity Amount'
                 : developerKey === 'OWNER'
                     ? 'Account Owner'
-                    : configColumn.label || matchedColumn.label;
+                    : developerKey === 'CREATED_DATE'
+                        ? 'Actual Completion Date'
+                        : configColumn.label || matchedColumn.label;
 
         matchedColumns.push({
             ...matchedColumn,
@@ -393,7 +395,7 @@ function normalizeAppointmentRows(row) {
             serviceAppointmentUrl: appointment.serviceAppointmentId
                 ? `/lightning/r/ServiceAppointment/${appointment.serviceAppointmentId}/view`
                 : null,
-            createdDateValue: appointment.createdDate
+            createdDateValue: appointment.completionDateTime || appointment.createdDate
         };
     });
 
@@ -470,7 +472,7 @@ function compareRowValues(left, right, fieldName, directionMultiplier) {
         return 0;
     }
 
-    if (sortField === 'createdDate') {
+    if (sortField === 'createdDate' || sortField === 'completionDateTime') {
         const leftTime = new Date(leftValue).getTime();
         const rightTime = new Date(rightValue).getTime();
         if (leftTime < rightTime) {

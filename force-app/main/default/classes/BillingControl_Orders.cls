@@ -58,6 +58,7 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public Id opportunityId;
         @AuraEnabled public String opportunityName;
         @AuraEnabled public Decimal opportunityAmount;
+        @AuraEnabled public Decimal visitAmount;
         @AuraEnabled public String opportunityStageName;
         @AuraEnabled public Date opportunityCloseDate;
         @AuraEnabled public Id ownerId;

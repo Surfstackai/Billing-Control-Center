@@ -897,7 +897,7 @@ public with sharing class BillingControl_Invoicing {
     ) {
         if (cachedEligibleInvoicingAppointments == null) {
             cachedEligibleInvoicingAppointments = filterEligibleInvoicingAppointments(
-                queryCompletedAppointmentsForEligibleWorkOrders()
+                queryCompletedAppointmentsForEligibleWorkOrders(filterContext)
             );
         }
         if (rowLimit != null && cachedEligibleInvoicingAppointments.size() > rowLimit) {
@@ -910,7 +910,16 @@ public with sharing class BillingControl_Invoicing {
         return cachedEligibleInvoicingAppointments;
     }
 
-    private static List<ServiceAppointment> queryCompletedAppointmentsForEligibleWorkOrders() {
+    private static List<ServiceAppointment> queryCompletedAppointmentsForEligibleWorkOrders(
+        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+    ) {
+        Datetime rangeStart = extractActualEndBound(filterContext, true);
+        Datetime rangeEnd = extractActualEndBound(filterContext, false);
+        if (rangeStart == null || rangeEnd == null) {
+            rangeStart = Datetime.newInstance(Date.newInstance(1900, 1, 1), Time.newInstance(0, 0, 0, 0));
+            rangeEnd = Datetime.newInstance(Date.newInstance(4000, 12, 31), Time.newInstance(23, 59, 59, 0));
+        }
+
         List<ServiceAppointment> candidates = new List<ServiceAppointment>();
         Set<Id> seenAppointmentIds = new Set<Id>();
         for (ServiceAppointment appointmentRecord : [
@@ -936,6 +945,8 @@ public with sharing class BillingControl_Invoicing {
                 Owner.Name
             FROM ServiceAppointment
             WHERE Status = :SERVICE_APPOINTMENT_STATUS_COMPLETED
+            AND ActualEndTime >= :rangeStart
+            AND ActualEndTime <= :rangeEnd
             AND ParentRecordId IN (
                 SELECT Id
                 FROM WorkOrder
@@ -970,6 +981,8 @@ public with sharing class BillingControl_Invoicing {
                 Owner.Name
             FROM ServiceAppointment
             WHERE Status = :SERVICE_APPOINTMENT_STATUS_COMPLETED
+            AND ActualEndTime >= :rangeStart
+            AND ActualEndTime <= :rangeEnd
             AND ParentRecordId IN (
                 SELECT Id
                 FROM WorkOrderLineItem
@@ -982,6 +995,32 @@ public with sharing class BillingControl_Invoicing {
             }
         }
         return candidates;
+    }
+
+    private static Datetime extractActualEndBound(
+        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        Boolean isStartBound
+    ) {
+        if (filterContext == null || filterContext.filters == null) {
+            return null;
+        }
+        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+            String fieldKey = normalizeFilterValue(filterRecord.objectApiName)
+                + '.'
+                + normalizeFilterValue(filterRecord.fieldApiName);
+            if (fieldKey != 'SERVICEAPPOINTMENT.ACTUALENDTIME') {
+                continue;
+            }
+            String operatorValue = normalizeFilterValue(filterRecord.operator);
+            Boolean matchesStart = isStartBound
+                && (operatorValue == 'GREATER OR EQUAL' || operatorValue == 'GREATER THAN');
+            Boolean matchesEnd = !isStartBound
+                && (operatorValue == 'LESS OR EQUAL' || operatorValue == 'LESS THAN');
+            if (matchesStart || matchesEnd) {
+                return resolveDatetimeFilterValue(filterRecord);
+            }
+        }
+        return null;
     }
 
     private static List<ServiceAppointment> filterEligibleInvoicingAppointments(
