@@ -44,7 +44,7 @@ public with sharing class BillingControl_DataProvider {
         'BILLINGCONTROL_INVOICING.GETCOMMISSIONMETRICS'
     };
 
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled
     public static OrdersRuntimeDataDTO getOrdersRuntimeData(
         Long refreshToken,
         BillingDateFilterDTO dateFilter,
@@ -75,7 +75,7 @@ public with sharing class BillingControl_DataProvider {
         return result;
     }
 
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled
     public static InvoicingRuntimeDataDTO getInvoicingRuntimeData(
         Long refreshToken,
         BillingDateFilterDTO dateFilter,
@@ -106,7 +106,7 @@ public with sharing class BillingControl_DataProvider {
         return result;
     }
 
-    @AuraEnabled(cacheable=true)
+    @AuraEnabled
     public static ReceivablesRuntimeDataDTO getReceivablesRuntimeData(
         Long refreshToken,
         BillingDateFilterDTO dateFilter,

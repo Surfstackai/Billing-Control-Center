@@ -9,7 +9,7 @@
             <div class="hero__controls">
                 <c-billing-control-center-date-filter
                     compact
-                    label="Actual Completion Date"
+                    label="Date Range"
                     selected-filter-key={dateFilterKey}
                     start-date={dateFilterStart}
                     end-date={dateFilterEnd}
@@ -337,6 +337,48 @@
                                                                                     minute="2-digit">
                                                                                 </lightning-formatted-date-time>
                                                                             </span>
+                                                                        </template>
+                                                                    </div>
+                                                                </template>
+
+                                                                <template if:true={column.isScheduledStart}>
+                                                                    <div class="grouped-diary-cell grouped-diary-cell--nowrap">
+                                                                        <template for:each={row.relatedServiceAppointments} for:item="appointment">
+                                                                            <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                                <template if:true={appointment.schedStartTime}>
+                                                                                    <span class="grouped-diary-cell__value grouped-diary-cell__value--nowrap">
+                                                                                        <lightning-formatted-date-time
+                                                                                            value={appointment.schedStartTime}
+                                                                                            year="numeric"
+                                                                                            month="2-digit"
+                                                                                            day="2-digit"
+                                                                                            hour="2-digit"
+                                                                                            minute="2-digit">
+                                                                                        </lightning-formatted-date-time>
+                                                                                    </span>
+                                                                                </template>
+                                                                            </div>
+                                                                        </template>
+                                                                    </div>
+                                                                </template>
+
+                                                                <template if:true={column.isActualStart}>
+                                                                    <div class="grouped-diary-cell grouped-diary-cell--nowrap">
+                                                                        <template for:each={row.relatedServiceAppointments} for:item="appointment">
+                                                                            <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                                <template if:true={appointment.actualStartTime}>
+                                                                                    <span class="grouped-diary-cell__value grouped-diary-cell__value--nowrap">
+                                                                                        <lightning-formatted-date-time
+                                                                                            value={appointment.actualStartTime}
+                                                                                            year="numeric"
+                                                                                            month="2-digit"
+                                                                                            day="2-digit"
+                                                                                            hour="2-digit"
+                                                                                            minute="2-digit">
+                                                                                        </lightning-formatted-date-time>
+                                                                                    </span>
+                                                                                </template>
+                                                                            </div>
                                                                         </template>
                                                                     </div>
                                                                 </template>

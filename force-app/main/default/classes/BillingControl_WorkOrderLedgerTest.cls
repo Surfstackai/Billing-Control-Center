@@ -848,6 +848,146 @@ private class BillingControl_WorkOrderLedgerTest {
     }
 
     @IsTest
+    static void dateFilterReadyUsesEarliestStartAndScheduledUsesSchedStart() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger Bucket Date Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Bucket Date Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Bucket Date Opp', 900);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Bucket Date Ledger WO');
+
+        Datetime lastYearEarliest = Datetime.newInstance(
+            Date.newInstance(Date.today().year() - 1, 3, 15),
+            Time.newInstance(8, 0, 0, 0)
+        );
+        Datetime thisYearSchedStart = Datetime.newInstance(Date.today(), Time.newInstance(10, 0, 0, 0));
+        ServiceAppointment readyAppointment = buildAppointment(
+            workOrderRecord.Id,
+            'None',
+            null,
+            null,
+            'Ready Last Year SA'
+        );
+        readyAppointment.EarliestStartTime = lastYearEarliest;
+        readyAppointment.DueDate = lastYearEarliest.addDays(7);
+
+        insert new List<ServiceAppointment>{
+            readyAppointment,
+            buildAppointment(
+                workOrderRecord.Id,
+                'Scheduled',
+                thisYearSchedStart,
+                null,
+                'Scheduled This Year SA'
+            )
+        };
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Date todayDate = Date.today();
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(64L, thisYearDateContext(todayDate));
+        BillingControl_WorkOrderLedger.RuntimeBundle lastYearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(65L, lastYearDateContext(todayDate));
+        Test.stopTest();
+
+        BillingControl_Orders.WorkOrderRowWrapper thisYearRow = findRow(
+            findSection(thisYearRuntime.sections, 'SCHEDULED_APPOINTMENTS').rows,
+            workOrderRecord.Id
+        );
+        System.assertNotEquals(null, thisYearRow, 'This year should classify on Scheduled Start.');
+        System.assertEquals(
+            null,
+            findRow(findSection(thisYearRuntime.sections, 'READY_TO_SCHEDULE').rows, workOrderRecord.Id)
+        );
+        System.assertEquals(1, thisYearRow.relatedServiceAppointments.size());
+        System.assertEquals(true, thisYearRow.relatedServiceAppointments[0].serviceAppointmentDisplay.contains('(Scheduled -'));
+
+        BillingControl_Orders.WorkOrderRowWrapper lastYearRow = findRow(
+            findSection(lastYearRuntime.sections, 'READY_TO_SCHEDULE').rows,
+            workOrderRecord.Id
+        );
+        System.assertNotEquals(null, lastYearRow, 'Prior year should classify on Earliest Start Permitted.');
+        System.assertEquals(
+            null,
+            findRow(findSection(lastYearRuntime.sections, 'SCHEDULED_APPOINTMENTS').rows, workOrderRecord.Id)
+        );
+        System.assertEquals(1, lastYearRow.relatedServiceAppointments.size());
+        System.assertEquals(true, lastYearRow.relatedServiceAppointments[0].serviceAppointmentDisplay.contains('(none)'));
+    }
+
+    @IsTest
+    static void thisMonthExcludesReadyWorkWithJanuaryEarliestStart() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger Month Filter Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Month Filter Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Month Filter Opp', 275);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'January Earliest Ledger WO');
+        Datetime januaryEarliest = Datetime.newInstance(
+            Date.newInstance(Date.today().year(), 1, 15),
+            Time.newInstance(8, 0, 0, 0)
+        );
+        ServiceAppointment readyAppointment = buildAppointment(
+            workOrderRecord.Id,
+            'None',
+            null,
+            null,
+            'January Earliest SA'
+        );
+        readyAppointment.EarliestStartTime = januaryEarliest;
+        readyAppointment.DueDate = januaryEarliest.addDays(7);
+        insert readyAppointment;
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Date todayDate = Date.today();
+        BillingControl_DataProvider.BillingFilterContextDTO thisMonthContext =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
+        thisMonthContext.filters.add(
+            dateBoundFilter(
+                'DATE_FILTER_START',
+                'ServiceAppointment',
+                'ActualEndTime',
+                'Greater Or Equal',
+                Date.newInstance(todayDate.year(), todayDate.month(), 1),
+                false
+            )
+        );
+        thisMonthContext.filters.add(
+            dateBoundFilter(
+                'DATE_FILTER_END',
+                'ServiceAppointment',
+                'ActualEndTime',
+                'Less Or Equal',
+                Date.newInstance(todayDate.year(), todayDate.month(), 1).addMonths(1).addDays(-1),
+                true
+            )
+        );
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(66L, thisYearDateContext(todayDate));
+        BillingControl_WorkOrderLedger.RuntimeBundle thisMonthRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(67L, thisMonthContext);
+        Test.stopTest();
+
+        System.assertNotEquals(
+            null,
+            findAnyRow(thisYearRuntime.sections, workOrderRecord.Id),
+            'Current Year must include Ready to Schedule work whose Earliest Start Permitted is in January.'
+        );
+        if (todayDate.month() != 1) {
+            System.assertEquals(
+                null,
+                findAnyRow(thisMonthRuntime.sections, workOrderRecord.Id),
+                'This Month must exclude Ready to Schedule work whose Earliest Start Permitted is in January.'
+            );
+        }
+    }
+
+    @IsTest
     static void dateFilterExcludesClosedWorkOrderAppointments() {
         WorkOrderLedgerAutomationControl.disableForTests();
         String closedStatus = firstClosedWorkOrderStatus();
@@ -1049,6 +1189,32 @@ private class BillingControl_WorkOrderLedgerTest {
                 'ActualEndTime',
                 'Less Or Equal',
                 Date.newInstance(todayDate.year(), 12, 31),
+                true
+            )
+        );
+        return context;
+    }
+
+    private static BillingControl_DataProvider.BillingFilterContextDTO lastYearDateContext(Date todayDate) {
+        BillingControl_DataProvider.BillingFilterContextDTO context =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
+        context.filters.add(
+            dateBoundFilter(
+                'DATE_FILTER_START',
+                'ServiceAppointment',
+                'ActualEndTime',
+                'Greater Or Equal',
+                Date.newInstance(todayDate.year() - 1, 1, 1),
+                false
+            )
+        );
+        context.filters.add(
+            dateBoundFilter(
+                'DATE_FILTER_END',
+                'ServiceAppointment',
+                'ActualEndTime',
+                'Less Or Equal',
+                Date.newInstance(todayDate.year() - 1, 12, 31),
                 true
             )
         );

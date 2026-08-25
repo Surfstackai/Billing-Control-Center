@@ -427,7 +427,7 @@ private class BillingControl_DataProviderTest {
             false,
             String.join(lastYearData.warnings, ' ').contains('Unsupported date filter key')
         );
-        System.assertEquals(0, lastYearData.kpis.unscheduledCount, 'Last Year excludes Work Orders created this year.');
+        System.assertEquals(0, lastYearData.kpis.unscheduledCount, 'Last Year excludes work whose bucket date is this year.');
         System.assertEquals(0, lastYearData.kpis.scheduledCount);
         System.assertEquals(0, lastYearData.kpis.inProgressCount);
     }
@@ -450,7 +450,7 @@ private class BillingControl_DataProviderTest {
             + lastYearData.kpis.scheduledCount
             + lastYearData.kpis.inProgressCount;
         System.assertEquals(true, thisYearCount > 0, 'This Year includes current Work Orders.');
-        System.assertEquals(0, lastYearCount, 'Last Year excludes Work Orders created this year.');
+        System.assertEquals(0, lastYearCount, 'Last Year excludes work whose bucket date is this year.');
     }
 
     @IsTest

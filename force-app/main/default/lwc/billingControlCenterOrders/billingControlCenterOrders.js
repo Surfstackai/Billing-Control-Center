@@ -201,6 +201,8 @@ const COL_MODIFIER_BY_KEY = {
     WORK_ORDER: 'work-order',
     SERVICE_APPOINTMENTS: 'service-appointment',
     EARLIEST_START: 'earliest-start',
+    SCHEDULED_START: 'earliest-start',
+    ACTUAL_START: 'earliest-start',
     SUBJECT: 'subject',
     OPPORTUNITY_AMOUNT: 'opportunity-amount',
     VISIT_AMOUNT: 'visit-amount',
@@ -307,6 +309,8 @@ function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) 
             isWorkOrder: developerKey === 'WORK_ORDER',
             isServiceAppointment: developerKey === 'SERVICE_APPOINTMENTS',
             isEarliestStart: developerKey === 'EARLIEST_START',
+            isScheduledStart: developerKey === 'SCHEDULED_START',
+            isActualStart: developerKey === 'ACTUAL_START',
             isSubject: developerKey === 'SUBJECT',
             isOpportunityAmount,
             isVisitAmount,
@@ -482,7 +486,13 @@ function compareRowValues(left, right, fieldName, directionMultiplier) {
         return 0;
     }
 
-    if (sortField === 'createdDate' || sortField === 'completedDate' || sortField === 'earliestStartTime') {
+    if (
+        sortField === 'createdDate'
+        || sortField === 'completedDate'
+        || sortField === 'earliestStartTime'
+        || sortField === 'schedStartTime'
+        || sortField === 'actualStartTime'
+    ) {
         const leftTime = new Date(leftValue).getTime();
         const rightTime = new Date(rightValue).getTime();
         if (leftTime < rightTime) {
@@ -616,6 +626,38 @@ function columnsForListView(columns, listViewMode) {
     return [...leading, ...rest];
 }
 
+const BUCKET_DATE_COLUMNS = {
+    SCHEDULED_APPOINTMENTS: {
+        developerKey: 'SCHEDULED_START',
+        configFieldApiName: 'schedStartTime',
+        label: 'Scheduled Start',
+        fieldName: 'schedStartTime'
+    },
+    IN_PROGRESS: {
+        developerKey: 'ACTUAL_START',
+        configFieldApiName: 'actualStartTime',
+        label: 'Actual Start',
+        fieldName: 'actualStartTime'
+    }
+};
+
+function columnsForBucket(columns, listViewMode, bucketKey) {
+    const viewColumns = columnsForListView(columns, listViewMode);
+    const dateColumn = BUCKET_DATE_COLUMNS[normalizeConfigKey(bucketKey)];
+    if (!dateColumn) {
+        return viewColumns;
+    }
+    return viewColumns.map(column => {
+        if (normalizeConfigKey(column.developerKey) !== 'EARLIEST_START') {
+            return column;
+        }
+        return {
+            ...column,
+            ...dateColumn
+        };
+    });
+}
+
 function defaultSortFieldForView(listViewMode) {
     return listViewMode === LIST_VIEW_WORK_ORDER ? WORK_ORDER_SORT_FIELD : DEFAULT_SORT_FIELD;
 }
@@ -638,6 +680,19 @@ function buildRuntimeCacheKey(dateFilter, opportunityOwnerId) {
         dateFilter: dateFilter || null,
         opportunityOwnerId: opportunityOwnerId || null
     });
+}
+
+function apexRefreshToken(dateFilter, opportunityOwnerId, forceRefresh) {
+    if (forceRefresh) {
+        return Date.now();
+    }
+    const raw = buildRuntimeCacheKey(dateFilter, opportunityOwnerId);
+    let hash = 2166136261;
+    for (let i = 0; i < raw.length; i += 1) {
+        hash ^= raw.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0) || 1;
 }
 
 export default class BillingControlCenterOrders extends LightningElement {
@@ -711,8 +766,12 @@ export default class BillingControlCenterOrders extends LightningElement {
     }
 
     set dateFilter(value) {
-        const normalizedValue = value ? { ...value } : null;
-        const signature = JSON.stringify(normalizedValue || {});
+        this.applyDateFilter(value);
+    }
+
+    applyDateFilter(value) {
+        const normalizedValue = value ? { ...value } : { ...DEFAULT_DATE_FILTER };
+        const signature = JSON.stringify(normalizedValue);
         if (signature === this._dateFilterSignature) {
             return;
         }
@@ -945,11 +1004,15 @@ export default class BillingControlCenterOrders extends LightningElement {
     handleDateFilterChange(event) {
         const detail = event.detail || {};
         const filterKey = detail.filterKey || DEFAULT_DATE_FILTER.filterKey;
-        this.dateFilter = {
+        this._dateFilter = {
             filterKey,
             startDate: filterKey === 'Custom' ? detail.startDate || null : null,
             endDate: filterKey === 'Custom' ? detail.endDate || null : null
         };
+        this._dateFilterSignature = JSON.stringify(this._dateFilter);
+        if (this._isConnected) {
+            this.loadData(true);
+        }
     }
 
     handleOpportunityOwnerChange(event) {
@@ -1025,7 +1088,7 @@ export default class BillingControlCenterOrders extends LightningElement {
         rows = sortWorkOrderRows(rows, bucketSort.sortedBy, bucketSort.sortDirection, groupByAccount);
         const visibleAppointmentCount = countAppointments(rows);
         const columns = buildRenderableColumns(
-            columnsForListView(this.workOrderColumns, this.listViewMode),
+            columnsForBucket(this.workOrderColumns, this.listViewMode, section.bucketKey),
             bucketSort.sortedBy,
             bucketSort.sortDirection,
             this.columnWidths
@@ -1176,10 +1239,18 @@ export default class BillingControlCenterOrders extends LightningElement {
                 return;
             }
 
-            const refreshToken = forceRefresh ? Date.now() : null;
+            const refreshToken = apexRefreshToken(
+                this.dateFilter,
+                this.opportunityOwnerId,
+                forceRefresh
+            );
             const runtimeData = await getOrdersRuntimeData({
-                refreshToken,
-                dateFilter: this.dateFilter || null,
+                refreshToken: forceRefresh ? Date.now() : refreshToken,
+                dateFilter: {
+                    filterKey: this.dateFilter?.filterKey || DEFAULT_DATE_FILTER.filterKey,
+                    startDate: this.dateFilter?.startDate || null,
+                    endDate: this.dateFilter?.endDate || null
+                },
                 opportunityOwnerId: this.opportunityOwnerId || null
             });
             ordersRuntimeCache.set(cacheKey, cloneRuntimeData(runtimeData));

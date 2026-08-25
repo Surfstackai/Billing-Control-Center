@@ -91,6 +91,15 @@ public with sharing class BillingControl_WorkOrderLedger {
         @AuraEnabled public String woInvStatus;
     }
 
+    public class DateTimeRange {
+        public Datetime rangeStart;
+        public Datetime rangeEnd;
+
+        public Boolean isComplete() {
+            return rangeStart != null && rangeEnd != null;
+        }
+    }
+
     public class ValidationCountsWrapper {
         @AuraEnabled public Integer openWorkOrderCount;
         @AuraEnabled public Integer ledgerCount;
@@ -512,19 +521,30 @@ public with sharing class BillingControl_WorkOrderLedger {
         Map<Id, List<ServiceAppointment>> appointmentsByWorkOrderId = queryListAppointmentsByWorkOrderId(workOrderIds);
         Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = queryListJunctionsByWorkOrderId(workOrderIds);
         Map<Id, Integer> visitCountByOpportunityId = queryVisitCountByOpportunityId(junctionsByWorkOrderId);
+        DateTimeRange dateRange = extractLedgerDateRange(filterContext);
 
         for (Work_Order_Ledger__c ledgerRecord : ledgers) {
             List<ServiceAppointment> appointments = appointmentsByWorkOrderId.get(ledgerRecord.Work_Order__c);
             if (isInvoicedWork(ledgerRecord, appointments)) {
                 continue;
             }
-            String bucketKey = classifyWorkOrder(appointments);
+            List<ServiceAppointment> classificationAppointments =
+                appointmentsInLedgerDateRange(appointments, dateRange);
+            if (dateRange != null
+                && dateRange.isComplete()
+                && appointments != null
+                && !appointments.isEmpty()
+                && classificationAppointments.isEmpty()
+            ) {
+                continue;
+            }
+            String bucketKey = classifyWorkOrder(classificationAppointments);
             if (String.isBlank(bucketKey) || !rowsByBucket.containsKey(bucketKey)) {
                 continue;
             }
             BillingControl_Orders.WorkOrderRowWrapper row = buildRow(
                 ledgerRecord,
-                appointments,
+                appointmentsForBucket(appointments, bucketKey, dateRange),
                 junctionsByWorkOrderId.get(ledgerRecord.Work_Order__c),
                 opportunityOwnerId,
                 visitCountByOpportunityId
@@ -541,26 +561,10 @@ public with sharing class BillingControl_WorkOrderLedger {
     private static List<Work_Order_Ledger__c> queryLedgers(
         BillingControl_DataProvider.BillingFilterContextDTO filterContext
     ) {
-        Datetime rangeStart;
-        Datetime rangeEnd;
+        DateTimeRange dateRange = extractLedgerDateRange(filterContext);
+        Datetime rangeStart = dateRange == null ? null : dateRange.rangeStart;
+        Datetime rangeEnd = dateRange == null ? null : dateRange.rangeEnd;
         Id opportunityOwnerId = extractOpportunityOwnerId(filterContext);
-        if (filterContext != null && filterContext.filters != null) {
-            for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
-                String fieldKey = normalizeKey(filterRecord.objectApiName) + '.' + normalizeKey(filterRecord.fieldApiName);
-                if (isLedgerDateFilter(fieldKey)) {
-                    String operatorValue = normalizeKey(filterRecord.operator);
-                    Datetime parsed = parseFilterDatetime(filterRecord.value);
-                    if (parsed == null) {
-                        continue;
-                    }
-                    if (operatorValue == 'GREATER OR EQUAL' || operatorValue == 'GREATER THAN') {
-                        rangeStart = parsed;
-                    } else if (operatorValue == 'LESS OR EQUAL' || operatorValue == 'LESS THAN') {
-                        rangeEnd = parsed;
-                    }
-                }
-            }
-        }
 
         Set<String> closedStatuses = WorkOrderLedgerService.getClosedWorkOrderStatusValues();
         Integer ledgerLimit = LEDGER_QUERY_LIMIT;
@@ -600,66 +604,16 @@ public with sharing class BillingControl_WorkOrderLedger {
         Datetime rangeEnd,
         Id opportunityOwnerId
     ) {
-        Set<Id> includedWorkOrderIds = queryWorkOrderIdsActiveInRange(rangeStart, rangeEnd);
+        Set<Id> includedWorkOrderIds = new Set<Id>();
         List<ServiceAppointment> candidates = queryAppointmentsActiveInRange(rangeStart, rangeEnd);
         Map<Id, Id> workOrderIdByAppointmentId = BillingControl_Attribution.resolveWorkOrderIdsForAppointments(candidates);
         includedWorkOrderIds.addAll(workOrderIdByAppointmentId.values());
         includedWorkOrderIds.remove(null);
-        retainWorkOrdersMatchingActualCompletion(includedWorkOrderIds, rangeStart.date(), rangeEnd.date());
 
         if (opportunityOwnerId != null) {
             includedWorkOrderIds.retainAll(resolveWorkOrderIdsByOpportunityOwner(opportunityOwnerId));
         }
         return includedWorkOrderIds;
-    }
-
-    private static Set<Id> queryWorkOrderIdsActiveInRange(Datetime rangeStart, Datetime rangeEnd) {
-        Set<Id> includedWorkOrderIds = new Set<Id>();
-        Date rangeStartDate = rangeStart.date();
-        Date rangeEndDate = rangeEnd.date();
-        Set<String> closedStatuses = WorkOrderLedgerService.getClosedWorkOrderStatusValues();
-        Integer queryLimit = LEDGER_QUERY_LIMIT;
-        String soql =
-            'SELECT Work_Order__c FROM Work_Order_Ledger__c WHERE Work_Order__c != NULL'
-            + ' AND ('
-            + ' (Last_Service_Date__c >= :rangeStartDate AND Last_Service_Date__c <= :rangeEndDate)'
-            + ' OR (Last_Service_Date__c = NULL AND Work_Order__r.CreatedDate >= :rangeStart AND Work_Order__r.CreatedDate <= :rangeEnd)'
-            + ' )';
-        if (!closedStatuses.isEmpty()) {
-            soql += ' AND Work_Order__r.Status NOT IN :closedStatuses';
-        }
-        soql += ' LIMIT :queryLimit';
-        for (Work_Order_Ledger__c ledgerRecord : Database.query(soql)) {
-            includedWorkOrderIds.add(ledgerRecord.Work_Order__c);
-        }
-        return includedWorkOrderIds;
-    }
-
-    private static void retainWorkOrdersMatchingActualCompletion(
-        Set<Id> includedWorkOrderIds,
-        Date rangeStartDate,
-        Date rangeEndDate
-    ) {
-        if (includedWorkOrderIds == null || includedWorkOrderIds.isEmpty()) {
-            return;
-        }
-        Set<Id> retainedWorkOrderIds = new Set<Id>();
-        for (Work_Order_Ledger__c ledgerRecord : [
-            SELECT Work_Order__c, Last_Service_Date__c
-            FROM Work_Order_Ledger__c
-            WHERE Work_Order__c IN :includedWorkOrderIds
-        ]) {
-            if (ledgerRecord.Work_Order__c == null) {
-                continue;
-            }
-            if (ledgerRecord.Last_Service_Date__c == null
-                || (ledgerRecord.Last_Service_Date__c >= rangeStartDate
-                    && ledgerRecord.Last_Service_Date__c <= rangeEndDate)
-            ) {
-                retainedWorkOrderIds.add(ledgerRecord.Work_Order__c);
-            }
-        }
-        includedWorkOrderIds.retainAll(retainedWorkOrderIds);
     }
 
     private static Set<Id> resolveWorkOrderIdsByOpportunityOwner(Id opportunityOwnerId) {
@@ -707,15 +661,20 @@ public with sharing class BillingControl_WorkOrderLedger {
                 SELECT Id,
                     ParentRecordId,
                     Status,
+                    EarliestStartTime,
                     SchedStartTime,
+                    ActualStartTime,
                     ActualEndTime,
                     Invoice_Number__c,
                     WO_Inv_Status__c,
                     Opportunity__c
                 FROM ServiceAppointment
                 WHERE (
-                    (ActualEndTime >= :rangeStart AND ActualEndTime <= :rangeEnd)
-                    OR (ActualEndTime = NULL AND SchedStartTime >= :rangeStart AND SchedStartTime <= :rangeEnd)
+                    (ActualEndTime = NULL AND ActualStartTime = NULL AND SchedStartTime = NULL
+                        AND EarliestStartTime >= :rangeStart AND EarliestStartTime <= :rangeEnd)
+                    OR (ActualEndTime = NULL AND ActualStartTime = NULL
+                        AND SchedStartTime >= :rangeStart AND SchedStartTime <= :rangeEnd)
+                    OR (ActualEndTime = NULL AND ActualStartTime >= :rangeStart AND ActualStartTime <= :rangeEnd)
                 )
                 AND ParentRecordId IN (SELECT Id FROM WorkOrder)
                 ORDER BY ActualEndTime DESC NULLS LAST
@@ -729,15 +688,20 @@ public with sharing class BillingControl_WorkOrderLedger {
                 SELECT Id,
                     ParentRecordId,
                     Status,
+                    EarliestStartTime,
                     SchedStartTime,
+                    ActualStartTime,
                     ActualEndTime,
                     Invoice_Number__c,
                     WO_Inv_Status__c,
                     Opportunity__c
                 FROM ServiceAppointment
                 WHERE (
-                    (ActualEndTime >= :rangeStart AND ActualEndTime <= :rangeEnd)
-                    OR (ActualEndTime = NULL AND SchedStartTime >= :rangeStart AND SchedStartTime <= :rangeEnd)
+                    (ActualEndTime = NULL AND ActualStartTime = NULL AND SchedStartTime = NULL
+                        AND EarliestStartTime >= :rangeStart AND EarliestStartTime <= :rangeEnd)
+                    OR (ActualEndTime = NULL AND ActualStartTime = NULL
+                        AND SchedStartTime >= :rangeStart AND SchedStartTime <= :rangeEnd)
+                    OR (ActualEndTime = NULL AND ActualStartTime >= :rangeStart AND ActualStartTime <= :rangeEnd)
                 )
                 AND ParentRecordId IN (SELECT Id FROM WorkOrderLineItem)
                 ORDER BY ActualEndTime DESC NULLS LAST
@@ -753,15 +717,20 @@ public with sharing class BillingControl_WorkOrderLedger {
             SELECT Id,
                 ParentRecordId,
                 Status,
+                EarliestStartTime,
                 SchedStartTime,
+                ActualStartTime,
                 ActualEndTime,
                 Invoice_Number__c,
                 WO_Inv_Status__c,
                 Opportunity__c
             FROM ServiceAppointment
             WHERE (
-                (ActualEndTime >= :rangeStart AND ActualEndTime <= :rangeEnd)
-                OR (ActualEndTime = NULL AND SchedStartTime >= :rangeStart AND SchedStartTime <= :rangeEnd)
+                (ActualEndTime = NULL AND ActualStartTime = NULL AND SchedStartTime = NULL
+                    AND EarliestStartTime >= :rangeStart AND EarliestStartTime <= :rangeEnd)
+                OR (ActualEndTime = NULL AND ActualStartTime = NULL
+                    AND SchedStartTime >= :rangeStart AND SchedStartTime <= :rangeEnd)
+                OR (ActualEndTime = NULL AND ActualStartTime >= :rangeStart AND ActualStartTime <= :rangeEnd)
             )
             AND ParentRecordId IN (
                 SELECT Id
@@ -779,15 +748,20 @@ public with sharing class BillingControl_WorkOrderLedger {
             SELECT Id,
                 ParentRecordId,
                 Status,
+                EarliestStartTime,
                 SchedStartTime,
+                ActualStartTime,
                 ActualEndTime,
                 Invoice_Number__c,
                 WO_Inv_Status__c,
                 Opportunity__c
             FROM ServiceAppointment
             WHERE (
-                (ActualEndTime >= :rangeStart AND ActualEndTime <= :rangeEnd)
-                OR (ActualEndTime = NULL AND SchedStartTime >= :rangeStart AND SchedStartTime <= :rangeEnd)
+                (ActualEndTime = NULL AND ActualStartTime = NULL AND SchedStartTime = NULL
+                    AND EarliestStartTime >= :rangeStart AND EarliestStartTime <= :rangeEnd)
+                OR (ActualEndTime = NULL AND ActualStartTime = NULL
+                    AND SchedStartTime >= :rangeStart AND SchedStartTime <= :rangeEnd)
+                OR (ActualEndTime = NULL AND ActualStartTime >= :rangeStart AND ActualStartTime <= :rangeEnd)
             )
             AND ParentRecordId IN (
                 SELECT Id
@@ -1075,10 +1049,21 @@ public with sharing class BillingControl_WorkOrderLedger {
             appointmentRow.createdDate = appointmentRecord.CreatedDate;
             appointmentRow.earliestStartTime = appointmentRecord.EarliestStartTime;
             appointmentRow.schedStartTime = appointmentRecord.SchedStartTime;
+            appointmentRow.actualStartTime = appointmentRecord.ActualStartTime;
             if (appointmentRecord.EarliestStartTime != null
                 && (row.earliestStartTime == null || appointmentRecord.EarliestStartTime < row.earliestStartTime)
             ) {
                 row.earliestStartTime = appointmentRecord.EarliestStartTime;
+            }
+            if (appointmentRecord.SchedStartTime != null
+                && (row.schedStartTime == null || appointmentRecord.SchedStartTime < row.schedStartTime)
+            ) {
+                row.schedStartTime = appointmentRecord.SchedStartTime;
+            }
+            if (appointmentRecord.ActualStartTime != null
+                && (row.actualStartTime == null || appointmentRecord.ActualStartTime < row.actualStartTime)
+            ) {
+                row.actualStartTime = appointmentRecord.ActualStartTime;
             }
             appointmentRow.actualEndTime = appointmentRecord.ActualEndTime;
             appointmentRow.billedBadge = isBilledAppointment(appointmentRecord);
@@ -1222,6 +1207,82 @@ public with sharing class BillingControl_WorkOrderLedger {
             || Pattern.matches('(?s).*preventa?tive\\s+maintenance.*', text);
     }
 
+    private static List<ServiceAppointment> appointmentsInLedgerDateRange(
+        List<ServiceAppointment> appointments,
+        DateTimeRange dateRange
+    ) {
+        if (dateRange == null || !dateRange.isComplete() || appointments == null) {
+            return appointments;
+        }
+        List<ServiceAppointment> matching = new List<ServiceAppointment>();
+        for (ServiceAppointment appointmentRecord : appointments) {
+            if (appointmentMatchesLedgerDateRange(appointmentRecord, dateRange)) {
+                matching.add(appointmentRecord);
+            }
+        }
+        return matching;
+    }
+
+    private static List<ServiceAppointment> appointmentsForBucket(
+        List<ServiceAppointment> appointments,
+        String bucketKey,
+        DateTimeRange dateRange
+    ) {
+        if (appointments == null) {
+            return new List<ServiceAppointment>();
+        }
+        if (dateRange == null || !dateRange.isComplete()) {
+            return appointments;
+        }
+        List<ServiceAppointment> matching = new List<ServiceAppointment>();
+        for (ServiceAppointment appointmentRecord : appointments) {
+            if (appointmentMatchesBucketDate(appointmentRecord, bucketKey, dateRange)) {
+                matching.add(appointmentRecord);
+            }
+        }
+        return matching;
+    }
+
+    private static Boolean appointmentMatchesLedgerDateRange(
+        ServiceAppointment appointmentRecord,
+        DateTimeRange dateRange
+    ) {
+        return appointmentMatchesBucketDate(appointmentRecord, BUCKET_READY_TO_SCHEDULE, dateRange)
+            || appointmentMatchesBucketDate(appointmentRecord, BUCKET_SCHEDULED_APPOINTMENTS, dateRange)
+            || appointmentMatchesBucketDate(appointmentRecord, BUCKET_IN_PROGRESS, dateRange);
+    }
+
+    private static Boolean appointmentMatchesBucketDate(
+        ServiceAppointment appointmentRecord,
+        String bucketKey,
+        DateTimeRange dateRange
+    ) {
+        if (appointmentRecord == null || isCancelled(appointmentRecord.Status) || dateRange == null || !dateRange.isComplete()) {
+            return false;
+        }
+        if (bucketKey == BUCKET_READY_TO_SCHEDULE) {
+            return isReadyToScheduleAppointment(appointmentRecord)
+                && isDatetimeInRange(appointmentRecord.EarliestStartTime, dateRange);
+        }
+        if (bucketKey == BUCKET_SCHEDULED_APPOINTMENTS) {
+            return isScheduledAppointment(appointmentRecord)
+                && isDatetimeInRange(appointmentRecord.SchedStartTime, dateRange);
+        }
+        if (bucketKey == BUCKET_IN_PROGRESS) {
+            return isInProgressAppointment(appointmentRecord)
+                && isDatetimeInRange(appointmentRecord.ActualStartTime, dateRange);
+        }
+        return false;
+    }
+
+    private static Boolean isDatetimeInRange(Datetime value, DateTimeRange dateRange) {
+        return value != null
+            && dateRange != null
+            && dateRange.isComplete()
+            && value >= dateRange.rangeStart
+            && value <= dateRange.rangeEnd;
+    }
+
     private static String classifyWorkOrder(List<ServiceAppointment> appointments) {
         if (appointments == null || appointments.isEmpty()) {
             return BUCKET_READY_TO_SCHEDULE;
@@ -1344,6 +1405,32 @@ public with sharing class BillingControl_WorkOrderLedger {
         if (!filterContext.runtimeWarnings.contains(warning)) {
             filterContext.runtimeWarnings.add(warning);
         }
+    }
+
+    private static DateTimeRange extractLedgerDateRange(
+        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+    ) {
+        DateTimeRange dateRange = new DateTimeRange();
+        if (filterContext == null || filterContext.filters == null) {
+            return dateRange;
+        }
+        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+            String fieldKey = normalizeKey(filterRecord.objectApiName) + '.' + normalizeKey(filterRecord.fieldApiName);
+            if (!isLedgerDateFilter(fieldKey)) {
+                continue;
+            }
+            String operatorValue = normalizeKey(filterRecord.operator);
+            Datetime parsed = parseFilterDatetime(filterRecord.value);
+            if (parsed == null) {
+                continue;
+            }
+            if (operatorValue == 'GREATER OR EQUAL' || operatorValue == 'GREATER THAN') {
+                dateRange.rangeStart = parsed;
+            } else if (operatorValue == 'LESS OR EQUAL' || operatorValue == 'LESS THAN') {
+                dateRange.rangeEnd = parsed;
+            }
+        }
+        return dateRange;
     }
 
     private static Boolean isLedgerDateFilter(String fieldKey) {

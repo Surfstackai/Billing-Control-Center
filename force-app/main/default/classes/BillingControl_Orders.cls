@@ -70,6 +70,7 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public String serviceAppointmentStatus;
         @AuraEnabled public Datetime earliestStartTime;
         @AuraEnabled public Datetime schedStartTime;
+        @AuraEnabled public Datetime actualStartTime;
         @AuraEnabled public Datetime actualEndTime;
         @AuraEnabled public String serviceAppointmentDisplay;
         @AuraEnabled public Boolean readyForBilling;
