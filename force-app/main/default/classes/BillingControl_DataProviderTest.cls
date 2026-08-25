@@ -145,7 +145,7 @@ private class BillingControl_DataProviderTest {
         Test.stopTest();
 
         System.assertEquals(dmlBefore, dmlAfter);
-        System.assertEquals(4, ordersData.filterContext.filters.size());
+        System.assertEquals(2, ordersData.filterContext.filters.size());
         System.assertEquals(3, invoicingData.filterContext.filters.size());
         System.assertEquals(1, ordersData.kpis.unscheduledCount);
         System.assertEquals(1, findOrdersSection(ordersData.bucketSections, 'READY_TO_SCHEDULE').rows.size());
@@ -451,6 +451,38 @@ private class BillingControl_DataProviderTest {
             + lastYearData.kpis.inProgressCount;
         System.assertEquals(true, thisYearCount > 0, 'This Year includes current Work Orders.');
         System.assertEquals(0, lastYearCount, 'Last Year excludes work whose bucket date is this year.');
+    }
+
+    @IsTest
+    static void ordersRuntimeSupportsMonthQuarterAndCustomWindows() {
+        Test.startTest();
+        BillingControl_DataProvider.OrdersRuntimeDataDTO thisMonthData =
+            BillingControl_DataProvider.getOrdersRuntimeData(503L, buildDateFilter('This Month', null, null));
+        BillingControl_DataProvider.OrdersRuntimeDataDTO thisQuarterData =
+            BillingControl_DataProvider.getOrdersRuntimeData(504L, buildDateFilter('This Quarter', null, null));
+        BillingControl_DataProvider.OrdersRuntimeDataDTO customData =
+            BillingControl_DataProvider.getOrdersRuntimeData(
+                505L,
+                buildDateFilter('Custom', formatDateValue(Date.today()), formatDateValue(Date.today()))
+            );
+        Test.stopTest();
+
+        System.assertEquals(
+            false,
+            String.join(thisMonthData.warnings, ' ').contains('Unsupported date filter key')
+        );
+        System.assertEquals(
+            false,
+            String.join(thisQuarterData.warnings, ' ').contains('Unsupported date filter key')
+        );
+        System.assertEquals(
+            false,
+            String.join(customData.warnings, ' ').contains('Unsupported date filter key')
+        );
+        System.assertEquals(
+            false,
+            String.join(customData.warnings, ' ').contains('Work Order Ledger filter application failed')
+        );
     }
 
     @IsTest

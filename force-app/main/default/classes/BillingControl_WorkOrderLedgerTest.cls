@@ -271,57 +271,12 @@ private class BillingControl_WorkOrderLedgerTest {
         WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id, siblingReadyWorkOrder.Id });
 
         Date todayDate = Date.today();
-        BillingControl_DataProvider.BillingFilterContextDTO thisYearContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        thisYearContext.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_START',
-                'Work_Order_Ledger__c',
-                'Last_Service_Date__c',
-                'Greater Or Equal',
-                Date.newInstance(todayDate.year(), 1, 1),
-                false
-            )
-        );
-        thisYearContext.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_END',
-                'Work_Order_Ledger__c',
-                'Last_Service_Date__c',
-                'Less Or Equal',
-                Date.newInstance(todayDate.year(), 12, 31),
-                true
-            )
-        );
-
-        BillingControl_DataProvider.BillingFilterContextDTO lastYearContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        lastYearContext.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_START',
-                'Work_Order_Ledger__c',
-                'Last_Service_Date__c',
-                'Greater Or Equal',
-                Date.newInstance(todayDate.year() - 1, 1, 1),
-                false
-            )
-        );
-        lastYearContext.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_END',
-                'Work_Order_Ledger__c',
-                'Last_Service_Date__c',
-                'Less Or Equal',
-                Date.newInstance(todayDate.year() - 1, 12, 31),
-                true
-            )
-        );
 
         Test.startTest();
         BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
-            BillingControl_WorkOrderLedger.getRuntime(41L, thisYearContext);
+            BillingControl_WorkOrderLedger.getRuntime(41L, null, thisYearWindow(todayDate));
         BillingControl_WorkOrderLedger.RuntimeBundle lastYearRuntime =
-            BillingControl_WorkOrderLedger.getRuntime(42L, lastYearContext);
+            BillingControl_WorkOrderLedger.getRuntime(42L, null, lastYearWindow(todayDate));
         Test.stopTest();
 
         System.assertEquals(
@@ -470,17 +425,17 @@ private class BillingControl_WorkOrderLedgerTest {
         );
 
         Date todayDate = Date.today();
-        BillingControl_DataProvider.BillingFilterContextDTO thisYearContext = thisYearDateContext(todayDate);
-        BillingControl_DataProvider.BillingFilterContextDTO ownerContext = thisYearDateContext(todayDate);
+        BillingControl_DataProvider.BillingFilterContextDTO ownerContext =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
         ownerContext.filters.add(
             buildEqualsFilter('OPPORTUNITY_OWNER', 'Opportunity', 'OwnerId', UserInfo.getUserId())
         );
 
         Test.startTest();
         BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
-            BillingControl_WorkOrderLedger.getRuntime(61L, thisYearContext);
+            BillingControl_WorkOrderLedger.getRuntime(61L, null, thisYearWindow(todayDate));
         BillingControl_WorkOrderLedger.RuntimeBundle ownerRuntime =
-            BillingControl_WorkOrderLedger.getRuntime(62L, ownerContext);
+            BillingControl_WorkOrderLedger.getRuntime(62L, ownerContext, thisYearWindow(todayDate));
         Test.stopTest();
 
         System.assertEquals(
@@ -569,11 +524,25 @@ private class BillingControl_WorkOrderLedgerTest {
     @IsTest
     static void ledgerDetailLoadsOnDemandForOneLedger() {
         WorkOrderLedgerAutomationControl.disableForTests();
+        List<User> otherUsers = [
+            SELECT Id, Name
+            FROM User
+            WHERE Id != :UserInfo.getUserId()
+            AND IsActive = true
+            LIMIT 1
+        ];
+        System.assertEquals(false, otherUsers.isEmpty(), 'Need a second active user for Account vs Opportunity owner coverage.');
+        Id otherOwnerId = otherUsers[0].Id;
+        String otherOwnerName = otherUsers[0].Name;
+
         Account accountRecord = new Account(Name = 'Ledger Detail Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Detail Type', 1);
         Opportunity firstOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Detail Opp One', 800);
         Opportunity secondOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Detail Opp Two', 200);
+        firstOpportunity.OwnerId = otherOwnerId;
+        secondOpportunity.OwnerId = otherOwnerId;
+        update new List<Opportunity>{ firstOpportunity, secondOpportunity };
         WorkOrder detailWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Detail Ledger WO');
         WorkOrder otherWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Other Ledger WO');
 
@@ -660,6 +629,9 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(null, emptyDetail.ledgerId);
         System.assertEquals(detailLedger.Id, detail.ledgerId);
         System.assertEquals(detailWorkOrder.Id, detail.workOrderId);
+        System.assertEquals(UserInfo.getName(), detail.accountOwnerName);
+        System.assertEquals(false, detail.accountOwnerName == otherOwnerName);
+        System.assertEquals(otherOwnerName, detail.opportunities[0].ownerName);
         System.assertEquals('INV-WO-DETAIL', detail.workOrderInvoiceNumber);
         System.assertEquals(250, detail.depositAmount);
         if (depositStatus != null) {
@@ -669,7 +641,7 @@ private class BillingControl_WorkOrderLedgerTest {
             System.assertEquals(partsStatus, detail.partsStatus);
         }
         System.assertEquals(2, detail.opportunities.size());
-        System.assertEquals(UserInfo.getName(), detail.opportunities[0].ownerName);
+        System.assertEquals(otherOwnerName, detail.opportunities[0].ownerName);
         System.assertEquals(2, detail.appointments.size());
         System.assertEquals(true, detail.timeline.size() >= 2);
         System.assertEquals(otherWorkOrder.Id, otherDetail.workOrderId);
@@ -708,6 +680,65 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(true, sawNamedChangedBy);
         System.assertEquals(true, sawNullChangedBy);
         System.assertEquals(true, String.isNotBlank(detail.reconciliationStatus));
+    }
+
+    @IsTest
+    static void accountOwnerStaysLiveWithoutLedgerSync() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        List<User> otherUsers = [
+            SELECT Id, Name, FirstName, LastName
+            FROM User
+            WHERE Id != :UserInfo.getUserId()
+            AND IsActive = true
+            LIMIT 1
+        ];
+        System.assertEquals(false, otherUsers.isEmpty(), 'Need a second active user for Account owner change coverage.');
+        User otherOwner = otherUsers[0];
+        String formulaOwnerName = (otherOwner.FirstName == null ? '' : otherOwner.FirstName)
+            + (String.isBlank(otherOwner.FirstName) || String.isBlank(otherOwner.LastName) ? '' : ' ')
+            + (otherOwner.LastName == null ? '' : otherOwner.LastName);
+        formulaOwnerName = formulaOwnerName.trim();
+
+        User runningUser = [
+            SELECT FirstName, LastName
+            FROM User
+            WHERE Id = :UserInfo.getUserId()
+        ];
+        String runningFormulaOwnerName = (runningUser.FirstName == null ? '' : runningUser.FirstName)
+            + (String.isBlank(runningUser.FirstName) || String.isBlank(runningUser.LastName) ? '' : ' ')
+            + (runningUser.LastName == null ? '' : runningUser.LastName);
+        runningFormulaOwnerName = runningFormulaOwnerName.trim();
+
+        Account accountRecord = new Account(Name = 'Live Account Owner Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Live Account Owner Type', 1);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Live Account Owner WO');
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Work_Order_Ledger__c ledgerRecord = [
+            SELECT Id, Account_Owner__c, LastModifiedDate
+            FROM Work_Order_Ledger__c
+            WHERE Work_Order__c = :workOrderRecord.Id
+        ];
+        System.assertEquals(runningFormulaOwnerName, ledgerRecord.Account_Owner__c);
+        BillingControl_WorkOrderLedger.LedgerDetailWrapper beforeChange =
+            BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(ledgerRecord.Id);
+        System.assertEquals(UserInfo.getName(), beforeChange.accountOwnerName);
+
+        accountRecord.OwnerId = otherOwner.Id;
+        update accountRecord;
+
+        Work_Order_Ledger__c ledgerAfterOwnerChange = [
+            SELECT Id, Account_Owner__c, LastModifiedDate
+            FROM Work_Order_Ledger__c
+            WHERE Id = :ledgerRecord.Id
+        ];
+        BillingControl_WorkOrderLedger.LedgerDetailWrapper afterChange =
+            BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(ledgerRecord.Id);
+
+        System.assertEquals(formulaOwnerName, ledgerAfterOwnerChange.Account_Owner__c);
+        System.assertEquals(otherOwner.Name, afterChange.accountOwnerName);
+        System.assertEquals(ledgerRecord.LastModifiedDate, ledgerAfterOwnerChange.LastModifiedDate);
     }
 
     @IsTest
@@ -812,7 +843,7 @@ private class BillingControl_WorkOrderLedgerTest {
 
         Test.startTest();
         BillingControl_WorkOrderLedger.RuntimeBundle runtime =
-            BillingControl_WorkOrderLedger.getRuntime(61L, thisYearDateContext(Date.today()));
+            BillingControl_WorkOrderLedger.getRuntime(61L, null, thisYearWindow(Date.today()));
         Test.stopTest();
 
         System.assertNotEquals(
@@ -837,7 +868,7 @@ private class BillingControl_WorkOrderLedgerTest {
 
         Test.startTest();
         BillingControl_WorkOrderLedger.RuntimeBundle runtime =
-            BillingControl_WorkOrderLedger.getRuntime(62L, thisYearDateContext(Date.today()));
+            BillingControl_WorkOrderLedger.getRuntime(62L, null, thisYearWindow(Date.today()));
         Test.stopTest();
 
         System.assertNotEquals(
@@ -887,9 +918,9 @@ private class BillingControl_WorkOrderLedgerTest {
         Date todayDate = Date.today();
         Test.startTest();
         BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
-            BillingControl_WorkOrderLedger.getRuntime(64L, thisYearDateContext(todayDate));
+            BillingControl_WorkOrderLedger.getRuntime(64L, null, thisYearWindow(todayDate));
         BillingControl_WorkOrderLedger.RuntimeBundle lastYearRuntime =
-            BillingControl_WorkOrderLedger.getRuntime(65L, lastYearDateContext(todayDate));
+            BillingControl_WorkOrderLedger.getRuntime(65L, null, lastYearWindow(todayDate));
         Test.stopTest();
 
         BillingControl_Orders.WorkOrderRowWrapper thisYearRow = findRow(
@@ -943,34 +974,14 @@ private class BillingControl_WorkOrderLedgerTest {
         WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
 
         Date todayDate = Date.today();
-        BillingControl_DataProvider.BillingFilterContextDTO thisMonthContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        thisMonthContext.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_START',
-                'ServiceAppointment',
-                'ActualEndTime',
-                'Greater Or Equal',
-                Date.newInstance(todayDate.year(), todayDate.month(), 1),
-                false
-            )
-        );
-        thisMonthContext.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_END',
-                'ServiceAppointment',
-                'ActualEndTime',
-                'Less Or Equal',
-                Date.newInstance(todayDate.year(), todayDate.month(), 1).addMonths(1).addDays(-1),
-                true
-            )
-        );
+        Date monthStart = Date.newInstance(todayDate.year(), todayDate.month(), 1);
+        Date monthEnd = monthStart.addMonths(1).addDays(-1);
 
         Test.startTest();
         BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
-            BillingControl_WorkOrderLedger.getRuntime(66L, thisYearDateContext(todayDate));
+            BillingControl_WorkOrderLedger.getRuntime(66L, null, thisYearWindow(todayDate));
         BillingControl_WorkOrderLedger.RuntimeBundle thisMonthRuntime =
-            BillingControl_WorkOrderLedger.getRuntime(67L, thisMonthContext);
+            BillingControl_WorkOrderLedger.getRuntime(67L, null, dateWindow(monthStart, monthEnd));
         Test.stopTest();
 
         System.assertNotEquals(
@@ -1006,7 +1017,7 @@ private class BillingControl_WorkOrderLedgerTest {
 
         Test.startTest();
         BillingControl_WorkOrderLedger.RuntimeBundle runtime =
-            BillingControl_WorkOrderLedger.getRuntime(63L, thisYearDateContext(Date.today()));
+            BillingControl_WorkOrderLedger.getRuntime(63L, null, thisYearWindow(Date.today()));
         Test.stopTest();
 
         System.assertEquals(
@@ -1014,6 +1025,283 @@ private class BillingControl_WorkOrderLedgerTest {
             findAnyRow(runtime.sections, workOrderRecord.Id),
             'Closed Work Orders must stay out of date-filtered ledger results.'
         );
+    }
+
+    @IsTest
+    static void bucketQueriesUseOwnedDateFieldsAndExclusiveMembership() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger Exclusive Bucket Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Exclusive Bucket Type', 1);
+
+        Date todayDate = Date.today();
+        Datetime thisYearEarliest = Datetime.newInstance(
+            Date.newInstance(todayDate.year(), 2, 10),
+            Time.newInstance(8, 0, 0, 0)
+        );
+        Datetime lastYearSchedStart = Datetime.newInstance(
+            Date.newInstance(todayDate.year() - 1, 6, 15),
+            Time.newInstance(9, 0, 0, 0)
+        );
+        Datetime thisYearActualStart = Datetime.newInstance(
+            Date.newInstance(todayDate.year(), 3, 20),
+            Time.newInstance(10, 0, 0, 0)
+        );
+        Datetime thisYearActualEnd = Datetime.newInstance(
+            Date.newInstance(todayDate.year(), 4, 1),
+            Time.newInstance(11, 0, 0, 0)
+        );
+
+        WorkOrder readyWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Ready Earliest WO');
+        WorkOrder scheduledWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Scheduled Start WO');
+        WorkOrder inProgressWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Actual Start WO');
+        WorkOrder completedWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Completed End WO');
+        WorkOrder precedenceWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Precedence WO');
+
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Exclusive Bucket Opp', 600);
+        insert new List<Opportunity_WorkOrder__c>{
+            new Opportunity_WorkOrder__c(Work_Order__c = readyWorkOrder.Id, Opportunity__c = opportunityRecord.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = scheduledWorkOrder.Id, Opportunity__c = opportunityRecord.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = inProgressWorkOrder.Id, Opportunity__c = opportunityRecord.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = completedWorkOrder.Id, Opportunity__c = opportunityRecord.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = precedenceWorkOrder.Id, Opportunity__c = opportunityRecord.Id)
+        };
+
+        ServiceAppointment readyAppointment = buildAppointment(readyWorkOrder.Id, 'None', null, null, 'Ready SA');
+        readyAppointment.EarliestStartTime = thisYearEarliest;
+        readyAppointment.DueDate = thisYearEarliest.addDays(7);
+
+        ServiceAppointment scheduledLastYear = buildAppointment(
+            scheduledWorkOrder.Id,
+            'Scheduled',
+            lastYearSchedStart,
+            null,
+            'Scheduled Last Year SA'
+        );
+        ServiceAppointment inProgressAppointment = buildAppointment(
+            inProgressWorkOrder.Id,
+            'Scheduled',
+            thisYearActualStart,
+            null,
+            'In Progress SA'
+        );
+        inProgressAppointment.ActualStartTime = thisYearActualStart;
+
+        ServiceAppointment completedAppointment = buildAppointment(
+            completedWorkOrder.Id,
+            'Completed',
+            thisYearActualEnd.addHours(-2),
+            thisYearActualEnd,
+            'Completed SA'
+        );
+
+        ServiceAppointment missingSchedEnd = new ServiceAppointment(
+            Status = 'Scheduled',
+            SchedStartTime = Datetime.newInstance(todayDate, Time.newInstance(12, 0, 0, 0)),
+            SchedEndTime = null,
+            ActualStartTime = null,
+            ActualEndTime = null
+        );
+        System.assertEquals(
+            0,
+            BillingControl_WorkOrderLedger.operationalBucketCount(missingSchedEnd),
+            'Scheduled Start without Scheduled End is not an operational bucket member.'
+        );
+
+        ServiceAppointment precedenceReady = buildAppointment(precedenceWorkOrder.Id, 'None', null, null, 'Precedence Ready SA');
+        precedenceReady.EarliestStartTime = thisYearEarliest;
+        precedenceReady.DueDate = thisYearEarliest.addDays(7);
+        ServiceAppointment precedenceScheduled = buildAppointment(
+            precedenceWorkOrder.Id,
+            'Scheduled',
+            Datetime.newInstance(todayDate, Time.newInstance(13, 0, 0, 0)),
+            null,
+            'Precedence Scheduled SA'
+        );
+        ServiceAppointment precedenceInProgress = buildAppointment(
+            precedenceWorkOrder.Id,
+            'Scheduled',
+            thisYearActualStart,
+            null,
+            'Precedence In Progress SA'
+        );
+        precedenceInProgress.ActualStartTime = thisYearActualStart;
+
+        insert new List<ServiceAppointment>{
+            readyAppointment,
+            scheduledLastYear,
+            inProgressAppointment,
+            completedAppointment,
+            precedenceReady,
+            precedenceScheduled,
+            precedenceInProgress
+        };
+        WorkOrderLedgerService.backfillWorkOrders(
+            new Set<Id>{
+                readyWorkOrder.Id,
+                scheduledWorkOrder.Id,
+                inProgressWorkOrder.Id,
+                completedWorkOrder.Id,
+                precedenceWorkOrder.Id
+            }
+        );
+
+        System.assertEquals(1, BillingControl_WorkOrderLedger.operationalBucketCount(readyAppointment));
+        System.assertEquals(1, BillingControl_WorkOrderLedger.operationalBucketCount(scheduledLastYear));
+        System.assertEquals(1, BillingControl_WorkOrderLedger.operationalBucketCount(inProgressAppointment));
+        System.assertEquals(0, BillingControl_WorkOrderLedger.operationalBucketCount(completedAppointment));
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(80L, null, thisYearWindow(todayDate));
+        BillingControl_WorkOrderLedger.RuntimeBundle lastYearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(81L, null, lastYearWindow(todayDate));
+        Test.stopTest();
+
+        BillingControl_Orders.WorkOrderRowWrapper readyRow = findRow(
+            findSection(thisYearRuntime.sections, 'READY_TO_SCHEDULE').rows,
+            readyWorkOrder.Id
+        );
+        System.assertNotEquals(null, readyRow);
+        System.assertEquals(1, readyRow.relatedServiceAppointments.size());
+        System.assertEquals(true, readyRow.relatedServiceAppointments[0].serviceAppointmentDisplay.contains('(none)'));
+
+        System.assertEquals(null, findAnyRow(thisYearRuntime.sections, scheduledWorkOrder.Id));
+        System.assertNotEquals(
+            null,
+            findRow(findSection(lastYearRuntime.sections, 'SCHEDULED_APPOINTMENTS').rows, scheduledWorkOrder.Id)
+        );
+
+        BillingControl_Orders.WorkOrderRowWrapper inProgressRow = findRow(
+            findSection(thisYearRuntime.sections, 'IN_PROGRESS').rows,
+            inProgressWorkOrder.Id
+        );
+        System.assertNotEquals(null, inProgressRow);
+        System.assertEquals(1, inProgressRow.relatedServiceAppointments.size());
+        System.assertEquals(true, inProgressRow.relatedServiceAppointments[0].serviceAppointmentDisplay.contains('(In Progress -'));
+
+        System.assertEquals(null, findAnyRow(thisYearRuntime.sections, completedWorkOrder.Id));
+
+        BillingControl_Orders.WorkOrderRowWrapper precedenceRow = findRow(
+            findSection(thisYearRuntime.sections, 'IN_PROGRESS').rows,
+            precedenceWorkOrder.Id
+        );
+        System.assertNotEquals(null, precedenceRow, 'In Progress wins over Scheduled and Ready.');
+        System.assertEquals(null, findRow(findSection(thisYearRuntime.sections, 'SCHEDULED_APPOINTMENTS').rows, precedenceWorkOrder.Id));
+        System.assertEquals(null, findRow(findSection(thisYearRuntime.sections, 'READY_TO_SCHEDULE').rows, precedenceWorkOrder.Id));
+        System.assertEquals(1, precedenceRow.relatedServiceAppointments.size());
+        System.assertEquals(true, precedenceRow.relatedServiceAppointments[0].serviceAppointmentDisplay.contains('(In Progress -'));
+    }
+
+    @IsTest
+    static void bucketQueryLimitWarnsWhenTruncated() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger Limit Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Limit Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Limit Opp', 100);
+        WorkOrder firstWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Limit WO One');
+        WorkOrder secondWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Limit WO Two');
+        insert new List<Opportunity_WorkOrder__c>{
+            new Opportunity_WorkOrder__c(Work_Order__c = firstWorkOrder.Id, Opportunity__c = opportunityRecord.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = secondWorkOrder.Id, Opportunity__c = opportunityRecord.Id)
+        };
+        insert new List<ServiceAppointment>{
+            buildAppointment(firstWorkOrder.Id, 'None', null, null, 'Limit SA One'),
+            buildAppointment(secondWorkOrder.Id, 'None', null, null, 'Limit SA Two')
+        };
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ firstWorkOrder.Id, secondWorkOrder.Id });
+
+        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_WorkOrderLedger.queryLimitOverride = 1;
+        try {
+            Test.startTest();
+            BillingControl_WorkOrderLedger.RuntimeBundle runtime =
+                BillingControl_WorkOrderLedger.getRuntime(82L, filterContext, thisYearWindow(Date.today()));
+            Test.stopTest();
+            System.assertNotEquals(null, runtime);
+            System.assertNotEquals(null, filterContext.runtimeWarnings);
+            System.assertEquals(
+                true,
+                String.join(filterContext.runtimeWarnings, ' ').contains('record limit'),
+                'Hitting a per-bucket query cap must warn that results are incomplete.'
+            );
+        } finally {
+            BillingControl_WorkOrderLedger.queryLimitOverride = null;
+        }
+    }
+
+    @IsTest
+    static void ordersRuntimePresetsChangeBucketMembership() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger Preset Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Preset Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Preset Opp', 250);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Preset Ready WO');
+        Date todayDate = Date.today();
+        Datetime januaryEarliest = Datetime.newInstance(
+            Date.newInstance(todayDate.year(), 1, 8),
+            Time.newInstance(8, 0, 0, 0)
+        );
+        ServiceAppointment readyAppointment = buildAppointment(
+            workOrderRecord.Id,
+            'None',
+            null,
+            null,
+            'Preset January Ready SA'
+        );
+        readyAppointment.EarliestStartTime = januaryEarliest;
+        readyAppointment.DueDate = januaryEarliest.addDays(7);
+        insert readyAppointment;
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle thisYearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(90L, null, thisYearWindow(todayDate));
+        BillingControl_WorkOrderLedger.RuntimeBundle thisMonthRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(
+                91L,
+                null,
+                dateWindow(
+                    Date.newInstance(todayDate.year(), todayDate.month(), 1),
+                    Date.newInstance(todayDate.year(), todayDate.month(), 1).addMonths(1).addDays(-1)
+                )
+            );
+        Integer quarterStartMonth = (((todayDate.month() - 1) / 3) * 3) + 1;
+        BillingControl_WorkOrderLedger.RuntimeBundle thisQuarterRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(
+                92L,
+                null,
+                dateWindow(
+                    Date.newInstance(todayDate.year(), quarterStartMonth, 1),
+                    Date.newInstance(todayDate.year(), quarterStartMonth, 1).addMonths(3).addDays(-1)
+                )
+            );
+        BillingControl_WorkOrderLedger.RuntimeBundle lastYearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(93L, null, lastYearWindow(todayDate));
+        BillingControl_WorkOrderLedger.RuntimeBundle customJanuaryRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(
+                94L,
+                null,
+                dateWindow(
+                    Date.newInstance(todayDate.year(), 1, 1),
+                    Date.newInstance(todayDate.year(), 1, 31)
+                )
+            );
+        Test.stopTest();
+
+        System.assertNotEquals(null, findAnyRow(thisYearRuntime.sections, workOrderRecord.Id));
+        System.assertNotEquals(null, findAnyRow(customJanuaryRuntime.sections, workOrderRecord.Id));
+        System.assertEquals(null, findAnyRow(lastYearRuntime.sections, workOrderRecord.Id));
+        if (todayDate.month() != 1) {
+            System.assertEquals(null, findAnyRow(thisMonthRuntime.sections, workOrderRecord.Id));
+        }
+        if (quarterStartMonth != 1) {
+            System.assertEquals(null, findAnyRow(thisQuarterRuntime.sections, workOrderRecord.Id));
+        }
     }
 
     private static final Integer LEDGER_QUERY_LIMIT_FOR_ASSERT = 10000;
@@ -1169,56 +1457,22 @@ private class BillingControl_WorkOrderLedgerTest {
         return null;
     }
 
-    private static BillingControl_DataProvider.BillingFilterContextDTO thisYearDateContext(Date todayDate) {
-        BillingControl_DataProvider.BillingFilterContextDTO context =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        context.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_START',
-                'ServiceAppointment',
-                'ActualEndTime',
-                'Greater Or Equal',
-                Date.newInstance(todayDate.year(), 1, 1),
-                false
-            )
-        );
-        context.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_END',
-                'ServiceAppointment',
-                'ActualEndTime',
-                'Less Or Equal',
-                Date.newInstance(todayDate.year(), 12, 31),
-                true
-            )
-        );
-        return context;
+    private static BillingControl_DataProvider.DateRangeDTO dateWindow(Date startDate, Date endDate) {
+        return new BillingControl_DataProvider.DateRangeDTO(startDate, endDate);
     }
 
-    private static BillingControl_DataProvider.BillingFilterContextDTO lastYearDateContext(Date todayDate) {
-        BillingControl_DataProvider.BillingFilterContextDTO context =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        context.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_START',
-                'ServiceAppointment',
-                'ActualEndTime',
-                'Greater Or Equal',
-                Date.newInstance(todayDate.year() - 1, 1, 1),
-                false
-            )
+    private static BillingControl_DataProvider.DateRangeDTO thisYearWindow(Date todayDate) {
+        return dateWindow(
+            Date.newInstance(todayDate.year(), 1, 1),
+            Date.newInstance(todayDate.year(), 12, 31)
         );
-        context.filters.add(
-            dateBoundFilter(
-                'DATE_FILTER_END',
-                'ServiceAppointment',
-                'ActualEndTime',
-                'Less Or Equal',
-                Date.newInstance(todayDate.year() - 1, 12, 31),
-                true
-            )
+    }
+
+    private static BillingControl_DataProvider.DateRangeDTO lastYearWindow(Date todayDate) {
+        return dateWindow(
+            Date.newInstance(todayDate.year() - 1, 1, 1),
+            Date.newInstance(todayDate.year() - 1, 12, 31)
         );
-        return context;
     }
 
     private static BillingControl_DataProvider.BillingFilterDTO buildEqualsFilter(
@@ -1235,31 +1489,6 @@ private class BillingControl_WorkOrderLedgerTest {
         filterRecord.operator = 'Equals';
         filterRecord.valueType = 'Static';
         filterRecord.value = value;
-        return filterRecord;
-    }
-
-    private static BillingControl_DataProvider.BillingFilterDTO dateBoundFilter(
-        String developerKey,
-        String objectApiName,
-        String fieldApiName,
-        String operatorValue,
-        Date boundaryDate,
-        Boolean endOfDay
-    ) {
-        BillingControl_DataProvider.BillingFilterDTO filterRecord =
-            new BillingControl_DataProvider.BillingFilterDTO();
-        filterRecord.developerKey = developerKey;
-        filterRecord.objectApiName = objectApiName;
-        filterRecord.fieldApiName = fieldApiName;
-        filterRecord.operator = operatorValue;
-        filterRecord.valueType = 'Static';
-        String dateText =
-            String.valueOf(boundaryDate.year())
-            + '-'
-            + String.valueOf(boundaryDate.month()).leftPad(2, '0')
-            + '-'
-            + String.valueOf(boundaryDate.day()).leftPad(2, '0');
-        filterRecord.value = dateText + (endOfDay ? ' 23:59:59' : ' 00:00:00');
         return filterRecord;
     }
 

@@ -54,18 +54,11 @@ public with sharing class BillingControl_DataProvider {
         BillingControl_ConfigService.TabConfigDTO tabConfig = BillingControl_ConfigService.getTabConfig(ORDERS_TAB_KEY);
         BillingControl_ConfigService.DatasetConfigDTO datasetConfig = findDataset(tabConfig, ORDERS_DATASET_KEY);
         result.filterContext = buildFilterContext(tabConfig, datasetConfig, result.warnings);
-        applyDateFilterToContext(
-            result.filterContext,
-            defaultThisYearDateFilter(dateFilter),
-            'ServiceAppointment',
-            'ActualEndTime',
-            true,
-            result.warnings
-        );
+        DateRangeDTO dateWindow = resolveDateRange(defaultThisYearDateFilter(dateFilter), result.warnings);
         applyOpportunityOwnerFilterToContext(result.filterContext, opportunityOwnerId);
 
         if (isDatasetConfiguredForHandlers(datasetConfig, ORDERS_DATASET_KEY, ORDERS_SUPPORTED_HANDLER_KEYS, result.warnings)) {
-            loadOrdersRuntimeData(refreshToken, result);
+            loadOrdersRuntimeData(refreshToken, result, dateWindow);
             return result;
         }
 
@@ -198,10 +191,14 @@ public with sharing class BillingControl_DataProvider {
         return BillingControl_WorkOrderLedger.getValidationCounts();
     }
 
-    private static void loadOrdersRuntimeData(Long refreshToken, OrdersRuntimeDataDTO result) {
+    private static void loadOrdersRuntimeData(
+        Long refreshToken,
+        OrdersRuntimeDataDTO result,
+        DateRangeDTO dateWindow
+    ) {
         try {
             BillingControl_WorkOrderLedger.RuntimeBundle runtime =
-                BillingControl_WorkOrderLedger.getRuntime(refreshToken, result.filterContext);
+                BillingControl_WorkOrderLedger.getRuntime(refreshToken, result.filterContext, dateWindow);
             result.kpis = runtime.kpis;
             result.bucketSections = runtime.sections;
             appendRuntimeWarnings(result.warnings, result.filterContext);
