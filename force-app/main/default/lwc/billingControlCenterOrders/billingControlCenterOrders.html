@@ -187,26 +187,32 @@
                                                                     <lightning-formatted-number value={group.rowCount}></lightning-formatted-number>
                                                                 </template>
                                                                 <template if:true={column.isOpportunityAmount}>
-                                                                    <template if:true={group.hasAmount}>
-                                                                        <div class="grouped-diary-table__grouped-amount">
+                                                                    <div class="grouped-diary-table__grouped-amount">
+                                                                        <template if:true={group.hasAmount}>
                                                                             <lightning-formatted-number
                                                                                 value={group.totalAmount}
                                                                                 format-style="currency"
                                                                                 currency-code="USD">
                                                                             </lightning-formatted-number>
-                                                                        </div>
-                                                                    </template>
+                                                                        </template>
+                                                                        <template if:false={group.hasAmount}>
+                                                                            <span class="grouped-diary-table__no-amount">----</span>
+                                                                        </template>
+                                                                    </div>
                                                                 </template>
                                                                 <template if:true={column.isVisitAmount}>
-                                                                    <template if:true={group.hasVisitAmount}>
-                                                                        <div class="grouped-diary-table__grouped-amount">
+                                                                    <div class="grouped-diary-table__grouped-amount">
+                                                                        <template if:true={group.hasVisitAmount}>
                                                                             <lightning-formatted-number
                                                                                 value={group.totalVisitAmount}
                                                                                 format-style="currency"
                                                                                 currency-code="USD">
                                                                             </lightning-formatted-number>
-                                                                        </div>
-                                                                    </template>
+                                                                        </template>
+                                                                        <template if:false={group.hasVisitAmount}>
+                                                                            <span class="grouped-diary-table__no-amount">----</span>
+                                                                        </template>
+                                                                    </div>
                                                                 </template>
                                                             </td>
                                                         </template>
@@ -398,6 +404,11 @@
                                                                                 currency-code="USD">
                                                                             </lightning-formatted-number>
                                                                         </template>
+                                                                        <template if:false={row.hasOpportunityAmount}>
+                                                                            <span
+                                                                                class="grouped-diary-table__no-amount"
+                                                                                title="No Opportunity linked to this Work Order">----</span>
+                                                                        </template>
                                                                     </div>
                                                                 </template>
 
@@ -409,6 +420,11 @@
                                                                                 format-style="currency"
                                                                                 currency-code="USD">
                                                                             </lightning-formatted-number>
+                                                                        </template>
+                                                                        <template if:false={row.hasVisitAmount}>
+                                                                            <span
+                                                                                class="grouped-diary-table__no-amount"
+                                                                                title="No Opportunity linked to this Work Order">----</span>
                                                                         </template>
                                                                     </div>
                                                                 </template>
@@ -452,6 +468,7 @@
 
     <template if:true={showLedgerModal}>
         <c-billing-control-center-ledger-modal
+            date-filter={dateFilter}
             ledger-id={selectedLedgerId}
             onclose={handleCloseLedgerModal}>
         </c-billing-control-center-ledger-modal>

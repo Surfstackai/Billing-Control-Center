@@ -186,6 +186,17 @@ public with sharing class BillingControl_DataProvider {
         return BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(ledgerId);
     }
 
+    @AuraEnabled
+    public static BillingControl_WorkOrderLedger.LedgerDetailWrapper getWorkOrderLedgerDetailForRange(
+        Id ledgerId,
+        BillingDateFilterDTO dateFilter
+    ) {
+        DateRangeDTO dateWindow = dateFilter == null
+            ? null
+            : resolveDateRange(dateFilter, new List<String>());
+        return BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(ledgerId, dateWindow);
+    }
+
     @AuraEnabled(cacheable=true)
     public static BillingControl_WorkOrderLedger.ValidationCountsWrapper getWorkOrderLedgerValidationCounts() {
         return BillingControl_WorkOrderLedger.getValidationCounts();

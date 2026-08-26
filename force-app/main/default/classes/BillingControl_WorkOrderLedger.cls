@@ -175,6 +175,20 @@ public with sharing class BillingControl_WorkOrderLedger {
 
     @AuraEnabled
     public static LedgerDetailWrapper getWorkOrderLedgerDetail(Id ledgerId) {
+        return getWorkOrderLedgerDetail(ledgerId, null);
+    }
+
+    /**
+     * Ledger diary for one Work Order. When a date window is supplied the appointment list is
+     * limited to visits whose own state-owned date falls inside it, so the drill-in cannot show
+     * appointments the filtered list view excluded. A null window returns the full diary, which is
+     * what the Work Order Ledger record page needs.
+     */
+    public static LedgerDetailWrapper getWorkOrderLedgerDetail(
+        Id ledgerId,
+        BillingControl_DataProvider.DateRangeDTO dateWindow
+    ) {
+        DateTimeRange detailRange = toDateTimeRange(dateWindow);
         LedgerDetailWrapper detail = new LedgerDetailWrapper();
         detail.opportunities = new List<LedgerOpportunityWrapper>();
         detail.appointments = new List<LedgerAppointmentWrapper>();
@@ -271,6 +285,9 @@ public with sharing class BillingControl_WorkOrderLedger {
                 appointments = new List<ServiceAppointment>();
             }
             for (ServiceAppointment appointmentRecord : appointments) {
+                if (!isAppointmentInDetailRange(appointmentRecord, detailRange)) {
+                    continue;
+                }
                 LedgerAppointmentWrapper appointmentRow = new LedgerAppointmentWrapper();
                 appointmentRow.serviceAppointmentId = appointmentRecord.Id;
                 appointmentRow.appointmentNumber = appointmentRecord.AppointmentNumber;
@@ -490,11 +507,20 @@ public with sharing class BillingControl_WorkOrderLedger {
         List<BillingControl_Orders.WorkOrderRowWrapper> rows,
         String prefix
     ) {
-        Integer recordCount = rows == null ? 0 : rows.size();
+        // Fully invoiced rows stay visible for operational history but must not inflate the
+        // outstanding-work counts. Revenue comes from the un-invoiced appointments themselves, so a
+        // partly billed Work Order contributes only the visits still owed.
+        Integer recordCount = 0;
         Decimal totalAmount = 0;
         if (rows != null) {
             for (BillingControl_Orders.WorkOrderRowWrapper row : rows) {
-                Decimal rowAmount = row.visitAmount != null ? row.visitAmount : row.opportunityAmount;
+                if (row.billedBadge == true) {
+                    continue;
+                }
+                recordCount++;
+                Decimal rowAmount = row.operationalAmount != null
+                    ? row.operationalAmount
+                    : (row.visitAmount != null ? row.visitAmount : row.opportunityAmount);
                 if (rowAmount != null) {
                     totalAmount += rowAmount;
                 }
@@ -556,11 +582,8 @@ public with sharing class BillingControl_WorkOrderLedger {
         }
 
         Map<Id, List<ServiceAppointment>> appointmentsByWorkOrderId;
-        Set<Id> billedWorkOrderIds = new Set<Id>();
         if (bucketSets == null) {
             appointmentsByWorkOrderId = queryListAppointmentsByWorkOrderId(workOrderIds);
-        } else {
-            billedWorkOrderIds = queryBilledWorkOrderIds(workOrderIds);
         }
         Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = queryListJunctionsByWorkOrderId(workOrderIds);
         Map<Id, Integer> visitCountByOpportunityId = queryVisitCountByOpportunityId(junctionsByWorkOrderId);
@@ -568,15 +591,8 @@ public with sharing class BillingControl_WorkOrderLedger {
         for (Work_Order_Ledger__c ledgerRecord : ledgers) {
             List<ServiceAppointment> classificationAppointments;
             if (bucketSets == null) {
-                List<ServiceAppointment> appointments = appointmentsByWorkOrderId.get(ledgerRecord.Work_Order__c);
-                if (isInvoicedWork(ledgerRecord, appointments)) {
-                    continue;
-                }
-                classificationAppointments = appointments;
+                classificationAppointments = appointmentsByWorkOrderId.get(ledgerRecord.Work_Order__c);
             } else {
-                if (isInvoicedWork(ledgerRecord, billedWorkOrderIds)) {
-                    continue;
-                }
                 classificationAppointments = bucketSets.classificationAppointments(ledgerRecord.Work_Order__c);
                 if (classificationAppointments.isEmpty()) {
                     continue;
@@ -587,7 +603,7 @@ public with sharing class BillingControl_WorkOrderLedger {
                 continue;
             }
             List<ServiceAppointment> relatedAppointments = bucketSets == null
-                ? appointmentsByWorkOrderId.get(ledgerRecord.Work_Order__c)
+                ? classificationAppointments
                 : bucketSets.appointmentsForBucket(ledgerRecord.Work_Order__c, bucketKey);
             BillingControl_Orders.WorkOrderRowWrapper row = buildRow(
                 ledgerRecord,
@@ -655,6 +671,40 @@ public with sharing class BillingControl_WorkOrderLedger {
         dateRange.rangeStart = Datetime.newInstance(dateWindow.startDate, Time.newInstance(0, 0, 0, 0));
         dateRange.rangeEnd = Datetime.newInstance(dateWindow.endDate, Time.newInstance(23, 59, 59, 0));
         return dateRange;
+    }
+
+    /**
+     * Each appointment is judged on the date its own state owns, mirroring the bucket queries:
+     * completed on ActualEndTime, in progress on ActualStartTime, scheduled on SchedStartTime,
+     * otherwise ready on EarliestStartTime.
+     */
+    @TestVisible
+    private static Datetime stateOwnedDate(ServiceAppointment appointmentRecord) {
+        if (appointmentRecord == null) {
+            return null;
+        }
+        if (appointmentRecord.ActualEndTime != null) {
+            return appointmentRecord.ActualEndTime;
+        }
+        if (appointmentRecord.ActualStartTime != null) {
+            return appointmentRecord.ActualStartTime;
+        }
+        if (appointmentRecord.SchedStartTime != null && appointmentRecord.SchedEndTime != null) {
+            return appointmentRecord.SchedStartTime;
+        }
+        return appointmentRecord.EarliestStartTime;
+    }
+
+    @TestVisible
+    private static Boolean isAppointmentInDetailRange(ServiceAppointment appointmentRecord, DateTimeRange detailRange) {
+        if (detailRange == null || !detailRange.isComplete()) {
+            return true;
+        }
+        Datetime ownedDate = stateOwnedDate(appointmentRecord);
+        if (ownedDate == null) {
+            return false;
+        }
+        return ownedDate >= detailRange.rangeStart && ownedDate <= detailRange.rangeEnd;
     }
 
     private class OperationalBucketSets {
@@ -764,6 +814,12 @@ public with sharing class BillingControl_WorkOrderLedger {
         addAppointmentsToBucket(lineItemParentAppointments, byWorkOrderId, workOrderIds);
     }
 
+    /**
+     * Membership is purely the bucket's null-state predicate plus its own date field. Billing state
+     * deliberately plays no part: a Work Order can be re-opened and re-billed after invoicing, so
+     * accounting needs the operational history to stay visible. Already-invoiced visits are marked
+     * for display and left out of the KPI totals instead of being hidden.
+     */
     private static String bucketPredicate(String bucketKey) {
         if (bucketKey == BUCKET_READY_TO_SCHEDULE) {
             return 'SchedStartTime = NULL AND SchedEndTime = NULL AND ActualStartTime = NULL AND ActualEndTime = NULL'
@@ -816,40 +872,6 @@ public with sharing class BillingControl_WorkOrderLedger {
         }
     }
 
-    private static Set<Id> queryBilledWorkOrderIds(Set<Id> workOrderIds) {
-        Set<Id> billedWorkOrderIds = new Set<Id>();
-        if (workOrderIds == null || workOrderIds.isEmpty()) {
-            return billedWorkOrderIds;
-        }
-        Map<Id, Id> workOrderIdByParentId = new Map<Id, Id>();
-        for (Id workOrderId : workOrderIds) {
-            workOrderIdByParentId.put(workOrderId, workOrderId);
-        }
-        for (WorkOrderLineItem lineItem : [
-            SELECT Id, WorkOrderId
-            FROM WorkOrderLineItem
-            WHERE WorkOrderId IN :workOrderIds
-        ]) {
-            workOrderIdByParentId.put(lineItem.Id, lineItem.WorkOrderId);
-        }
-        Set<Id> parentIds = workOrderIdByParentId.keySet();
-        for (ServiceAppointment appointmentRecord : [
-            SELECT ParentRecordId, Invoice_Number__c
-            FROM ServiceAppointment
-            WHERE ParentRecordId IN :parentIds
-            AND Invoice_Number__c != NULL
-        ]) {
-            if (String.isBlank(appointmentRecord.Invoice_Number__c)) {
-                continue;
-            }
-            Id workOrderId = workOrderIdByParentId.get(appointmentRecord.ParentRecordId);
-            if (workOrderId != null) {
-                billedWorkOrderIds.add(workOrderId);
-            }
-        }
-        return billedWorkOrderIds;
-    }
-
     private static Set<Id> resolveWorkOrderIdsByOpportunityOwner(Id opportunityOwnerId) {
         Set<Id> includedWorkOrderIds = new Set<Id>();
         if (opportunityOwnerId == null) {
@@ -882,12 +904,17 @@ public with sharing class BillingControl_WorkOrderLedger {
         return null;
     }
 
+    /**
+     * Billing state of one visit. Only the appointment's own Invoice_Number__c counts:
+     * WO_Inv_Status__c reports the parent Work Order's invoice, so every appointment on a
+     * once-invoiced Work Order carries it and it cannot distinguish visits.
+     */
+    @TestVisible
     private static Boolean isBilledAppointment(ServiceAppointment appointmentRecord) {
         if (appointmentRecord == null) {
             return false;
         }
-        return containsBilledMarker(appointmentRecord.Invoice_Number__c)
-            || containsBilledMarker(appointmentRecord.WO_Inv_Status__c);
+        return containsBilledMarker(appointmentRecord.Invoice_Number__c);
     }
 
     private static Boolean containsBilledMarker(String value) {
@@ -942,7 +969,9 @@ public with sharing class BillingControl_WorkOrderLedger {
                 'ParentRecordId',
                 'AppointmentNumber',
                 'Status',
+                'EarliestStartTime',
                 'SchedStartTime',
+                'SchedEndTime',
                 'ActualStartTime',
                 'ActualEndTime',
                 'Opportunity__c',
@@ -1040,6 +1069,71 @@ public with sharing class BillingControl_WorkOrderLedger {
             junctionsByWorkOrderId.get(junctionRecord.Work_Order__c).add(junctionRecord);
         }
         return junctionsByWorkOrderId;
+    }
+
+    /**
+     * Value of the work still owed on this row.
+     *
+     * The Service Appointment to Opportunity lookup is populated on well under 1% of records, so
+     * value is taken from the Opportunity_WorkOrder__c junction instead. Each Opportunity's amount
+     * is split across the Work Orders it covers, then across that Work Order's visits, giving a
+     * per-visit rate that is charged only for the un-invoiced visits in the winning bucket.
+     *
+     * Returns null when the Work Order has no priced Opportunity, so the row reports "no value
+     * known" rather than a misleading zero.
+     */
+    private static Decimal resolveOperationalAmount(
+        List<ServiceAppointment> appointments,
+        List<Opportunity_WorkOrder__c> junctions,
+        Map<Id, Integer> visitCountByOpportunityId,
+        Decimal totalVisitsOnWorkOrder
+    ) {
+        if (appointments == null || appointments.isEmpty() || junctions == null || junctions.isEmpty()) {
+            return null;
+        }
+
+        Integer unbilledVisits = 0;
+        for (ServiceAppointment appointmentRecord : appointments) {
+            if (appointmentRecord != null
+                && !isBilledAppointment(appointmentRecord)
+                && !isCancelled(appointmentRecord.Status)) {
+                unbilledVisits++;
+            }
+        }
+
+        Decimal visitDivisor = totalVisitsOnWorkOrder == null || totalVisitsOnWorkOrder < 1
+            ? appointments.size()
+            : totalVisitsOnWorkOrder;
+        if (visitDivisor < 1) {
+            visitDivisor = 1;
+        }
+
+        Decimal perVisitRate = 0;
+        Boolean sawAmount = false;
+        Set<Id> seenOpportunityIds = new Set<Id>();
+        for (Opportunity_WorkOrder__c junctionRecord : junctions) {
+            if (junctionRecord == null
+                || junctionRecord.Opportunity__c == null
+                || !seenOpportunityIds.add(junctionRecord.Opportunity__c)
+                || junctionRecord.Opportunity__r == null
+                || junctionRecord.Opportunity__r.Amount == null) {
+                continue;
+            }
+            Integer workOrderCount = visitCountByOpportunityId == null
+                ? null
+                : visitCountByOpportunityId.get(junctionRecord.Opportunity__c);
+            if (workOrderCount == null || workOrderCount < 1) {
+                workOrderCount = 1;
+            }
+            sawAmount = true;
+            perVisitRate += junctionRecord.Opportunity__r.Amount
+                .divide(workOrderCount, 6, System.RoundingMode.HALF_UP)
+                .divide(visitDivisor, 6, System.RoundingMode.HALF_UP);
+        }
+        if (!sawAmount) {
+            return null;
+        }
+        return (perVisitRate * unbilledVisits).setScale(2, System.RoundingMode.HALF_UP);
     }
 
     private static Map<Id, Integer> queryVisitCountByOpportunityId(
@@ -1175,6 +1269,13 @@ public with sharing class BillingControl_WorkOrderLedger {
             relatedAppointments.add(appointmentRow);
         }
         row.relatedServiceAppointments = relatedAppointments;
+        row.billedBadge = isFullyBilled(appointments);
+        row.operationalAmount = resolveOperationalAmount(
+            appointments,
+            junctions,
+            visitCountByOpportunityId,
+            ledgerRecord.Service_Appointment_Count__c
+        );
 
         Decimal amountTotal = 0;
         Set<Id> seenOpportunityIds = new Set<Id>();
@@ -1384,41 +1485,21 @@ public with sharing class BillingControl_WorkOrderLedger {
         return membershipCount;
     }
 
-    private static Boolean isInvoicedWork(
-        Work_Order_Ledger__c ledgerRecord,
-        Set<Id> billedWorkOrderIds
-    ) {
-        if (hasWorkOrderInvoiceNumber(ledgerRecord)) {
-            return true;
-        }
-        return ledgerRecord != null
-            && ledgerRecord.Work_Order__c != null
-            && billedWorkOrderIds != null
-            && billedWorkOrderIds.contains(ledgerRecord.Work_Order__c);
-    }
-
-    private static Boolean isInvoicedWork(
-        Work_Order_Ledger__c ledgerRecord,
-        List<ServiceAppointment> appointments
-    ) {
-        if (hasWorkOrderInvoiceNumber(ledgerRecord)) {
-            return true;
-        }
-        if (appointments == null) {
+    /**
+     * True when every appointment backing the row has already been invoiced, meaning the row is
+     * present for operational history rather than as work still owed.
+     */
+    @TestVisible
+    private static Boolean isFullyBilled(List<ServiceAppointment> appointments) {
+        if (appointments == null || appointments.isEmpty()) {
             return false;
         }
         for (ServiceAppointment appointmentRecord : appointments) {
-            if (appointmentRecord != null && String.isNotBlank(appointmentRecord.Invoice_Number__c)) {
-                return true;
+            if (!isBilledAppointment(appointmentRecord)) {
+                return false;
             }
         }
-        return false;
-    }
-
-    private static Boolean hasWorkOrderInvoiceNumber(Work_Order_Ledger__c ledgerRecord) {
-        return ledgerRecord != null
-            && ledgerRecord.Work_Order__r != null
-            && String.isNotBlank(ledgerRecord.Work_Order__r.Invoice_Number__c);
+        return true;
     }
 
     private static String buildServiceAppointmentDisplay(ServiceAppointment appointmentRecord) {
@@ -1427,6 +1508,7 @@ public with sharing class BillingControl_WorkOrderLedger {
             : String.valueOf(appointmentRecord.Id);
         String statusLabel;
         Datetime statusDate;
+        String billedSuffix = isBilledAppointment(appointmentRecord) ? ' - Billed' : '';
         if (appointmentRecord.ActualEndTime != null) {
             statusLabel = 'Completed';
             statusDate = appointmentRecord.ActualEndTime;
@@ -1437,9 +1519,9 @@ public with sharing class BillingControl_WorkOrderLedger {
             statusLabel = 'Scheduled';
             statusDate = appointmentRecord.SchedStartTime;
         } else {
-            return appointmentNumber + ' (none)';
+            return appointmentNumber + ' (none' + billedSuffix + ')';
         }
-        return appointmentNumber + ' (' + statusLabel + ' - ' + statusDate.format('M/d/yyyy') + ')';
+        return appointmentNumber + ' (' + statusLabel + ' - ' + statusDate.format('M/d/yyyy') + billedSuffix + ')';
     }
 
     private static Boolean isCancelled(String statusValue) {

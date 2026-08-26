@@ -7,6 +7,10 @@
                     <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
                 </div>
                 <template if:true={tile.useSplit}>
+                    <div class="kpi-tile__metric">{tile.metricText}</div>
+                    <template if:true={tile.countText}>
+                        <div class="kpi-tile__count">{tile.countText}</div>
+                    </template>
                     <div class="kpi-tile__split">
                         <template for:each={tile.splitColumns} for:item="column">
                             <div key={column.key} class="kpi-tile__split-col">

@@ -1,5 +1,8 @@
 .sf/
 .sfdx/
 node_modules/
+coverage/
+.tmp-forensic/
+.tmp-prod-retrieve/
 .DS_Store
 Thumbs.db

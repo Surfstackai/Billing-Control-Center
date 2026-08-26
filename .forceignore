@@ -2,4 +2,9 @@
 .sfdx/
 **/.sfdx/
 **/jsconfig.json
+**/__tests__/**
+package.json
+package-lock.json
+jest.config.js
+node_modules/**
 **/.eslintrc.json

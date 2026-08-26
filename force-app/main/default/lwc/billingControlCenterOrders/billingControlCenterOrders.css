@@ -292,6 +292,10 @@
     font-variant-numeric: tabular-nums;
 }
 
+.grouped-diary-table__no-amount {
+    color: var(--bcc-muted);
+}
+
 .bucket-empty {
     margin: 0.5rem 0 0;
     color: var(--bcc-muted);

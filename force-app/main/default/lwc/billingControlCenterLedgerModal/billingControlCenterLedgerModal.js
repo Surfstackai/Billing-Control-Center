@@ -1,6 +1,6 @@
 import { LightningElement, api } from 'lwc';
 import { NavigationMixin } from 'lightning/navigation';
-import getWorkOrderLedgerDetail from '@salesforce/apex/BillingControl_DataProvider.getWorkOrderLedgerDetail';
+import getWorkOrderLedgerDetailForRange from '@salesforce/apex/BillingControl_DataProvider.getWorkOrderLedgerDetailForRange';
 
 export default class BillingControlCenterLedgerModal extends NavigationMixin(LightningElement) {
     @api embedded = false;
@@ -8,6 +8,19 @@ export default class BillingControlCenterLedgerModal extends NavigationMixin(Lig
     errorMessage;
     detail;
     _ledgerId;
+    _dateFilter;
+    _isConnected = false;
+    _loadSequence = 0;
+
+    @api
+    get dateFilter() {
+        return this._dateFilter;
+    }
+
+    set dateFilter(value) {
+        this._dateFilter = value;
+        this.loadIfReady();
+    }
 
     get dialogClass() {
         return this.embedded ? 'ledger-embedded' : 'slds-modal slds-fade-in-open';
@@ -28,9 +41,19 @@ export default class BillingControlCenterLedgerModal extends NavigationMixin(Lig
 
     set ledgerId(value) {
         this._ledgerId = value;
-        if (value) {
-            this.loadDetail(value);
+        this.loadIfReady();
+    }
+
+    connectedCallback() {
+        this._isConnected = true;
+        this.loadIfReady();
+    }
+
+    loadIfReady() {
+        if (!this._isConnected || !this._ledgerId) {
+            return;
         }
+        this.loadDetail(this._ledgerId);
     }
 
     get hasDetail() {
@@ -93,15 +116,35 @@ export default class BillingControlCenterLedgerModal extends NavigationMixin(Lig
     }
 
     async loadDetail(ledgerId) {
+        this._loadSequence += 1;
+        const loadSequence = this._loadSequence;
         this.isLoading = true;
         this.errorMessage = undefined;
         this.detail = undefined;
         try {
-            this.detail = await getWorkOrderLedgerDetail({ ledgerId });
+            const runtimeDetail = await getWorkOrderLedgerDetailForRange({
+                ledgerId,
+                dateFilter: this._dateFilter
+                    ? {
+                          filterKey: this._dateFilter.filterKey || null,
+                          startDate: this._dateFilter.startDate || null,
+                          endDate: this._dateFilter.endDate || null
+                      }
+                    : null
+            });
+            if (loadSequence !== this._loadSequence) {
+                return;
+            }
+            this.detail = runtimeDetail;
         } catch (error) {
+            if (loadSequence !== this._loadSequence) {
+                return;
+            }
             this.errorMessage = error?.body?.message || error?.message || 'Unable to load ledger detail.';
         } finally {
-            this.isLoading = false;
+            if (loadSequence === this._loadSequence) {
+                this.isLoading = false;
+            }
         }
     }
 

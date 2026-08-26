@@ -553,9 +553,12 @@ function summarizeWorkTypeSplit(rows) {
     const pit = { count: 0, amount: 0 };
     const other = { count: 0, amount: 0 };
     (rows || []).forEach(row => {
+        if (row?.billedBadge === true) {
+            return;
+        }
         const target = isPitCleaningWorkType(row) ? pit : other;
         target.count += 1;
-        const amount = Number(row.visitAmount ?? row.opportunityAmount);
+        const amount = Number(row.operationalAmount ?? row.visitAmount ?? row.opportunityAmount);
         if (Number.isFinite(amount)) {
             target.amount += amount;
         }
@@ -701,6 +704,7 @@ export default class BillingControlCenterOrders extends LightningElement {
     _dateFilter = { ...DEFAULT_DATE_FILTER };
     _dateFilterSignature = JSON.stringify(DEFAULT_DATE_FILTER);
     _isConnected = false;
+    _loadSequence = 0;
     opportunityOwnerId;
     userPickerDisplayInfo = {
         primaryField: 'Name',
@@ -1232,6 +1236,9 @@ export default class BillingControlCenterOrders extends LightningElement {
         this.isLoading = true;
         this.errorMessage = undefined;
         const cacheKey = buildRuntimeCacheKey(this.dateFilter, this.opportunityOwnerId);
+        // A slow earlier request must never overwrite a newer date filter's result.
+        this._loadSequence = (this._loadSequence || 0) + 1;
+        const loadSequence = this._loadSequence;
 
         try {
             if (forceRefresh) {
@@ -1256,8 +1263,14 @@ export default class BillingControlCenterOrders extends LightningElement {
                 opportunityOwnerId: this.opportunityOwnerId || null
             });
             ordersRuntimeCache.set(cacheKey, cloneRuntimeData(runtimeData));
+            if (loadSequence !== this._loadSequence) {
+                return;
+            }
             this.applyRuntimeData(runtimeData);
         } catch (error) {
+            if (loadSequence !== this._loadSequence) {
+                return;
+            }
             this.providerWarnings = [];
             this.kpiState = {};
             this.sections = [];
@@ -1268,7 +1281,9 @@ export default class BillingControlCenterOrders extends LightningElement {
             });
             this.errorMessage = this.reduceError(error);
         } finally {
-            this.isLoading = false;
+            if (loadSequence === this._loadSequence) {
+                this.isLoading = false;
+            }
         }
     }
 

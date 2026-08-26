@@ -789,10 +789,18 @@ private class BillingControl_WorkOrderLedgerTest {
 
         System.assertEquals(0, countOperationalOccurrences(runtime.sections, unbilledWorkOrder.Id));
         System.assertEquals(0, countOperationalOccurrences(runtime.sections, billedWorkOrder.Id));
-        System.assertEquals(0, countOperationalOccurrences(runtime.sections, woInvoiceWorkOrder.Id));
         System.assertEquals(null, findAnyRow(runtime.sections, unbilledWorkOrder.Id));
         System.assertEquals(null, findAnyRow(runtime.sections, billedWorkOrder.Id));
-        System.assertEquals(null, findAnyRow(runtime.sections, woInvoiceWorkOrder.Id));
+        System.assertEquals(
+            1,
+            countOperationalOccurrences(runtime.sections, woInvoiceWorkOrder.Id),
+            'An invoice number on the Work Order does not hide its un-invoiced open appointments.'
+        );
+        System.assertNotEquals(
+            null,
+            findRow(findSection(runtime.sections, 'READY_TO_SCHEDULE').rows, woInvoiceWorkOrder.Id),
+            'The un-invoiced Ready appointment still owns the bucket.'
+        );
         System.assertEquals(0, runtime.kpis.completedNotBilledCount);
         System.assertEquals(0, runtime.kpis.completedThisWeekCount);
         System.assertEquals(0, runtime.kpis.completedThisMonthCount);
@@ -1302,6 +1310,452 @@ private class BillingControl_WorkOrderLedgerTest {
         if (quarterStartMonth != 1) {
             System.assertEquals(null, findAnyRow(thisQuarterRuntime.sections, workOrderRecord.Id));
         }
+    }
+
+    /**
+     * Mirrors production Work Order 00001935: an invoiced Work Order carrying billing history plus
+     * new un-invoiced Scheduled work inside the window. It must stay on the operational ledger.
+     */
+    @IsTest
+    static void billingHistoryDoesNotHideOpenAppointments() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Golden Shape Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Golden Shape Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Golden Shape Opp', 900);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Golden Shape WO');
+        workOrderRecord.Invoice_Number__c = 'Inv 93122';
+        update workOrderRecord;
+
+        Date todayDate = Date.today();
+        Date windowStart = Date.newInstance(todayDate.year(), todayDate.month(), 1);
+        Date windowEnd = windowStart.addMonths(1).addDays(-1);
+        Datetime inWindowStart = Datetime.newInstance(windowStart.addDays(9), Time.newInstance(9, 0, 0, 0));
+        Datetime outOfWindowStart = Datetime.newInstance(windowEnd.addDays(3), Time.newInstance(9, 0, 0, 0));
+        Datetime completedInWindow = Datetime.newInstance(windowStart.addDays(4), Time.newInstance(14, 0, 0, 0));
+
+        ServiceAppointment invoicedScheduled = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            inWindowStart,
+            null,
+            'Golden Invoiced Scheduled SA'
+        );
+        invoicedScheduled.Invoice_Number__c = 'Inv 93122';
+        ServiceAppointment openScheduledOne = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            inWindowStart.addHours(2),
+            null,
+            'Golden Open Scheduled SA One'
+        );
+        ServiceAppointment openScheduledTwo = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            inWindowStart.addHours(4),
+            null,
+            'Golden Open Scheduled SA Two'
+        );
+        ServiceAppointment nextMonthScheduled = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            outOfWindowStart,
+            null,
+            'Golden Next Month Scheduled SA'
+        );
+        ServiceAppointment completedInvoiced = buildAppointment(
+            workOrderRecord.Id,
+            'Completed',
+            completedInWindow.addHours(-2),
+            completedInWindow,
+            'Golden Completed SA'
+        );
+        completedInvoiced.Invoice_Number__c = 'Inv 93122';
+        insert new List<ServiceAppointment>{
+            invoicedScheduled,
+            openScheduledOne,
+            openScheduledTwo,
+            nextMonthScheduled,
+            completedInvoiced
+        };
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime =
+            BillingControl_WorkOrderLedger.getRuntime(120L, null, dateWindow(windowStart, windowEnd));
+        Test.stopTest();
+
+        System.assertEquals(
+            1,
+            countOperationalOccurrences(runtime.sections, workOrderRecord.Id),
+            'The Work Order appears exactly once despite its billing history.'
+        );
+        BillingControl_Orders.WorkOrderRowWrapper row =
+            findRow(findSection(runtime.sections, 'SCHEDULED_APPOINTMENTS').rows, workOrderRecord.Id);
+        System.assertNotEquals(null, row, 'Open Scheduled work wins the bucket.');
+
+        Set<Id> relatedIds = new Set<Id>();
+        for (BillingControl_Orders.WorkOrderRowWrapper related : row.relatedServiceAppointments) {
+            relatedIds.add(related.serviceAppointmentId);
+        }
+        System.assertEquals(
+            new Set<Id>{ invoicedScheduled.Id, openScheduledOne.Id, openScheduledTwo.Id },
+            relatedIds,
+            'Every in-window Scheduled appointment attaches, invoiced or not, so the history is visible.'
+        );
+        System.assertEquals(
+            false,
+            row.billedBadge,
+            'A row with un-invoiced work left is not marked fully billed.'
+        );
+        for (BillingControl_Orders.WorkOrderRowWrapper related : row.relatedServiceAppointments) {
+            Boolean expectedBilled = related.serviceAppointmentId == invoicedScheduled.Id;
+            System.assertEquals(
+                expectedBilled,
+                related.billedBadge,
+                'Invoiced appointments are marked, not hidden.'
+            );
+            System.assertEquals(
+                expectedBilled,
+                related.serviceAppointmentDisplay.contains('Billed'),
+                'The visible appointment text tells accounting which visits are already invoiced.'
+            );
+        }
+    }
+
+    @IsTest
+    static void workOrderInvoiceStatusDoesNotBrandEveryAppointmentBilled() {
+        ServiceAppointment ownInvoice = new ServiceAppointment(Invoice_Number__c = 'Inv 93122');
+        ServiceAppointment parentInvoiceOnly = new ServiceAppointment(Invoice_Number__c = null);
+        ServiceAppointment noInvoice = new ServiceAppointment();
+
+        System.assertEquals(
+            true,
+            BillingControl_WorkOrderLedger.isBilledAppointment(ownInvoice),
+            'An appointment with its own invoice number is billed.'
+        );
+        System.assertEquals(
+            false,
+            BillingControl_WorkOrderLedger.isBilledAppointment(parentInvoiceOnly),
+            'The parent Work Order invoice status must not mark an un-invoiced visit as billed.'
+        );
+        System.assertEquals(
+            false,
+            BillingControl_WorkOrderLedger.isBilledAppointment(noInvoice),
+            'An appointment with no invoice number is not billed.'
+        );
+        System.assertEquals(
+            false,
+            BillingControl_WorkOrderLedger.isFullyBilled(
+                new List<ServiceAppointment>{ ownInvoice, noInvoice }
+            ),
+            'A row keeps outstanding work while any visit is un-invoiced.'
+        );
+    }
+
+    @IsTest
+    static void kpiRevenueCountsOnlyUnbilledAppointments() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Partial Billing Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Partial Billing Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Partial Billing Opp', 900);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Partial Billing WO');
+
+        Date todayDate = Date.today();
+        Date windowStart = Date.newInstance(todayDate.year(), todayDate.month(), 1);
+        Date windowEnd = windowStart.addMonths(1).addDays(-1);
+        Datetime scheduledStart = Datetime.newInstance(windowStart.addDays(8), Time.newInstance(9, 0, 0, 0));
+
+        // One 900 Opportunity covers this Work Order's three visits, so each visit is worth 300.
+        ServiceAppointment billedVisit = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            scheduledStart,
+            null,
+            'Partial Billed Visit'
+        );
+        billedVisit.Invoice_Number__c = 'Inv 90100';
+        ServiceAppointment openVisitOne = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            scheduledStart.addHours(2),
+            null,
+            'Partial Open Visit One'
+        );
+        ServiceAppointment openVisitTwo = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            scheduledStart.addHours(4),
+            null,
+            'Partial Open Visit Two'
+        );
+        insert new List<ServiceAppointment>{ billedVisit, openVisitOne, openVisitTwo };
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime =
+            BillingControl_WorkOrderLedger.getRuntime(125L, null, dateWindow(windowStart, windowEnd));
+        Test.stopTest();
+
+        BillingControl_Orders.WorkOrderRowWrapper row =
+            findRow(findSection(runtime.sections, 'SCHEDULED_APPOINTMENTS').rows, workOrderRecord.Id);
+        System.assertNotEquals(null, row, 'The partly billed Work Order stays on the ledger.');
+        System.assertEquals(3, row.relatedServiceAppointments.size(), 'All three visits stay visible.');
+        System.assertEquals(
+            600,
+            row.operationalAmount,
+            'Only the two un-invoiced visits contribute, at 300 each.'
+        );
+        System.assertEquals(
+            600,
+            runtime.kpis.scheduledRevenue,
+            'Bucket revenue excludes the already invoiced visit.'
+        );
+        System.assertEquals(1, runtime.kpis.scheduledCount, 'The Work Order still counts once.');
+    }
+
+    @IsTest
+    static void workOrderWithoutOpportunityReportsNoValueNotZero() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'No Opportunity Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('No Opportunity Type', 1);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'No Opportunity WO');
+        Date todayDate = Date.today();
+        Date windowStart = Date.newInstance(todayDate.year(), todayDate.month(), 1);
+        Datetime scheduledStart = Datetime.newInstance(windowStart.addDays(10), Time.newInstance(9, 0, 0, 0));
+        insert buildAppointment(workOrderRecord.Id, 'Scheduled', scheduledStart, null, 'No Opportunity SA');
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime = BillingControl_WorkOrderLedger.getRuntime(
+            126L,
+            null,
+            dateWindow(windowStart, windowStart.addMonths(1).addDays(-1))
+        );
+        Test.stopTest();
+
+        BillingControl_Orders.WorkOrderRowWrapper row =
+            findRow(findSection(runtime.sections, 'SCHEDULED_APPOINTMENTS').rows, workOrderRecord.Id);
+        System.assertNotEquals(null, row, 'A Work Order with no Opportunity still shows its open work.');
+        System.assertEquals(
+            null,
+            row.operationalAmount,
+            'No linked Opportunity means no value is known, so the row stays unpriced.'
+        );
+        System.assertEquals(
+            null,
+            row.opportunityAmount,
+            'No linked Opportunity leaves the Opportunity amount unset.'
+        );
+        System.assertEquals(
+            1,
+            runtime.kpis.scheduledCount,
+            'The Work Order still counts as outstanding work.'
+        );
+    }
+
+    @IsTest
+    static void fullyBilledWorkOrderStaysVisibleButOutOfKpis() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Invoiced Only Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Invoiced Only Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Invoiced Only Opp', 100);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Invoiced Only WO');
+        Date todayDate = Date.today();
+        Datetime scheduledStart = Datetime.newInstance(
+            Date.newInstance(todayDate.year(), todayDate.month(), 1).addDays(5),
+            Time.newInstance(9, 0, 0, 0)
+        );
+        ServiceAppointment invoicedScheduled = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            scheduledStart,
+            null,
+            'Invoiced Only Scheduled SA'
+        );
+        invoicedScheduled.Invoice_Number__c = 'Inv 90001';
+        insert invoicedScheduled;
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle runtime =
+            BillingControl_WorkOrderLedger.getRuntime(121L, null, thisYearWindow(todayDate));
+        Test.stopTest();
+
+        BillingControl_Orders.WorkOrderRowWrapper row =
+            findRow(findSection(runtime.sections, 'SCHEDULED_APPOINTMENTS').rows, workOrderRecord.Id);
+        System.assertNotEquals(
+            null,
+            row,
+            'A re-openable billed Work Order keeps its operational history on the ledger.'
+        );
+        System.assertEquals(true, row.billedBadge, 'The row is marked fully billed.');
+        System.assertEquals(
+            0,
+            runtime.kpis.scheduledCount,
+            'Fully billed work does not inflate the outstanding Scheduled count.'
+        );
+        System.assertEquals(
+            0,
+            runtime.kpis.scheduledRevenue,
+            'Fully billed work does not inflate operational revenue.'
+        );
+    }
+
+    @IsTest
+    static void ledgerDetailWindowLimitsAppointmentsToRange() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Detail Window Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Detail Window Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Detail Window Opp', 500);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Detail Window WO');
+
+        Date todayDate = Date.today();
+        Date windowStart = Date.newInstance(todayDate.year(), todayDate.month(), 1);
+        Date windowEnd = windowStart.addMonths(1).addDays(-1);
+        Datetime inWindow = Datetime.newInstance(windowStart.addDays(6), Time.newInstance(10, 0, 0, 0));
+        Datetime priorYear = Datetime.newInstance(
+            Date.newInstance(todayDate.year() - 1, 6, 15),
+            Time.newInstance(10, 0, 0, 0)
+        );
+
+        ServiceAppointment inRangeScheduled = buildAppointment(
+            workOrderRecord.Id,
+            'Scheduled',
+            inWindow,
+            null,
+            'Detail In Range Scheduled SA'
+        );
+        ServiceAppointment inRangeCompleted = buildAppointment(
+            workOrderRecord.Id,
+            'Completed',
+            inWindow.addHours(-3),
+            inWindow.addHours(-1),
+            'Detail In Range Completed SA'
+        );
+        ServiceAppointment priorYearCompleted = buildAppointment(
+            workOrderRecord.Id,
+            'Completed',
+            priorYear.addHours(-2),
+            priorYear,
+            'Detail Prior Year Completed SA'
+        );
+        insert new List<ServiceAppointment>{ inRangeScheduled, inRangeCompleted, priorYearCompleted };
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+        Work_Order_Ledger__c ledgerRecord = [
+            SELECT Id FROM Work_Order_Ledger__c WHERE Work_Order__c = :workOrderRecord.Id LIMIT 1
+        ];
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.LedgerDetailWrapper windowed =
+            BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(
+                ledgerRecord.Id,
+                dateWindow(windowStart, windowEnd)
+            );
+        BillingControl_WorkOrderLedger.LedgerDetailWrapper fullDiary =
+            BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(ledgerRecord.Id);
+        Test.stopTest();
+
+        Set<Id> windowedIds = new Set<Id>();
+        for (BillingControl_WorkOrderLedger.LedgerAppointmentWrapper appointmentRow : windowed.appointments) {
+            windowedIds.add(appointmentRow.serviceAppointmentId);
+        }
+        System.assertEquals(
+            new Set<Id>{ inRangeScheduled.Id, inRangeCompleted.Id },
+            windowedIds,
+            'The drill-in shows every in-range appointment and nothing outside the window.'
+        );
+        System.assertEquals(
+            3,
+            fullDiary.appointments.size(),
+            'Without a window the ledger stays a full diary for the record page.'
+        );
+    }
+
+    @IsTest
+    static void windowedDetailExcludesAppointmentsWithoutAStateOwnedDate() {
+        BillingControl_WorkOrderLedger.DateTimeRange august =
+            new BillingControl_WorkOrderLedger.DateTimeRange();
+        august.rangeStart = Datetime.newInstance(Date.newInstance(2026, 8, 1), Time.newInstance(0, 0, 0, 0));
+        august.rangeEnd = Datetime.newInstance(Date.newInstance(2026, 8, 31), Time.newInstance(23, 59, 59, 0));
+        ServiceAppointment undated = new ServiceAppointment();
+        ServiceAppointment inRange = new ServiceAppointment(
+            SchedStartTime = Datetime.newInstance(Date.newInstance(2026, 8, 17), Time.newInstance(8, 0, 0, 0)),
+            SchedEndTime = Datetime.newInstance(Date.newInstance(2026, 8, 17), Time.newInstance(9, 0, 0, 0))
+        );
+
+        System.assertEquals(
+            false,
+            BillingControl_WorkOrderLedger.isAppointmentInDetailRange(undated, august),
+            'An appointment with no state-owned date is not in a complete window.'
+        );
+        System.assertEquals(
+            true,
+            BillingControl_WorkOrderLedger.isAppointmentInDetailRange(inRange, august),
+            'A Scheduled appointment whose start is inside the window stays visible.'
+        );
+        System.assertEquals(
+            true,
+            BillingControl_WorkOrderLedger.isAppointmentInDetailRange(undated, new BillingControl_WorkOrderLedger.DateTimeRange()),
+            'Without a window the record-page diary still includes undated appointments.'
+        );
+    }
+
+    @IsTest
+    static void opportunityJunctionsDoNotChangeBucketMembership() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Attribution Isolation Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Attribution Isolation Type', 1);
+        Opportunity firstOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Attribution Opp One', 300);
+        Opportunity secondOpportunity = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Attribution Opp Two', 400);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Attribution Isolation WO');
+        Date todayDate = Date.today();
+        Datetime scheduledStart = Datetime.newInstance(
+            Date.newInstance(todayDate.year(), todayDate.month(), 1).addDays(7),
+            Time.newInstance(9, 0, 0, 0)
+        );
+        insert buildAppointment(workOrderRecord.Id, 'Scheduled', scheduledStart, null, 'Attribution Scheduled SA');
+        Opportunity_WorkOrder__c firstJunction = new Opportunity_WorkOrder__c(
+            Work_Order__c = workOrderRecord.Id,
+            Opportunity__c = firstOpportunity.Id
+        );
+        insert firstJunction;
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.RuntimeBundle oneJunction =
+            BillingControl_WorkOrderLedger.getRuntime(122L, null, thisYearWindow(todayDate));
+        insert new Opportunity_WorkOrder__c(
+            Work_Order__c = workOrderRecord.Id,
+            Opportunity__c = secondOpportunity.Id
+        );
+        BillingControl_WorkOrderLedger.RuntimeBundle twoJunctions =
+            BillingControl_WorkOrderLedger.getRuntime(123L, null, thisYearWindow(todayDate));
+        delete [SELECT Id FROM Opportunity_WorkOrder__c WHERE Work_Order__c = :workOrderRecord.Id];
+        BillingControl_WorkOrderLedger.RuntimeBundle noJunctions =
+            BillingControl_WorkOrderLedger.getRuntime(124L, null, thisYearWindow(todayDate));
+        Test.stopTest();
+
+        System.assertEquals(1, countOperationalOccurrences(oneJunction.sections, workOrderRecord.Id));
+        System.assertEquals(
+            1,
+            countOperationalOccurrences(twoJunctions.sections, workOrderRecord.Id),
+            'A second Opportunity link does not duplicate or move the Work Order.'
+        );
+        System.assertEquals(
+            1,
+            countOperationalOccurrences(noJunctions.sections, workOrderRecord.Id),
+            'Removing every Opportunity link does not remove the Work Order from its date bucket.'
+        );
     }
 
     private static final Integer LEDGER_QUERY_LIMIT_FOR_ASSERT = 10000;

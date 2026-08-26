@@ -59,6 +59,8 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public String opportunityName;
         @AuraEnabled public Decimal opportunityAmount;
         @AuraEnabled public Decimal visitAmount;
+        /** Value of the un-invoiced appointments behind this row, used for bucket KPI revenue. */
+        @AuraEnabled public Decimal operationalAmount;
         @AuraEnabled public String opportunityStageName;
         @AuraEnabled public Date opportunityCloseDate;
         @AuraEnabled public Id ownerId;
