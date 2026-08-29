@@ -22,7 +22,7 @@ public class SiteContactHelperClassTest {
         
        WorkOrder wo = new WorkOrder(
             Subject = 'Test Work Order',
-           Status = 'For Clearance',
+            Status = 'New',
             AccountId = acc.Id,
             WorkTypeId = wt.Id);
         insert wo;   

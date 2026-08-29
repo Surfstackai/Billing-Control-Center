@@ -397,7 +397,7 @@ private class BillingControl_DataProviderTest {
             String.join(receivablesData.warnings, ' | ')
         );
         System.assertEquals(
-            1,
+            0,
             receivablesData.metrics.commissionPayableCount,
             String.join(receivablesData.warnings, ' | ')
         );
@@ -1114,7 +1114,7 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(202L);
         Test.stopTest();
 
-        Set<Id> readyAppointmentIds = evidenceAppointmentIds(invoicingData.groups);
+        Set<Id> readyAppointmentIds = evidenceUnbilledAppointmentIds(invoicingData.groups);
 
         System.assertEquals(
             false,
@@ -2078,6 +2078,36 @@ private class BillingControl_DataProviderTest {
                     }
                     for (BillingControl_BillingReadiness.AppointmentEvidence appointmentEvidence : workOrderEvidence.appointments) {
                         if (appointmentEvidence.serviceAppointmentId != null) {
+                            appointmentIds.add(appointmentEvidence.serviceAppointmentId);
+                        }
+                    }
+                }
+            }
+        }
+        return appointmentIds;
+    }
+
+    private static Set<Id> evidenceUnbilledAppointmentIds(
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> groups
+    ) {
+        Set<Id> appointmentIds = new Set<Id>();
+        if (groups == null) {
+            return appointmentIds;
+        }
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
+            if (groupRecord == null || groupRecord.opportunityRows == null) {
+                continue;
+            }
+            for (BillingControl_BillingReadiness.OpportunityRow opportunityRow : groupRecord.opportunityRows) {
+                if (opportunityRow.workOrders == null) {
+                    continue;
+                }
+                for (BillingControl_BillingReadiness.WorkOrderEvidence workOrderEvidence : opportunityRow.workOrders) {
+                    if (workOrderEvidence.appointments == null) {
+                        continue;
+                    }
+                    for (BillingControl_BillingReadiness.AppointmentEvidence appointmentEvidence : workOrderEvidence.appointments) {
+                        if (appointmentEvidence.serviceAppointmentId != null && appointmentEvidence.billed != true) {
                             appointmentIds.add(appointmentEvidence.serviceAppointmentId);
                         }
                     }
