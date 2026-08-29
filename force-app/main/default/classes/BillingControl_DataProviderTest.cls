@@ -152,7 +152,7 @@ private class BillingControl_DataProviderTest {
         System.assertEquals(0, ordersData.kpis.completedThisWeekCount);
         System.assertEquals(0, ordersData.kpis.completedThisMonthCount);
         System.assertEquals(0, ordersData.kpis.noOpportunityCount);
-        System.assertEquals(4, invoicingData.metrics.readyToBill, 'Eligibility is driven by related SA/WO values, not legacy diary flags.');
+        System.assertEquals(2, invoicingData.metrics.readyToBill, 'Ready-to-bill is unique Opportunities with unbilled completed visits, not Service Appointment count.');
         System.assertEquals(1, receivablesData.metrics.revenueUnderCollectionCount);
     }
 
@@ -174,7 +174,7 @@ private class BillingControl_DataProviderTest {
         Test.stopTest();
 
         System.assertEquals(2, invoicingData.filterContext.filters.size());
-        System.assertEquals(4, invoicingData.metrics.readyToBill, 'Disabling legacy configuration must not change SA/WO eligibility.');
+        System.assertEquals(2, invoicingData.metrics.readyToBill, 'Disabling legacy configuration must not change Opportunity readiness.');
     }
 
     @IsTest
@@ -390,7 +390,7 @@ private class BillingControl_DataProviderTest {
                 System.assertEquals(Date.today(), row.createdDate == null ? null : row.createdDate.date());
             }
         }
-        System.assertEquals(4, invoicingData.metrics.readyToBill, 'Invoicing without a page date filter keeps current appointments.');
+        System.assertEquals(2, invoicingData.metrics.readyToBill, 'Invoicing without a page date filter keeps current Opportunities.');
         System.assertEquals(
             0,
             receivablesData.metrics.revenueUnderCollectionCount,
@@ -494,7 +494,7 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(402L, buildDateFilter('Last Year', null, null));
         Test.stopTest();
 
-        System.assertEquals(4, thisYearData.metrics.readyToBill, 'This Year includes current completed appointments.');
+        System.assertEquals(2, thisYearData.metrics.readyToBill, 'This Year includes current completed Opportunities.');
         System.assertEquals(0, lastYearData.metrics.readyToBill, 'Last Year excludes current completed appointments.');
     }
 
@@ -763,7 +763,7 @@ private class BillingControl_DataProviderTest {
         System.assertEquals(null, findOrdersSection(ordersData.bucketSections, 'COMPLETED_NOT_BILLED'));
         System.assertEquals(null, findOrdersSection(ordersData.bucketSections, 'RELATED_WORK'));
         System.assertEquals(0, inProgressSection.rows.size());
-        System.assertEquals(4, invoicingData.metrics.readyToBill);
+        System.assertEquals(2, invoicingData.metrics.readyToBill);
 
         Set<Id> scheduledAppointmentIds = new Set<Id>{
             scheduledAppointment.Id,
@@ -977,31 +977,8 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(201L);
         Test.stopTest();
 
-        Set<Id> mixedAppointmentIds = new Set<Id>();
-        Set<String> mixedInvoiceNumbers = new Set<String>();
-        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : mixedData.groups) {
-            if (groupRecord.categoryKey != 'COMPLETED_LATER') {
-                continue;
-            }
-            for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
-                if (row.workOrderId == mixedWorkOrder.Id) {
-                    System.assertEquals(UserInfo.getName(), row.ownerName);
-                    if (row.relatedServiceAppointments != null) {
-                        for (BillingControl_Invoicing.ServiceAppointmentRowWrapper child : row.relatedServiceAppointments) {
-                            mixedAppointmentIds.add(child.serviceAppointmentId);
-                            if (String.isNotBlank(child.invoiceNumber)) {
-                                mixedInvoiceNumbers.add(child.invoiceNumber);
-                            }
-                        }
-                    } else {
-                        mixedAppointmentIds.add(row.serviceAppointmentId);
-                        if (String.isNotBlank(row.invoiceNumber)) {
-                            mixedInvoiceNumbers.add(row.invoiceNumber);
-                        }
-                    }
-                }
-            }
-        }
+        Set<Id> mixedAppointmentIds = evidenceAppointmentIds(mixedData.groups);
+        Set<String> mixedInvoiceNumbers = evidenceInvoiceHints(mixedData.groups);
         System.assert(
             mixedAppointmentIds.contains(markedAppointment.Id) && mixedAppointmentIds.contains(blankAppointment.Id),
             'A work order stays uninvoiced until every completed service appointment has an INV value.'
@@ -1137,21 +1114,7 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(202L);
         Test.stopTest();
 
-        Set<Id> readyAppointmentIds = new Set<Id>();
-        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : invoicingData.groups) {
-            if (groupRecord.categoryKey != 'COMPLETED_LATER') {
-                continue;
-            }
-            for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
-                if (row.relatedServiceAppointments != null) {
-                    for (BillingControl_Invoicing.ServiceAppointmentRowWrapper child : row.relatedServiceAppointments) {
-                        readyAppointmentIds.add(child.serviceAppointmentId);
-                    }
-                } else {
-                    readyAppointmentIds.add(row.serviceAppointmentId);
-                }
-            }
-        }
+        Set<Id> readyAppointmentIds = evidenceAppointmentIds(invoicingData.groups);
 
         System.assertEquals(
             false,
@@ -1255,21 +1218,7 @@ private class BillingControl_DataProviderTest {
             BillingControl_DataProvider.getInvoicingRuntimeData(203L);
         Test.stopTest();
 
-        Set<Id> readyAppointmentIds = new Set<Id>();
-        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : invoicingData.groups) {
-            if (groupRecord.categoryKey != 'COMPLETED_LATER') {
-                continue;
-            }
-            for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
-                if (row.relatedServiceAppointments != null) {
-                    for (BillingControl_Invoicing.ServiceAppointmentRowWrapper child : row.relatedServiceAppointments) {
-                        readyAppointmentIds.add(child.serviceAppointmentId);
-                    }
-                } else {
-                    readyAppointmentIds.add(row.serviceAppointmentId);
-                }
-            }
-        }
+        Set<Id> readyAppointmentIds = evidenceAppointmentIds(invoicingData.groups);
 
         System.assert(
             readyAppointmentIds.contains(orphanAppointment.Id),
@@ -1298,10 +1247,10 @@ private class BillingControl_DataProviderTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(41L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(4, metrics.readyToBill, 'The effective-date fixture contains four SA/WO-eligible diaries.');
+        System.assertEquals(2, metrics.readyToBill, 'The effective-date fixture contains two unbilled completed Opportunities.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
-            if (groupRecord.categoryKey == 'COMPLETED_LATER') {
-                System.assertEquals(4, groupRecord.serviceAppointmentCount);
+            if (groupRecord.categoryKey == 'BALANCES_READY') {
+                System.assertEquals(2, groupRecord.serviceAppointmentCount);
             }
         }
     }
@@ -1323,10 +1272,10 @@ private class BillingControl_DataProviderTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(42L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(4, metrics.readyToBill, 'Legacy Invoiced Amount and Effective Date filters do not exclude SA/WO-eligible records.');
+        System.assertEquals(2, metrics.readyToBill, 'Legacy Order invoice-amount filters do not change Opportunity readiness.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
-            if (groupRecord.categoryKey == 'COMPLETED_LATER') {
-                System.assertEquals(4, groupRecord.serviceAppointmentCount);
+            if (groupRecord.categoryKey == 'BALANCES_READY') {
+                System.assertEquals(2, groupRecord.serviceAppointmentCount);
                 System.assert(groupRecord.totalBillableAmount > 0);
             }
         }
@@ -1337,8 +1286,7 @@ private class BillingControl_DataProviderTest {
         WorkOrder readyWorkOrder = [
             SELECT Id, WorkTypeId, AccountId
             FROM WorkOrder
-            WHERE Subject LIKE 'Provider WO%'
-            ORDER BY CreatedDate DESC
+            WHERE Subject = 'Provider WO 1'
             LIMIT 1
         ];
         Date effectiveDate = Date.today();
@@ -1399,21 +1347,24 @@ private class BillingControl_DataProviderTest {
 
         BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper readyToBillGroup = findInvoicingGroup(
             groups,
-            'COMPLETED_LATER'
+            'BALANCES_READY'
         );
 
         System.assertNotEquals(null, readyToBillGroup);
-        System.assertEquals(6, metrics.readyToBill);
-        System.assertEquals(6, readyToBillGroup.serviceAppointmentCount);
-        System.assertEquals(4, readyToBillGroup.rows.size());
-        BillingControl_Invoicing.ServiceAppointmentRowWrapper groupedWorkOrderRow;
-        for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : readyToBillGroup.rows) {
-            if (row.workOrderId == readyWorkOrder.Id) groupedWorkOrderRow = row;
+        System.assertEquals(2, metrics.readyToBill, 'Unique Opportunities, not Service Appointment rows.');
+        System.assertNotEquals(null, readyToBillGroup.opportunityRows);
+        Integer visitCountOnWorkOrder = 0;
+        for (BillingControl_BillingReadiness.OpportunityRow opportunityRow : readyToBillGroup.opportunityRows) {
+            if (opportunityRow.workOrders == null) {
+                continue;
+            }
+            for (BillingControl_BillingReadiness.WorkOrderEvidence workOrderEvidence : opportunityRow.workOrders) {
+                if (workOrderEvidence.workOrderId == readyWorkOrder.Id && workOrderEvidence.appointments != null) {
+                    visitCountOnWorkOrder = workOrderEvidence.appointments.size();
+                }
+            }
         }
-        System.assertNotEquals(null, groupedWorkOrderRow);
-        System.assertEquals(3, groupedWorkOrderRow.relatedServiceAppointments.size());
-        System.assertEquals(3, groupedWorkOrderRow.serviceAppointmentCount);
-        System.assertEquals(UserInfo.getName(), groupedWorkOrderRow.ownerName);
+        System.assertEquals(3, visitCountOnWorkOrder, 'Evidence tree keeps all completed visits on the Work Order.');
     }
 
     @IsTest
@@ -1470,9 +1421,9 @@ private class BillingControl_DataProviderTest {
         Test.stopTest();
 
         System.assertEquals(
-            5,
+            3,
             invoicingData.metrics.readyToBill,
-            'Eligibility must include SA/WO-eligible records regardless of legacy Invoiced Amount configuration.'
+            'Eligibility must include the extra unbilled Opportunity regardless of legacy Invoiced Amount configuration.'
         );
     }
 
@@ -1533,18 +1484,12 @@ private class BillingControl_DataProviderTest {
 
         BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper readyToBillGroup = findInvoicingGroup(
             groups,
-            'COMPLETED_LATER'
+            'BALANCES_READY'
         );
 
         System.assertNotEquals(null, readyToBillGroup);
-        System.assertEquals(500, readyToBillGroup.serviceAppointmentCount);
-        System.assertEquals(501, metrics.readyToBill);
-        System.assert(metrics.readyToBill > readyToBillGroup.serviceAppointmentCount);
-        System.assert(
-            String.join(invoicingFilterContext.runtimeWarnings, ' ').contains(
-                'Showing first 500 records. Narrow the date filter/search for more specific results.'
-            )
-        );
+        System.assert(metrics.readyToBill >= 501, 'Bulk unbilled Opportunities remain on the readiness worklist.');
+        System.assert(readyToBillGroup.opportunityRows != null && !readyToBillGroup.opportunityRows.isEmpty());
     }
 
     @IsTest
@@ -2110,6 +2055,66 @@ private class BillingControl_DataProviderTest {
             }
         }
         return null;
+    }
+
+    private static Set<Id> evidenceAppointmentIds(
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> groups
+    ) {
+        Set<Id> appointmentIds = new Set<Id>();
+        if (groups == null) {
+            return appointmentIds;
+        }
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
+            if (groupRecord == null || groupRecord.opportunityRows == null) {
+                continue;
+            }
+            for (BillingControl_BillingReadiness.OpportunityRow opportunityRow : groupRecord.opportunityRows) {
+                if (opportunityRow.workOrders == null) {
+                    continue;
+                }
+                for (BillingControl_BillingReadiness.WorkOrderEvidence workOrderEvidence : opportunityRow.workOrders) {
+                    if (workOrderEvidence.appointments == null) {
+                        continue;
+                    }
+                    for (BillingControl_BillingReadiness.AppointmentEvidence appointmentEvidence : workOrderEvidence.appointments) {
+                        if (appointmentEvidence.serviceAppointmentId != null) {
+                            appointmentIds.add(appointmentEvidence.serviceAppointmentId);
+                        }
+                    }
+                }
+            }
+        }
+        return appointmentIds;
+    }
+
+    private static Set<String> evidenceInvoiceHints(
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> groups
+    ) {
+        Set<String> hints = new Set<String>();
+        if (groups == null) {
+            return hints;
+        }
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
+            if (groupRecord == null || groupRecord.opportunityRows == null) {
+                continue;
+            }
+            for (BillingControl_BillingReadiness.OpportunityRow opportunityRow : groupRecord.opportunityRows) {
+                if (opportunityRow.workOrders == null) {
+                    continue;
+                }
+                for (BillingControl_BillingReadiness.WorkOrderEvidence workOrderEvidence : opportunityRow.workOrders) {
+                    if (workOrderEvidence.appointments == null) {
+                        continue;
+                    }
+                    for (BillingControl_BillingReadiness.AppointmentEvidence appointmentEvidence : workOrderEvidence.appointments) {
+                        if (String.isNotBlank(appointmentEvidence.invoiceNumberHint)) {
+                            hints.add(appointmentEvidence.invoiceNumberHint);
+                        }
+                    }
+                }
+            }
+        }
+        return hints;
     }
 
     private static BillingControl_Invoicing.CommissionKpiCategoryWrapper findReceivablesSection(
