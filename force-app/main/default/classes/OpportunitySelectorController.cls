@@ -1,11 +1,5 @@
 public with sharing class OpportunitySelectorController {
     private static final String STAGE_CLOSED_WON = 'Closed Won';
-    private static final Set<String> EXCLUDED_BILLING_STATUSES = new Set<String>{
-        'Billed (Outstanding Receivable)',
-        'Billed (Outstanding Receivables)',
-        'Paid',
-        'Partially Paid'
-    };
 
     public class OpportunityOption {
         @AuraEnabled public Id opportunityId;
@@ -57,7 +51,7 @@ public with sharing class OpportunitySelectorController {
 
     @InvocableMethod(
         label='Get Eligible Opportunities for Work Order'
-        description='Returns eligible opportunities related to each work order and auto-selects when only one exists.'
+        description='Returns Closed Won opportunities related to each work order. Billing status is not a gate. Auto-selects when only one exists.'
     )
     public static List<FlowResponse> getOpenOpportunitiesForFlow(List<FlowRequest> requests) {
         List<FlowResponse> responses = new List<FlowResponse>();
@@ -129,21 +123,17 @@ public with sharing class OpportunitySelectorController {
             return results;
         }
 
-        List<Opportunity> eligibleOpportunities = [
+        List<Opportunity> relatedOpportunities = [
             SELECT Id, Name, StageName, Amount, CloseDate
             FROM Opportunity
             WHERE Id IN :opportunityIds
             AND StageName = :STAGE_CLOSED_WON
-            AND (
-                Billing_Status__c = null
-                OR Billing_Status__c NOT IN :EXCLUDED_BILLING_STATUSES
-            )
             ORDER BY CloseDate ASC NULLS LAST, Name ASC
         ];
 
         for (Id workOrderId : opportunityIdsByWorkOrderId.keySet()) {
             List<Opportunity> opportunities = new List<Opportunity>();
-            for (Opportunity opportunityRecord : eligibleOpportunities) {
+            for (Opportunity opportunityRecord : relatedOpportunities) {
                 if (opportunityIdsByWorkOrderId.get(workOrderId).contains(opportunityRecord.Id)) {
                     opportunities.add(opportunityRecord);
                 }

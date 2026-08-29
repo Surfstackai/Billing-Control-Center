@@ -8,13 +8,74 @@ const OPTIONS = [
     { label: 'Date Range', value: 'Custom' }
 ];
 
-const DEFAULT_FILTER_KEY = 'This Year';
+const DEFAULT_FILTER_KEY = 'This Month';
 
 function toIsoDate(value) {
     const year = value.getFullYear();
     const month = String(value.getMonth() + 1).padStart(2, '0');
     const day = String(value.getDate()).padStart(2, '0');
     return `${year}-${month}-${day}`;
+}
+
+function formatDisplayDate(isoDate) {
+    if (!isoDate) {
+        return '';
+    }
+    const parts = String(isoDate).split('-');
+    if (parts.length !== 3) {
+        return isoDate;
+    }
+    const [year, month, day] = parts;
+    return `${month}/${day}/${year}`;
+}
+
+function presetBounds(filterKey, today = new Date()) {
+    const year = today.getFullYear();
+    const month = today.getMonth();
+    if (filterKey === 'This Month') {
+        return {
+            start: new Date(year, month, 1),
+            end: new Date(year, month + 1, 0)
+        };
+    }
+    if (filterKey === 'This Quarter') {
+        const startMonth = Math.floor(month / 3) * 3;
+        return {
+            start: new Date(year, startMonth, 1),
+            end: new Date(year, startMonth + 3, 0)
+        };
+    }
+    if (filterKey === 'Last Year') {
+        return {
+            start: new Date(year - 1, 0, 1),
+            end: new Date(year - 1, 11, 31)
+        };
+    }
+    return {
+        start: new Date(year, 0, 1),
+        end: new Date(year, 11, 31)
+    };
+}
+
+/**
+ * Resolve a date-filter selection into the ISO bounds Apex must query.
+ * Presets always send start/end so a dropped filterKey cannot fall back to Current Year.
+ */
+export function resolveDateRange(filterKey, startDate, endDate, today = new Date()) {
+    const key = filterKey || DEFAULT_FILTER_KEY;
+    if (key === 'Custom') {
+        return {
+            filterKey: key,
+            startDate: startDate || null,
+            endDate: endDate || null
+        };
+    }
+    const bounds = presetBounds(key, today);
+    return {
+        filterKey: key,
+        startDate: toIsoDate(bounds.start),
+        endDate: toIsoDate(bounds.end)
+    };
 }
 
 export default class BillingControlCenterDateFilter extends LightningElement {
@@ -67,6 +128,22 @@ export default class BillingControlCenterDateFilter extends LightningElement {
         return selected ? selected.label : 'Date Filter';
     }
 
+    get resolvedBounds() {
+        return resolveDateRange(this.currentFilterKey, this.currentStartDate, this.currentEndDate);
+    }
+
+    get boundsLabel() {
+        const bounds = this.resolvedBounds;
+        if (!bounds.startDate || !bounds.endDate) {
+            return '';
+        }
+        return `${formatDisplayDate(bounds.startDate)} – ${formatDisplayDate(bounds.endDate)}`;
+    }
+
+    get showBoundsLabel() {
+        return !this.isCustomRange && Boolean(this.boundsLabel);
+    }
+
     get options() {
         return OPTIONS.map(option => ({
             ...option,
@@ -82,9 +159,10 @@ export default class BillingControlCenterDateFilter extends LightningElement {
         const nextKey = event.detail.value;
         this.currentFilterKey = nextKey;
         if (nextKey !== 'Custom') {
-            this.currentStartDate = '';
-            this.currentEndDate = '';
-            this.emitChange();
+            const resolved = resolveDateRange(nextKey);
+            this.currentStartDate = resolved.startDate || '';
+            this.currentEndDate = resolved.endDate || '';
+            this.emitChange(resolved);
             return;
         }
         if (!this.currentStartDate || !this.currentEndDate) {
@@ -112,14 +190,12 @@ export default class BillingControlCenterDateFilter extends LightningElement {
         this.emitChange();
     }
 
-    emitChange() {
+    emitChange(detail) {
         this.dispatchEvent(
             new CustomEvent('datefilterchange', {
-                detail: {
-                    filterKey: this.currentFilterKey,
-                    startDate: this.isCustomRange ? this.currentStartDate : null,
-                    endDate: this.isCustomRange ? this.currentEndDate : null
-                }
+                detail:
+                    detail ||
+                    resolveDateRange(this.currentFilterKey, this.currentStartDate, this.currentEndDate)
             })
         );
     }

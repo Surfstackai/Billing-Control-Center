@@ -5,7 +5,7 @@
                 <h2 id="post-receipt-modal-heading" class="slds-text-heading_medium">Post Receipt</h2>
                 <div class="modal-divider"></div>
                 <p class="slds-m-top_medium slds-text-body_regular modal-copy">
-                    Record a payment received for this invoice. This will update the commission tracking automatically.
+                    Record a payment against the selected invoice. Customer receipts do not pay commissions.
                 </p>
             </header>
 
@@ -17,17 +17,17 @@
                     </div>
                 </template>
 
-                <div class="slds-text-title_bold slds-m-bottom_small">Select Opportunity</div>
+                <div class="slds-text-title_bold slds-m-bottom_small">Invoice</div>
                 <div class="selected-opportunities-box slds-m-bottom_large">
                     <div class="slds-grid slds-gutters_small selected-opportunities-header slds-p-horizontal_small slds-p-vertical_x-small slds-text-title_caps">
-                        <div class="slds-col slds-size_5-of-12">Opportunity Name</div>
-                        <div class="slds-col slds-size_4-of-12">Account Name</div>
-                        <div class="slds-col slds-size_3-of-12">Salesperson</div>
+                        <div class="slds-col slds-size_5-of-12">Opportunity</div>
+                        <div class="slds-col slds-size_4-of-12">Invoice</div>
+                        <div class="slds-col slds-size_3-of-12">Account</div>
                     </div>
                     <div class="slds-grid slds-gutters_small slds-p-horizontal_small slds-p-vertical_small selected-opportunity-row">
                         <div class="slds-col slds-size_5-of-12 slds-truncate" title={opportunity.name}>{opportunity.name}</div>
-                        <div class="slds-col slds-size_4-of-12 slds-truncate" title={opportunity.accountName}>{opportunity.accountName}</div>
-                        <div class="slds-col slds-size_3-of-12 slds-truncate" title={opportunity.ownerName}>{opportunity.ownerName}</div>
+                        <div class="slds-col slds-size_4-of-12 slds-truncate" title={opportunity.invoiceNumber}>{opportunity.invoiceNumber}</div>
+                        <div class="slds-col slds-size_3-of-12 slds-truncate" title={opportunity.accountName}>{opportunity.accountName}</div>
                     </div>
                 </div>
 

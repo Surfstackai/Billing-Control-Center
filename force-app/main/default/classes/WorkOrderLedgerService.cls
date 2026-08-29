@@ -25,8 +25,6 @@ public without sharing class WorkOrderLedgerService {
     public static final String STATUS_READY_FOR_BILLING_REVIEW = 'Ready for Billing Review';
 
     private static final String ATTENTION_NO_OPPORTUNITY = 'No Opportunity linked to this Work Order.';
-    private static final String ATTENTION_UNATTRIBUTED =
-        'Completed Service Appointment is not attributed on a Work Order with multiple Opportunities.';
     private static final String SA_STATUS_COMPLETED = 'Completed';
 
     public class LedgerEvent {
@@ -643,7 +641,7 @@ public without sharing class WorkOrderLedgerService {
             Date lastServiceDate;
             Date nextServiceDate;
             Integer completedCount = 0;
-            Boolean hasUnattributedCompleted = false;
+            List<String> unattributedCompletedLabels = new List<String>();
             for (ServiceAppointment appointmentRecord : appointments) {
                 if (isCompletedAppointment(appointmentRecord)) {
                     completedCount++;
@@ -654,7 +652,7 @@ public without sharing class WorkOrderLedgerService {
                         }
                     }
                     if (opportunityCount > 1 && appointmentRecord.Opportunity__c == null) {
-                        hasUnattributedCompleted = true;
+                        unattributedCompletedLabels.add(appointmentDisplayValue(appointmentRecord));
                     }
                 } else if (!isCancelledAppointment(appointmentRecord) && appointmentRecord.SchedStartTime != null) {
                     Date scheduledDate = appointmentRecord.SchedStartTime.date();
@@ -664,12 +662,13 @@ public without sharing class WorkOrderLedgerService {
                 }
             }
 
+            Boolean hasUnattributedCompleted = !unattributedCompletedLabels.isEmpty();
             Boolean attentionRequired = (opportunityCount == 0 && completedCount > 0) || hasUnattributedCompleted;
             String attentionReason = null;
             if (opportunityCount == 0 && completedCount > 0) {
                 attentionReason = ATTENTION_NO_OPPORTUNITY;
             } else if (hasUnattributedCompleted) {
-                attentionReason = ATTENTION_UNATTRIBUTED;
+                attentionReason = buildUnattributedAttentionReason(unattributedCompletedLabels);
             }
 
             String reconciliationStatus = existingLedger.Reconciliation_Status__c;
@@ -1397,6 +1396,39 @@ public without sharing class WorkOrderLedgerService {
             return appointmentRecord.AppointmentNumber;
         }
         return toText(appointmentRecord.Id);
+    }
+
+    private static String buildUnattributedAttentionReason(List<String> appointmentLabels) {
+        List<String> labels = new List<String>();
+        if (appointmentLabels != null) {
+            for (String label : appointmentLabels) {
+                if (String.isNotBlank(label)) {
+                    labels.add(label);
+                }
+            }
+        }
+        if (labels.isEmpty()) {
+            return 'This Work Order has more than one Opportunity. Assign each completed visit to the correct Opportunity.';
+        }
+        labels.sort();
+        if (labels.size() == 1) {
+            return clip(
+                'This Work Order has more than one Opportunity. Assign completed visit '
+                    + labels[0]
+                    + ' to the correct Opportunity.'
+            );
+        }
+        String prefix = 'This Work Order has more than one Opportunity. Assign these completed visits to the correct Opportunity: ';
+        List<String> included = new List<String>(labels);
+        Integer omitted = 0;
+        String result = prefix + String.join(included, ', ') + '.';
+        while (result.length() > 255 && !included.isEmpty()) {
+            included.remove(included.size() - 1);
+            omitted++;
+            String more = omitted == 0 ? '' : ' +' + omitted + ' more';
+            result = prefix + String.join(included, ', ') + more + '.';
+        }
+        return clip(result);
     }
 
     private static String formatDatetime(Datetime value) {

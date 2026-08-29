@@ -1,11 +1,13 @@
 <template>
     <div class="control-center-card">
-        <div class="hero">
-            <div class="hero__intro">
-                <p class="hero__eyebrow">Billing Control Center</p>
-                <h1 class="hero__title">{heroTitle}</h1>
-                <p class="hero__subtitle">{heroSubtitle}</p>
-            </div>
+        <div class={heroClass}>
+            <template if:true={showHeroIntro}>
+                <div class="hero__intro">
+                    <p class="hero__eyebrow">Billing Control Center</p>
+                    <h1 class="hero__title">{heroTitle}</h1>
+                    <p class="hero__subtitle">{heroSubtitle}</p>
+                </div>
+            </template>
             <div class="hero__controls">
                 <c-billing-control-center-date-filter
                     compact
@@ -30,7 +32,7 @@
                     type="search"
                     label="Search"
                     variant="label-hidden"
-                    placeholder="Search work order, account, opportunity, owner"
+                    placeholder="Search opportunity, quote, account, or visit"
                     value={searchKey}
                     onchange={handleSearchChange}>
                 </lightning-input>
@@ -40,10 +42,10 @@
                 </c-billing-control-center-action-bar>
                 <template if:true={useExternalToolbar}>
                     <lightning-button
-                        label={refreshLabel}
+                        label={toolbarRefreshLabel}
                         icon-name="utility:refresh"
-                        variant="brand"
-                        disabled={isLoading}
+                        variant="neutral"
+                        disabled={isToolbarBusy}
                         onclick={handleRefresh}>
                     </lightning-button>
                 </template>
@@ -71,32 +73,44 @@
             is-visible={showDiagnostics}>
         </c-billing-control-center-diagnostics>
 
-        <template if:true={isLoading}>
+        <template if:true={showFullPageSpinner}>
             <lightning-spinner alternative-text="Refreshing data" size="small"></lightning-spinner>
         </template>
 
         <div class="billing-kpi-container">
-            <c-billing-control-center-kpi-grid tiles={kpiTiles}></c-billing-control-center-kpi-grid>
+            <c-billing-control-center-kpi-grid
+                tiles={kpiTiles}
+                selected-key={selectedKpiKey}
+                ontileclick={handleKpiTileClick}>
+            </c-billing-control-center-kpi-grid>
+            <p class="bcc-kpi-legend">{kpiLegendText}</p>
+            <p class="bcc-kpi-legend">{overlapLegendText}</p>
         </div>
 
         <template if:true={showTableShell}>
             <section class="table-shell billing-console-shell">
                 <div class="billing-tab-panel">
                     <div class="table-meta">
-                        <span><lightning-formatted-number value={billableCount}></lightning-formatted-number> Appointments</span>
+                        <span><lightning-formatted-number value={billableCount}></lightning-formatted-number> Opportunities</span>
                         <span><lightning-formatted-number value={selectedOpportunityCount}></lightning-formatted-number> Opportunities Selected</span>
                         <span>{searchSummary}</span>
                     </div>
 
-                    <lightning-accordion class="bucket-accordion" allow-multiple-sections-open>
+                    <lightning-accordion
+                        class="bucket-accordion"
+                        allow-multiple-sections-open
+                        active-section-name={activeSectionNames}>
                         <template for:each={visibleAccordionSections} for:item="section">
                             <lightning-accordion-section
                                 key={section.categoryKey}
                                 name={section.categoryKey}
                                 label={section.titleWithCount}>
                                 <div class="bucket-section-body">
+                                    <template if:true={section.showCountCaption}>
+                                        <p class="bucket-count-caption">{section.countCaption}</p>
+                                    </template>
                                     <template if:true={section.isEmpty}>
-                                        <p class="bucket-empty">No completed Service Appointments contribute to this KPI.</p>
+                                        <p class="bucket-empty">No Opportunities in this readiness list for the current filters.</p>
                                     </template>
                                     <template if:false={section.isEmpty}>
                                         <div class="slds-scrollable_x bucket-table-host">
@@ -145,14 +159,14 @@
                                                         </template>
                                                     </tr>
                                                 </thead>
-                                                <tbody>
-                                                    <template for:each={section.filteredRows} for:item="row">
-                                                        <tr key={row.rowKey} class={row.rowClass}>
+                                                <template for:each={section.filteredRows} for:item="row">
+                                                <tbody key={row.rowKey}>
+                                                        <tr class={row.rowClass}>
                                                             <td class="grouped-diary-table__cell grouped-diary-table__cell--select" data-label="Select">
                                                                 <lightning-input
                                                                     type="checkbox"
                                                                     variant="label-hidden"
-                                                                    label={row.workOrderNumber}
+                                                                    label={row.opportunityName}
                                                                     data-bucket={section.categoryKey}
                                                                     data-row-key={row.rowKey}
                                                                     checked={row.isSelected}
@@ -199,14 +213,29 @@
                                                                         </div>
                                                                     </template>
 
+                                                                    <template if:true={column.isQuoteNumber}>
+                                                                        <div class="grouped-diary-table__single-value" title={row.quoteNumber}>
+                                                                            <span class="grouped-diary-table__single-text">{row.quoteNumber}</span>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isReasons}>
+                                                                        <div class="grouped-diary-cell grouped-diary-cell--truncate" title={row.reasonDisplay}>
+                                                                            <template if:true={row.showReviewBanner}>
+                                                                                <span class="slds-badge slds-theme_warning slds-m-bottom_xx-small">Review: Possible Extra Work</span>
+                                                                            </template>
+                                                                            <span class="grouped-diary-table__single-text">{row.reasonDisplay}</span>
+                                                                        </div>
+                                                                    </template>
+
                                                                     <template if:true={column.isInvoiceNumber}>
                                                                         <div class="grouped-diary-cell grouped-diary-cell--invoice-number">
-                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
-                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
+                                                                            <template for:each={row.invoices} for:item="chip">
+                                                                                <div key={chip.lineKey} class="grouped-diary-cell__line">
                                                                                     <span
                                                                                         class="grouped-diary-cell__value grouped-diary-cell__value--truncate"
-                                                                                        title={appointment.invoiceNumber}>
-                                                                                        {appointment.invoiceNumber}
+                                                                                        title={chip.invoiceNumber}>
+                                                                                        {chip.chipLabel}
                                                                                     </span>
                                                                                 </div>
                                                                             </template>
@@ -232,28 +261,13 @@
                                                                     </template>
 
                                                                     <template if:true={column.isServiceAppointment}>
-                                                                        <div class="grouped-diary-cell grouped-diary-cell--service-appointment">
-                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
-                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
-                                                                                    <template if:true={appointment.serviceAppointmentUrl}>
-                                                                                        <a
-                                                                                            href={appointment.serviceAppointmentUrl}
-                                                                                            target="_blank"
-                                                                                            rel="noopener noreferrer"
-                                                                                            class="slds-text-link grouped-diary-cell__value grouped-diary-cell__value--service-appointment"
-                                                                                            title={appointment.serviceAppointmentDisplay}>
-                                                                                            {appointment.serviceAppointmentDisplay}
-                                                                                        </a>
-                                                                                    </template>
-                                                                                    <template if:false={appointment.serviceAppointmentUrl}>
-                                                                                        <span
-                                                                                            class="grouped-diary-cell__value grouped-diary-cell__value--service-appointment"
-                                                                                            title={appointment.serviceAppointmentDisplay}>
-                                                                                            {appointment.serviceAppointmentDisplay}
-                                                                                        </span>
-                                                                                    </template>
-                                                                                </div>
-                                                                            </template>
+                                                                        <div class="grouped-diary-table__single-value">
+                                                                            <lightning-button
+                                                                                variant="base"
+                                                                                label={row.evidenceToggleLabel}
+                                                                                data-row-key={row.rowKey}
+                                                                                onclick={handleToggleEvidence}>
+                                                                            </lightning-button>
                                                                         </div>
                                                                     </template>
 
@@ -309,19 +323,74 @@
                                                                                     currency-code="USD">
                                                                                 </lightning-formatted-number>
                                                                             </template>
+                                                                            <template if:false={row.hasOpportunityAmount}>
+                                                                                <span class="slds-badge" title="Quoted amount is missing">No amount</span>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isInvoicedTotal}>
+                                                                        <div class="grouped-diary-table__grouped-amount">
+                                                                            <lightning-formatted-number
+                                                                                value={row.invoicedTotal}
+                                                                                format-style="currency"
+                                                                                currency-code="USD">
+                                                                            </lightning-formatted-number>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isRemaining}>
+                                                                        <div class="grouped-diary-table__grouped-amount">
+                                                                            <lightning-formatted-number
+                                                                                value={row.remaining}
+                                                                                format-style="currency"
+                                                                                currency-code="USD">
+                                                                            </lightning-formatted-number>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isPaidTotal}>
+                                                                        <div class="grouped-diary-table__grouped-amount">
+                                                                            <lightning-formatted-number
+                                                                                value={row.paidTotal}
+                                                                                format-style="currency"
+                                                                                currency-code="USD">
+                                                                            </lightning-formatted-number>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isOutstandingAmount}>
+                                                                        <div class="grouped-diary-table__grouped-amount">
+                                                                            <lightning-formatted-number
+                                                                                value={row.outstanding}
+                                                                                format-style="currency"
+                                                                                currency-code="USD">
+                                                                            </lightning-formatted-number>
+                                                                        </div>
+                                                                    </template>
+
+                                                                    <template if:true={column.isBillingStatus}>
+                                                                        <div class="grouped-diary-table__single-value" title={row.billingStatus}>
+                                                                            <span class="grouped-diary-table__single-text">{row.billingStatus}</span>
                                                                         </div>
                                                                     </template>
 
                                                                     <template if:true={column.isOwner}>
-                                                                        <div class="grouped-diary-cell grouped-diary-cell--truncate">
-                                                                            <template for:each={row.relatedServiceAppointments} for:item="appointment">
-                                                                                <div key={appointment.lineKey} class="grouped-diary-cell__line">
-                                                                                    <span
-                                                                                        class="grouped-diary-cell__value grouped-diary-cell__value--truncate"
-                                                                                        title={appointment.ownerName}>
-                                                                                        {appointment.ownerName}
-                                                                                    </span>
-                                                                                </div>
+                                                                        <div class="grouped-diary-table__single-value" title={row.ownerName}>
+                                                                            <span class="grouped-diary-table__single-text">{row.ownerName}</span>
+                                                                        </div>
+                                                                    </template>
+                                                                    <template if:true={column.isFlags}>
+                                                                        <div class="grouped-diary-table__flags">
+                                                                            <template for:each={row.flagItems} for:item="flagItem">
+                                                                                <lightning-icon
+                                                                                    key={flagItem.key}
+                                                                                    icon-name={flagItem.iconName}
+                                                                                    size="xx-small"
+                                                                                    alternative-text={flagItem.title}
+                                                                                    title={flagItem.title}
+                                                                                    class="slds-m-right_xx-small">
+                                                                                </lightning-icon>
                                                                             </template>
                                                                         </div>
                                                                     </template>
@@ -338,8 +407,107 @@
                                                                 </td>
                                                             </template>
                                                         </tr>
-                                                    </template>
+                                                        <template if:true={row.isExpanded}>
+                                                            <tr>
+                                                                <td class="evidence-tree" colspan="20">
+                                                                    <template if:true={row.showReviewBanner}>
+                                                                        <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-m-bottom_small" role="status">
+                                                                            Completed work contains notes or parts that may not be represented by the quoted amount. Review before invoicing.
+                                                                        </div>
+                                                                    </template>
+                                                                    <template for:each={row.workOrders} for:item="workOrder">
+                                                                        <div key={workOrder.workOrderId} class="evidence-tree__work-order">
+                                                                            <div class="slds-grid slds-grid_vertical-align-center slds-m-bottom_xx-small">
+                                                                                <strong>{workOrder.workOrderNumber}</strong>
+                                                                                <span class="slds-m-left_x-small slds-text-color_weak">{workOrder.status}</span>
+                                                                                <template if:true={workOrder.ledgerId}>
+                                                                                    <div class="ledger-action slds-m-left_small" data-ledger-id={workOrder.ledgerId}>
+                                                                                    <lightning-button
+                                                                                        label="View Ledger"
+                                                                                        variant="base"
+                                                                                        onclick={handleViewLedger}>
+                                                                                    </lightning-button>
+                                                                                    </div>
+                                                                                </template>
+                                                                            </div>
+                                                                            <template if:true={workOrder.description}>
+                                                                                <p class="slds-text-body_small">{workOrder.description}</p>
+                                                                            </template>
+                                                                            <template if:true={workOrder.serviceNote}>
+                                                                                <p class="slds-text-body_small">Service note: {workOrder.serviceNote}</p>
+                                                                            </template>
+                                                                            <template if:true={workOrder.internalServiceNote}>
+                                                                                <p class="slds-text-body_small">Internal note: {workOrder.internalServiceNote}</p>
+                                                                            </template>
+                                                                            <template if:true={workOrder.invoiceNumberHint}>
+                                                                                <p class="slds-text-body_small slds-text-color_weak">Field note: {workOrder.invoiceNumberHint}</p>
+                                                                            </template>
+                                                                            <template if:true={workOrder.legacyDepositPayments}>
+                                                                                <p class="slds-text-body_small slds-text-color_weak">Legacy deposit: {workOrder.legacyDepositPayments} {workOrder.legacyDepositAmount}</p>
+                                                                            </template>
+                                                                            <template for:each={workOrder.appointments} for:item="appointment">
+                                                                                <div key={appointment.serviceAppointmentId} class="evidence-tree__appointment slds-m-left_medium">
+                                                                                    <div class="slds-grid slds-grid_vertical-align-center slds-wrap">
+                                                                                        <template if:true={appointment.canSelectAsEvidence}>
+                                                                                            <lightning-input
+                                                                                                type="checkbox"
+                                                                                                variant="label-hidden"
+                                                                                                label={appointment.evidenceSelectLabel}
+                                                                                                data-sa-id={appointment.serviceAppointmentId}
+                                                                                                checked={appointment.isEvidenceSelected}
+                                                                                                onchange={handleEvidenceSaChange}>
+                                                                                            </lightning-input>
+                                                                                        </template>
+                                                                                        <span>{appointment.serviceAppointmentNumber}</span>
+                                                                                        <span class="slds-m-left_x-small slds-text-color_weak">{appointment.status}</span>
+                                                                                        <template if:true={appointment.operationalUnassigned}>
+                                                                                            <span class="slds-m-left_x-small slds-text-color_weak">Not assigned</span>
+                                                                                        </template>
+                                                                                        <template if:true={appointment.actualEndTimeDisplay}>
+                                                                                            <span class="slds-m-left_x-small slds-text-color_weak">{appointment.actualEndTimeDisplay}</span>
+                                                                                        </template>
+                                                                                        <template if:true={appointment.billed}>
+                                                                                            <span class="slds-m-left_x-small">Billed? Yes · {appointment.billedInvoiceNumber}</span>
+                                                                                        </template>
+                                                                                        <template if:false={appointment.billed}>
+                                                                                            <span class="slds-m-left_x-small">Billed? No</span>
+                                                                                        </template>
+                                                                                        <template if:true={appointment.technicianName}>
+                                                                                            <span class="slds-m-left_x-small slds-text-color_weak">{appointment.technicianName}</span>
+                                                                                        </template>
+                                                                                        <lightning-button
+                                                                                            class="slds-m-left_small"
+                                                                                            label={appointment.flagReviewLabel}
+                                                                                            variant="base"
+                                                                                            disabled={appointment.isFlaggedForReview}
+                                                                                            data-sa-id={appointment.serviceAppointmentId}
+                                                                                            onclick={handleFlagForReview}>
+                                                                                        </lightning-button>
+                                                                                    </div>
+                                                                                    <template if:true={appointment.description}>
+                                                                                        <p class="slds-text-body_small">{appointment.description}</p>
+                                                                                    </template>
+                                                                                    <template if:true={appointment.serviceNote}>
+                                                                                        <p class="slds-text-body_small">Service note: {appointment.serviceNote}</p>
+                                                                                    </template>
+                                                                                    <template if:true={appointment.internalServiceNote}>
+                                                                                        <p class="slds-text-body_small">Internal note: {appointment.internalServiceNote}</p>
+                                                                                    </template>
+                                                                                    <template if:true={appointment.invoiceNumberHint}>
+                                                                                        <p class="slds-text-body_small slds-text-color_weak">Field note: {appointment.invoiceNumberHint}</p>
+                                                                                    </template>
+                                                                                    <template if:true={appointment.woInvStatusHint}>
+                                                                                        <p class="slds-text-body_small slds-text-color_weak">WO inv status: {appointment.woInvStatusHint}</p>
+                                                                                    </template>
+                                                                                </div>
+                                                                            </template>
+                                                                        </div>
+                                                                    </template>
+                                                                </td>
+                                                            </tr>
+                                                        </template>
                                                 </tbody>
+                                                    </template>
                                             </table>
                                         </div>
                                     </template>
@@ -353,11 +521,13 @@
     </div>
 
     <template if:true={isCompleteBillingModalOpen}>
-        <c-billing-control-center-complete-billing-modal
+        <c-billing-control-center-invoice-modal
             service-appointments={completeBillingModalSelections}
+            context-opportunity-id={invoiceModalOpportunityId}
             onclose={handleCompleteBillingClose}
-            onsuccess={handleCompleteBillingSuccess}>
-        </c-billing-control-center-complete-billing-modal>
+            onsuccess={handleCompleteBillingSuccess}
+            onviewledger={handleInvoiceViewLedger}>
+        </c-billing-control-center-invoice-modal>
     </template>
 
     <template if:true={showLedgerModal}>

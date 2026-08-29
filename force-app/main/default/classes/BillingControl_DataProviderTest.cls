@@ -530,6 +530,13 @@ private class BillingControl_DataProviderTest {
         System.assertEquals(Date.today(), customRange.startDate);
         System.assertEquals(Date.today(), customRange.endDate);
 
+        BillingControl_DataProvider.DateRangeDTO explicitAugust =
+            BillingControl_DataProvider.resolveDateRangeForInvSync(
+                buildDateFilter(null, '2026-08-01', '2026-08-31')
+            );
+        System.assertEquals(Date.newInstance(2026, 8, 1), explicitAugust.startDate);
+        System.assertEquals(Date.newInstance(2026, 8, 31), explicitAugust.endDate);
+
         BillingControl_DataProvider.BillingFilterContextDTO context =
             new BillingControl_DataProvider.BillingFilterContextDTO();
         context.filters.add(buildFilter('STR_EQ', 'Opportunity', 'StageName', 'Equals', 'Closed Won', 'Static', 10));
@@ -973,7 +980,7 @@ private class BillingControl_DataProviderTest {
         Set<Id> mixedAppointmentIds = new Set<Id>();
         Set<String> mixedInvoiceNumbers = new Set<String>();
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : mixedData.groups) {
-            if (groupRecord.categoryKey != 'READY_TO_BILL') {
+            if (groupRecord.categoryKey != 'COMPLETED_LATER') {
                 continue;
             }
             for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
@@ -1132,7 +1139,7 @@ private class BillingControl_DataProviderTest {
 
         Set<Id> readyAppointmentIds = new Set<Id>();
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : invoicingData.groups) {
-            if (groupRecord.categoryKey != 'READY_TO_BILL') {
+            if (groupRecord.categoryKey != 'COMPLETED_LATER') {
                 continue;
             }
             for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
@@ -1250,7 +1257,7 @@ private class BillingControl_DataProviderTest {
 
         Set<Id> readyAppointmentIds = new Set<Id>();
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : invoicingData.groups) {
-            if (groupRecord.categoryKey != 'READY_TO_BILL') {
+            if (groupRecord.categoryKey != 'COMPLETED_LATER') {
                 continue;
             }
             for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : groupRecord.rows) {
@@ -1293,7 +1300,7 @@ private class BillingControl_DataProviderTest {
 
         System.assertEquals(4, metrics.readyToBill, 'The effective-date fixture contains four SA/WO-eligible diaries.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
-            if (groupRecord.categoryKey == 'READY_TO_BILL') {
+            if (groupRecord.categoryKey == 'COMPLETED_LATER') {
                 System.assertEquals(4, groupRecord.serviceAppointmentCount);
             }
         }
@@ -1318,7 +1325,7 @@ private class BillingControl_DataProviderTest {
 
         System.assertEquals(4, metrics.readyToBill, 'Legacy Invoiced Amount and Effective Date filters do not exclude SA/WO-eligible records.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
-            if (groupRecord.categoryKey == 'READY_TO_BILL') {
+            if (groupRecord.categoryKey == 'COMPLETED_LATER') {
                 System.assertEquals(4, groupRecord.serviceAppointmentCount);
                 System.assert(groupRecord.totalBillableAmount > 0);
             }
@@ -1392,7 +1399,7 @@ private class BillingControl_DataProviderTest {
 
         BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper readyToBillGroup = findInvoicingGroup(
             groups,
-            'READY_TO_BILL'
+            'COMPLETED_LATER'
         );
 
         System.assertNotEquals(null, readyToBillGroup);
@@ -1526,7 +1533,7 @@ private class BillingControl_DataProviderTest {
 
         BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper readyToBillGroup = findInvoicingGroup(
             groups,
-            'READY_TO_BILL'
+            'COMPLETED_LATER'
         );
 
         System.assertNotEquals(null, readyToBillGroup);

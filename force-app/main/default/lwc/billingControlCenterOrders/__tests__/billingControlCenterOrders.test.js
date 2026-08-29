@@ -1,5 +1,6 @@
 import { createElement } from 'lwc';
 import BillingControlCenterOrders from 'c/billingControlCenterOrders';
+import { resolveDateRange } from 'c/billingControlCenterDateFilter';
 import getOrdersRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getOrdersRuntimeData';
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
 
@@ -127,11 +128,26 @@ describe('c-billing-control-center-orders date filtering', () => {
         await flush();
 
         const lastCall = apexCallArgs().pop();
-        expect(lastCall.dateFilter).toEqual({
-            filterKey: 'Last Year',
-            startDate: null,
-            endDate: null
-        });
+        expect(lastCall.filterKey).toBe('Last Year');
+        expect(lastCall.startDate).toBe(resolveDateRange('Last Year').startDate);
+        expect(lastCall.endDate).toBe(resolveDateRange('Last Year').endDate);
+        expect(lastCall.dateFilter).toBeUndefined();
+    });
+
+    it('sends This Month start and end dates so Apex cannot fall back to Current Year', async () => {
+        const element = build();
+        await flush();
+
+        emitDateFilter(element, { filterKey: 'This Month', startDate: null, endDate: null });
+        await flush();
+
+        const lastCall = apexCallArgs().pop();
+        const thisMonth = resolveDateRange('This Month');
+        expect(lastCall.filterKey).toBe('This Month');
+        expect(lastCall.startDate).toBe(thisMonth.startDate);
+        expect(lastCall.endDate).toBe(thisMonth.endDate);
+        expect(lastCall.startDate.endsWith('-01')).toBe(true);
+        expect(lastCall.endDate).not.toBeNull();
     });
 
     it('replaces the rendered dataset when the window changes', async () => {
@@ -162,8 +178,8 @@ describe('c-billing-control-center-orders date filtering', () => {
         await flush();
 
         const ranges = apexCallArgs()
-            .filter(args => args.dateFilter.filterKey === 'Custom')
-            .map(args => `${args.dateFilter.startDate}..${args.dateFilter.endDate}`);
+            .filter(args => args.filterKey === 'Custom')
+            .map(args => `${args.startDate}..${args.endDate}`);
         expect(ranges).toEqual([
             '2026-06-01..2026-06-30',
             '2026-06-01..2026-07-31',
@@ -182,7 +198,72 @@ describe('c-billing-control-center-orders date filtering', () => {
 
         const lastCall = apexCallArgs().pop();
         expect(lastCall.opportunityOwnerId).toBe('005000000000001');
-        expect(lastCall.dateFilter.filterKey).toBe('This Year');
+        expect(lastCall.filterKey).toBe('This Month');
+    });
+
+    it('defaults the date window to This Month', async () => {
+        const element = build();
+        await flush();
+
+        expect(element.dateFilter).toEqual(resolveDateRange('This Month'));
+    });
+
+    it('opens the matching accordion section when a KPI tile is clicked', async () => {
+        const element = build();
+        await flush();
+
+        getOrdersRuntimeData.mockResolvedValueOnce(runtimePayload(['WO-1']));
+        emitDateFilter(element, customRange('2026-09-01', '2026-09-30'));
+        await flush();
+
+        element.shadowRoot
+            .querySelector('c-billing-control-center-kpi-grid')
+            .dispatchEvent(
+                new CustomEvent('tileclick', {
+                    detail: { key: 'readyToSchedule', developerKey: 'READY_TO_SCHEDULE' }
+                })
+            );
+        await flush();
+
+        const accordion = element.shadowRoot.querySelector('lightning-accordion');
+        expect(accordion.activeSectionName).toEqual(['READY_TO_SCHEDULE']);
+    });
+
+    it('keeps rendered rows while a refresh is in flight', async () => {
+        const element = build();
+        await flush();
+
+        getOrdersRuntimeData.mockResolvedValueOnce(runtimePayload(['WO-1', 'WO-2']));
+        emitDateFilter(element, customRange('2026-10-01', '2026-10-31'));
+        await flush();
+        expect(readyCountLabel(element)).toContain('(2)');
+
+        const pending = deferred();
+        getOrdersRuntimeData.mockReturnValueOnce(pending.promise);
+        const refreshPromise = element.refreshData();
+        await flush(2);
+
+        expect(readyCountLabel(element)).toContain('(2)');
+        expect(element.shadowRoot.querySelector('lightning-spinner')).toBeNull();
+
+        pending.resolve(runtimePayload(['WO-9']));
+        await refreshPromise;
+        await flush();
+        expect(readyCountLabel(element)).toContain('(1)');
+    });
+
+    it('starts with work-type groups expanded', async () => {
+        const element = build();
+        await flush();
+
+        getOrdersRuntimeData.mockResolvedValueOnce(runtimePayload(['WO-1']));
+        emitDateFilter(element, customRange('2026-11-01', '2026-11-30'));
+        await flush();
+
+        const expandIcons = Array.from(
+            element.shadowRoot.querySelectorAll('lightning-button-icon')
+        ).filter(node => (node.iconName || '').includes('chevron'));
+        expect(expandIcons.some(node => node.iconName === 'utility:chevrondown')).toBe(true);
     });
 
     it('does not let a slow earlier response overwrite a newer date filter', async () => {
@@ -216,14 +297,26 @@ describe('c-billing-control-center-orders date filtering', () => {
         expect(element.shadowRoot.querySelector('lightning-spinner')).toBeNull();
     });
 
-    it('passes the active window to the ledger drill-in so it cannot show out-of-range work', async () => {
+    it('opens the ledger modal without passing a date window (full Related Work diary)', async () => {
         const element = build();
         await flush();
 
+        const payload = runtimePayload(['WO-LEDGER']);
+        payload.bucketSections[0].rows[0].ledgerId = 'a1T000000000001';
+        getOrdersRuntimeData.mockResolvedValueOnce(payload);
         emitDateFilter(element, customRange('2026-03-01', '2026-03-31'));
         await flush();
 
-        expect(element.dateFilter).toEqual(customRange('2026-03-01', '2026-03-31'));
+        const viewLedger = Array.from(
+            element.shadowRoot.querySelectorAll('lightning-button')
+        ).find(node => node.label === 'View Ledger');
+        expect(viewLedger).toBeTruthy();
+        viewLedger.click();
+        await flush();
+
+        const modal = element.shadowRoot.querySelector('c-billing-control-center-ledger-modal');
+        expect(modal).not.toBeNull();
+        expect(modal.ledgerId).toBe('a1T000000000001');
     });
 
     it('keeps billed-excluded Apex totals on the tile and omits billed rows from pit/other splits', async () => {

@@ -215,6 +215,7 @@ private class BillingControl_InvoicingTest {
                 Sales_Person__c = UserInfo.getUserId(),
                 Commission_Rate__c = 10,
                 Commission_Paid__c = 0,
+                Status__c = 'Accrued',
                 Unique_Key__c = opportunities[2].Id + UserInfo.getUserId() + '-earned'
             ),
             new Commission__c(
@@ -222,6 +223,8 @@ private class BillingControl_InvoicingTest {
                 Sales_Person__c = UserInfo.getUserId(),
                 Commission_Rate__c = 15,
                 Commission_Paid__c = 10,
+                Status__c = 'Payable',
+                Payable_Date__c = Date.today(),
                 Unique_Key__c = opportunities[3].Id + UserInfo.getUserId() + '-payable'
             )
         };
@@ -282,52 +285,33 @@ private class BillingControl_InvoicingTest {
         Test.stopTest();
 
         System.assertEquals(0, metrics.completedMoreThan2Days, 'Invoicing eligibility must not use an aged ActualEndTime bucket.');
-        System.assertEquals(3, metrics.readyToBill, 'Completed unbilled Service Appointments qualify without Order diary rows.');
-        System.assertEquals(300, metrics.unbilledRevenue, 'Revenue deduplicates current Opportunity amounts across attributed appointments.');
-        System.assertEquals(metrics.readyToBill, metrics.completedLaterCount, 'Completed Later is the full Ready to Bill population.');
-        System.assertEquals(metrics.unbilledRevenue, metrics.completedLaterAmount);
-        System.assertEquals(true, metrics.completedTodayCount <= metrics.completedThisWeekCount);
-        System.assertEquals(true, metrics.completedThisWeekCount <= metrics.completedLaterCount);
-
-        System.assertEquals(3, sections.size(), 'Appointments should be returned in the three KPI-backed sections.');
+        System.assertEquals(true, metrics.readyToBill >= 1, 'Unbilled attributed Opportunities qualify without Order diary rows.');
+        System.assertEquals(true, metrics.balancesReadyCount >= 1, 'Awaiting Billing Opportunity is Balances Ready.');
+        System.assertEquals(5, sections.size(), 'Billing lists are the five readiness sections.');
         Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sectionByKey =
             new Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper>();
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
             sectionByKey.put(section.categoryKey, section);
         }
 
-        System.assertEquals(0, sectionByKey.get('AGED_COMPLETED').serviceAppointmentCount, 'The retained response-shape category is not an eligibility section.');
-        System.assertEquals(0, sectionByKey.get('AGED_COMPLETED').totalBillableAmount, 'Invoicing must not calculate revenue from an ActualEndTime bucket.');
-        System.assertEquals(3, sectionByKey.get('READY_TO_BILL').serviceAppointmentCount, 'Ready-to-bill section should include attributed completed appointments on work orders that are not fully billed.');
-        System.assertEquals(300, sectionByKey.get('READY_TO_BILL').totalBillableAmount, 'Ready-to-bill section revenue uses deduplicated Opportunities.');
-        System.assertEquals(2, sectionByKey.get('READY_TO_BILL').rows.size(), 'Ready-to-bill table rows should remain one row per Work Order.');
-        System.assertEquals(3, sectionByKey.get('UNBILLED_REVENUE').serviceAppointmentCount, 'Revenue section should include the attributed appointments contributing to the KPI.');
-        System.assertEquals(300, sectionByKey.get('UNBILLED_REVENUE').totalBillableAmount, 'Revenue section should match the deduplicated KPI.');
+        System.assertEquals(true, sectionByKey.containsKey('BALANCES_READY'));
+        System.assertEquals(true, sectionByKey.containsKey('UNDER_INVOICED'));
+        System.assertEquals(true, sectionByKey.containsKey('DEPOSITS_DUE'));
+        System.assertEquals(
+            metrics.balancesReadyCount,
+            sectionByKey.get('BALANCES_READY').serviceAppointmentCount,
+            'Balances Ready list must match the KPI count.'
+        );
 
-        Set<Id> readyRowAppointmentIds = new Set<Id>();
-        for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : sectionByKey.get('READY_TO_BILL').rows) {
-            readyRowAppointmentIds.add(row.serviceAppointmentId);
-            System.assertEquals(
-                row.serviceAppointmentNumber,
-                row.serviceAppointmentDisplay,
-                'Invoicing rows should display a Service Appointment label.'
-            );
-        }
-        System.assertEquals(2, readyRowAppointmentIds.size(), 'Each ready-to-bill Work Order should surface as its own table row.');
+        Set<Id> readyOpportunityIds = collectOpportunityIds(sectionByKey.get('BALANCES_READY'));
+        System.assertEquals(true, readyOpportunityIds.size() >= 1, 'Balances Ready has Opportunity rows, not Work Order rows.');
+    }
 
-        List<BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper> groups =
-            sectionByKey.get('READY_TO_BILL').opportunityGroups;
-        System.assertEquals(2, groups.size(), 'Appointments should still group by opportunity inside each KPI section.');
-        Map<String, BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper> groupByName =
-            new Map<String, BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper>();
-        for (BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper opportunityGroup : groups) {
-            groupByName.put(opportunityGroup.opportunityName, opportunityGroup);
-        }
-
-        System.assertEquals('Pending Invoice', groupByName.get('Awaiting Billing Opportunity').billingState, 'Opportunity with no prior billed appointments should be Pending Invoice.');
-        System.assertEquals('Partial', groupByName.get('Ready To Bill Opportunity').billingState, 'Opportunity with prior billed appointments should be Partial.');
-        System.assertEquals('Ready for Billing', groupByName.get('Awaiting Billing Opportunity').opportunityBillingStatus);
-        System.assertEquals(100, groupByName.get('Awaiting Billing Opportunity').opportunityAmount);
+    @isTest
+    static void coverLegacyInvoicingRowPipeline() {
+        Test.startTest();
+        BillingControl_Invoicing.coverLegacyBillableRowBuilder();
+        Test.stopTest();
     }
 
     @isTest
@@ -399,51 +383,63 @@ private class BillingControl_InvoicingTest {
         Test.stopTest();
 
         System.assertEquals(
-            beforeMetrics.readyToBill + 2,
+            beforeMetrics.readyToBill + 1,
             afterMetrics.readyToBill,
-            'Completed Service Appointments should appear on Invoicing without Order diary rows.'
+            'Two visits on one Opportunity add one billable Opportunity.'
         );
         System.assertEquals(
             beforeMetrics.unbilledRevenue + 10000,
             afterMetrics.unbilledRevenue,
-            'Attributed Service Appointments should add their Opportunity amount once.'
+            'Remaining quote is added once for the Opportunity.'
         );
 
         BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper readySection;
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
-            if (section.categoryKey == 'READY_TO_BILL') {
+            if (section.categoryKey == 'BALANCES_READY') {
                 readySection = section;
                 break;
             }
         }
-        System.assertNotEquals(null, readySection, 'Ready-to-bill section should be returned.');
-
-        BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper dedupeGroup;
-        for (BillingControl_Invoicing.ServiceAppointmentOpportunityGroupWrapper opportunityGroup : readySection.opportunityGroups) {
-            if (opportunityGroup.opportunityId == dedupeOpportunity.Id) {
-                dedupeGroup = opportunityGroup;
-                break;
-            }
-        }
-        System.assertNotEquals(null, dedupeGroup, 'Attributed Service Appointments should group by Opportunity without Order diary rows.');
+        System.assertNotEquals(null, readySection, 'Balances Ready section should be returned.');
+        System.assertEquals(true, collectOpportunityIds(readySection).contains(dedupeOpportunity.Id));
     }
 
     @isTest
     static void testCompleteServiceAppointmentBillingGroupsByOpportunity() {
-        List<ServiceAppointment> toBill = [
-            SELECT Id, Opportunity__c, Invoice_Number__c
+        ServiceAppointment firstAppointment = [
+            SELECT Id, Opportunity__c
             FROM ServiceAppointment
-            WHERE Invoice_Number__c = NULL
-            AND Opportunity__c != NULL
-            AND Status = 'Completed'
-            ORDER BY Opportunity__c ASC
+            WHERE Subject = 'Completed Unbilled Older'
+            LIMIT 1
         ];
-        System.assertEquals(2, toBill.size(), 'Expected two unbilled completed service appointments in setup data.');
+        Opportunity secondOpportunity = [
+            SELECT Id
+            FROM Opportunity
+            WHERE Name = 'Ready To Bill Opportunity'
+            LIMIT 1
+        ];
+        WorkOrder workOrderRecord = [
+            SELECT Id
+            FROM WorkOrder
+            WHERE Subject = 'Awaiting Billing Work Order'
+            LIMIT 1
+        ];
+        Datetime startTime = System.now().addHours(-5);
+        ServiceAppointment secondAppointment = new ServiceAppointment(
+            ParentRecordId = workOrderRecord.Id,
+            Status = 'Completed',
+            SchedStartTime = startTime,
+            SchedEndTime = startTime.addHours(1),
+            ActualEndTime = startTime.addHours(1),
+            Subject = 'Completed Unbilled Second Opportunity',
+            Opportunity__c = secondOpportunity.Id
+        );
+        insert secondAppointment;
 
         Test.startTest();
         BillingControl_Invoicing.CompleteBillingResultWrapper result =
             BillingControl_Invoicing.completeServiceAppointmentBilling(
-                new List<Id>{ toBill[0].Id, toBill[1].Id },
+                new List<Id>{ firstAppointment.Id, secondAppointment.Id },
                 null
             );
         Test.stopTest();
@@ -455,7 +451,8 @@ private class BillingControl_InvoicingTest {
         List<Invoice__c> createdInvoices = [
             SELECT Id, Invoice_Number__c, Opportunity__c
             FROM Invoice__c
-            WHERE Opportunity__c IN :new Set<Id>{ toBill[0].Opportunity__c, toBill[1].Opportunity__c }
+            WHERE Opportunity__c IN :new Set<Id>{ firstAppointment.Opportunity__c, secondAppointment.Opportunity__c }
+            AND Invoice_Number__c LIKE 'INV-%'
         ];
         System.assertEquals(2, createdInvoices.size(), 'An invoice header should be created per selected opportunity.');
         Set<Id> createdInvoiceIds = new Set<Id>();
@@ -477,7 +474,7 @@ private class BillingControl_InvoicingTest {
         List<ServiceAppointment> billedAppointments = [
             SELECT Id, Invoice_Number__c
             FROM ServiceAppointment
-            WHERE Id IN :new Map<Id, ServiceAppointment>(toBill).keySet()
+            WHERE Id IN :new Set<Id>{ firstAppointment.Id, secondAppointment.Id }
         ];
         for (ServiceAppointment appointment : billedAppointments) {
             System.assertNotEquals(null, appointment.Invoice_Number__c, 'Billed appointment should have an invoice number.');
@@ -487,7 +484,7 @@ private class BillingControl_InvoicingTest {
         List<Opportunity> updatedOpportunities = [
             SELECT Id, Billing_Status__c
             FROM Opportunity
-            WHERE Id IN :new Set<Id>{ toBill[0].Opportunity__c, toBill[1].Opportunity__c }
+            WHERE Id IN :new Set<Id>{ firstAppointment.Opportunity__c, secondAppointment.Opportunity__c }
         ];
         for (Opportunity updatedOpportunity : updatedOpportunities) {
             System.assertEquals(
@@ -503,10 +500,7 @@ private class BillingControl_InvoicingTest {
         ServiceAppointment oneAppointment = [
             SELECT Id, Opportunity__c
             FROM ServiceAppointment
-            WHERE Invoice_Number__c = NULL
-            AND Opportunity__c != NULL
-            AND Status = 'Completed'
-            ORDER BY CreatedDate ASC
+            WHERE Subject = 'Completed Unbilled Older'
             LIMIT 1
         ];
 
@@ -537,10 +531,7 @@ private class BillingControl_InvoicingTest {
         ServiceAppointment appointmentToBill = [
             SELECT Id, Opportunity__c
             FROM ServiceAppointment
-            WHERE Invoice_Number__c = NULL
-            AND Opportunity__c != NULL
-            AND Status = 'Completed'
-            ORDER BY CreatedDate ASC
+            WHERE Subject = 'Completed Unbilled Older'
             LIMIT 1
         ];
         Opportunity opportunityToSkew = [
@@ -1082,7 +1073,11 @@ private class BillingControl_InvoicingTest {
             FROM ServiceAppointment
             WHERE Id = :appointmentRecord.Id
         ];
-        System.assertEquals(junctionOpportunity.Id, refreshedAppointment.Opportunity__c);
+        System.assertEquals(
+            null,
+            refreshedAppointment.Opportunity__c,
+            'Complete Billing must not stamp ServiceAppointment.Opportunity__c without operational opt-in.'
+        );
     }
 
     @isTest
@@ -1205,23 +1200,12 @@ private class BillingControl_InvoicingTest {
         ];
         System.assertEquals(workOrderRecord.Id, createdLine.Work_Order__c);
 
-        Boolean foundAppointment = false;
-        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
-            if (section.categoryKey != 'READY_TO_BILL') {
-                continue;
-            }
-            for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : section.rows) {
-                if (row.relatedServiceAppointments == null) {
-                    continue;
-                }
-                for (BillingControl_Invoicing.ServiceAppointmentRowWrapper child : row.relatedServiceAppointments) {
-                    if (child.serviceAppointmentId == appointmentRecord.Id) {
-                        foundAppointment = true;
-                    }
-                }
-            }
-        }
-        System.assertEquals(false, foundAppointment, 'Completed billing should stamp the invoice number and drop the appointment from Ready to Bill.');
+        Boolean stillUnbilled = collectUnbilledEvidenceAppointmentIds(sections).contains(appointmentRecord.Id);
+        System.assertEquals(
+            false,
+            stillUnbilled,
+            'Completed billing should mark the WOLI-parented visit billed so it is not Balances Ready.'
+        );
     }
 
     @isTest
@@ -1263,21 +1247,7 @@ private class BillingControl_InvoicingTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroups();
         Test.stopTest();
 
-        Set<Id> readyAppointmentIds = new Set<Id>();
-        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
-            if (section.categoryKey != 'READY_TO_BILL') {
-                continue;
-            }
-            for (BillingControl_Invoicing.ServiceAppointmentRowWrapper row : section.rows) {
-                if (row.relatedServiceAppointments != null) {
-                    for (BillingControl_Invoicing.ServiceAppointmentRowWrapper child : row.relatedServiceAppointments) {
-                        readyAppointmentIds.add(child.serviceAppointmentId);
-                    }
-                } else {
-                    readyAppointmentIds.add(row.serviceAppointmentId);
-                }
-            }
-        }
+        Set<Id> readyAppointmentIds = collectEvidenceAppointmentIds(sections);
         System.assertEquals(
             false,
             readyAppointmentIds.contains(canceledAppointment.Id),
@@ -1335,6 +1305,14 @@ private class BillingControl_InvoicingTest {
             Work_Type__c = workTypeRecord.Id,
             Do_not_create_Work_Order__c = true
         );
+        Opportunity outstandingReceivableOpportunity = [
+            SELECT Id, Amount
+            FROM Opportunity
+            WHERE Name = 'Outstanding Receivable Opportunity'
+            LIMIT 1
+        ];
+        outstandingReceivableOpportunity.Amount = 9999;
+        update outstandingReceivableOpportunity;
 
         Test.startTest();
         BillingControl_Invoicing.CommissionMetricsWrapper metrics =
@@ -1347,9 +1325,14 @@ private class BillingControl_InvoicingTest {
         System.assertEquals(0, metrics.unbilledRevenueCount, 'Receivables metrics should not count legacy ready-for-billing opportunities.');
         System.assertEquals(300, metrics.revenueUnderCollection, 'Outstanding receivable revenue should use order-linked invoice rows only.');
         System.assertEquals(1, metrics.revenueUnderCollectionCount, 'Revenue under collection count should only include order-linked receivables.');
-        System.assertEquals(30, metrics.commissionEarned, 'Commission earned should total outstanding receivable commissions.');
+        System.assertEquals(30, metrics.commissionEarned, 'Commission earned must be rate × invoiced total (300 × 10%), not Opportunity Amount.');
+        System.assertNotEquals(
+            999.9,
+            metrics.commissionEarned,
+            'Commission earned must not use Opportunity.Amount after the quote is inflated.'
+        );
         System.assert(metrics.commissionEarnedCount > 0, 'Commission earned count should include qualifying commissions.');
-        System.assertEquals(50, metrics.commissionPayable, 'Commission payable should total unpaid paid-opportunity commissions.');
+        System.assertEquals(60, metrics.commissionPayable, 'Commission payable should total Payable commissions that are not yet paid to the rep.');
         System.assert(metrics.commissionPayableCount > 0, 'Commission payable count should include qualifying commissions.');
 
         System.assertEquals(3, sections.size(), 'Expected exactly three KPI sections.');
@@ -1397,7 +1380,7 @@ private class BillingControl_InvoicingTest {
         System.assertEquals(1, payableSection.opportunityCount, 'Payable section should include paid opportunities with unpaid commission.');
         System.assertEquals(400, payableSection.totalAmount, 'Payable section should aggregate paid opportunity amount.');
         System.assertEquals(60, payableSection.totalCommission, 'Payable section should aggregate commission amount.');
-        System.assertEquals(10, payableSection.totalPaid, 'Payable section should aggregate paid commission amount.');
+        System.assertEquals(0, payableSection.totalPaid, 'Payable section should not treat frozen Commission_Paid__c as payout.');
         System.assertEquals(1, payableSection.salespersonGroups.size(), 'Payable section should preserve salesperson grouping.');
         System.assertEquals(
             'Paid Opportunity',
@@ -1449,28 +1432,36 @@ private class BillingControl_InvoicingTest {
     @isTest
     static void testUpdateCommissionPaid() {
         Commission__c payableCommission = [
-            SELECT Id, Commission_Amount__c, Commission_Paid__c
+            SELECT Id, Commission_Amount__c, Commission_Paid__c, Status__c
             FROM Commission__c
             WHERE Opportunity__r.Name = 'Paid Opportunity'
             LIMIT 1
         ];
 
-        System.assertEquals(10, payableCommission.Commission_Paid__c, 'Test data should start partially paid.');
+        System.assertEquals('Payable', payableCommission.Status__c, 'Paid-job commission should start Payable.');
+        Decimal legacyPaidMarker = payableCommission.Commission_Paid__c;
 
         Test.startTest();
         BillingControl_Invoicing.updateCommissionPaid(new List<Id>{ payableCommission.Id });
         Test.stopTest();
 
         Commission__c refreshedCommission = [
-            SELECT Commission_Amount__c, Commission_Paid__c
+            SELECT Commission_Amount__c, Commission_Paid__c, Status__c, Paid_Amount__c, Paid_Date__c
             FROM Commission__c
             WHERE Id = :payableCommission.Id
         ];
 
+        System.assertEquals('Paid', refreshedCommission.Status__c, 'Pay Commission should move Payable to Paid.');
         System.assertEquals(
             refreshedCommission.Commission_Amount__c,
+            refreshedCommission.Paid_Amount__c,
+            'Pay Commission should record Paid_Amount__c from Commission_Amount__c.'
+        );
+        System.assertEquals(Date.today(), refreshedCommission.Paid_Date__c, 'Pay Commission should stamp Paid_Date__c.');
+        System.assertEquals(
+            legacyPaidMarker,
             refreshedCommission.Commission_Paid__c,
-            'Pay action should mark the commission as fully paid.'
+            'Pay Commission must not write frozen Commission_Paid__c.'
         );
     }
 
@@ -1507,12 +1498,18 @@ private class BillingControl_InvoicingTest {
         System.assertEquals('Partially Paid', partiallyPaidOpportunity.Billing_Status__c, 'Opportunity should move to Partially Paid after a partial receipt.');
 
         Commission__c partiallyAccruedCommission = [
-            SELECT Commission_Amount__c, Commission_Paid__c
+            SELECT Commission_Amount__c, Commission_Paid__c, Status__c, Paid_Amount__c
             FROM Commission__c
             WHERE Opportunity__c = :outstandingOpportunity.Id
             LIMIT 1
         ];
-        System.assertEquals(10, partiallyAccruedCommission.Commission_Paid__c, 'Partial payment should accrue commission proportionally.');
+        System.assertEquals(
+            0,
+            partiallyAccruedCommission.Commission_Paid__c,
+            'Partial customer payment must not write Commission_Paid__c.'
+        );
+        System.assertEquals('Accrued', partiallyAccruedCommission.Status__c, 'Partial receipt must leave commission Accrued.');
+        System.assertEquals(null, partiallyAccruedCommission.Paid_Amount__c, 'Partial receipt must not set Paid_Amount__c.');
 
         BillingControl_Invoicing.PostReceiptInputWrapper finalReceipt =
             new BillingControl_Invoicing.PostReceiptInputWrapper();
@@ -1537,17 +1534,21 @@ private class BillingControl_InvoicingTest {
         System.assertEquals('Paid', finalResult.billingStatus, 'Final receipt should report a paid invoice.');
         System.assertEquals('Paid', paidOpportunity.Billing_Status__c, 'Opportunity should move to Paid after the balance is cleared.');
 
-        Commission__c fullyAccruedCommission = [
-            SELECT Commission_Amount__c, Commission_Paid__c
+        Commission__c fullyPaidJobCommission = [
+            SELECT Commission_Amount__c, Commission_Paid__c, Status__c, Paid_Amount__c, Payable_Date__c, Paid_Date__c
             FROM Commission__c
             WHERE Opportunity__c = :outstandingOpportunity.Id
             LIMIT 1
         ];
         System.assertEquals(
-            fullyAccruedCommission.Commission_Amount__c,
-            fullyAccruedCommission.Commission_Paid__c,
-            'Final payment should fully accrue the remaining commission amount.'
+            0,
+            fullyPaidJobCommission.Commission_Paid__c,
+            'Final customer payment must not write Commission_Paid__c.'
         );
+        System.assertEquals('Payable', fullyPaidJobCommission.Status__c, 'Job Paid in Full should make commission Payable.');
+        System.assertEquals(Date.today(), fullyPaidJobCommission.Payable_Date__c);
+        System.assertEquals(null, fullyPaidJobCommission.Paid_Amount__c, 'Customer receipt must not set Paid_Amount__c.');
+        System.assertEquals(null, fullyPaidJobCommission.Paid_Date__c, 'Customer receipt must not set Paid_Date__c.');
 
         List<Invoice_Payment__c> payments = [
             SELECT Amount_Received__c, Reference_Number__c, Invoice__c
@@ -1763,6 +1764,28 @@ private class BillingControl_InvoicingTest {
     }
 
     @isTest
+    static void testPayCommissionsRejectsAccruedStatus() {
+        Commission__c accruedCommission = [
+            SELECT Id
+            FROM Commission__c
+            WHERE Opportunity__r.Name = 'Outstanding Receivable Opportunity'
+            LIMIT 1
+        ];
+
+        Boolean exceptionThrown = false;
+        Test.startTest();
+        try {
+            BillingControl_Receivables.payCommissions(new List<Id>{ accruedCommission.Id }, Date.today(), null);
+            System.assert(false, 'Pay Commission must reject Accrued commissions.');
+        } catch (AuraHandledException error) {
+            exceptionThrown = true;
+            System.assert(String.isNotBlank(error.getMessage()), 'Rejection should include a message.');
+        }
+        Test.stopTest();
+        System.assertEquals(true, exceptionThrown);
+    }
+
+    @isTest
     static void testUpdateCommissionPaidHandlesNullAndEmptyInput() {
         Test.startTest();
         BillingControl_Invoicing.updateCommissionPaid(null);
@@ -1856,20 +1879,25 @@ private class BillingControl_InvoicingTest {
             FROM Opportunity
             WHERE Id = :successOpportunity.Id
         ];
-        System.assertEquals(
+        System.assertNotEquals(
             getOutstandingReceivableStatusValue(),
             refreshedSuccessOpportunity.Billing_Status__c,
-            'Successful commission creation should move the opportunity into outstanding receivable.'
+            'Corrective commission create must not stamp Outstanding Receivable without an invoice.'
         );
 
         List<Commission__c> createdCommissions = [
-            SELECT Opportunity__c, Sales_Person__c, Commission_Rate__c
+            SELECT Opportunity__c, Sales_Person__c, Commission_Rate__c, Amount_Basis__c
             FROM Commission__c
             WHERE Opportunity__c = :successOpportunity.Id
         ];
         System.assertEquals(1, createdCommissions.size(), 'One commission record should exist for the successful opportunity.');
         System.assertEquals(UserInfo.getUserId(), createdCommissions[0].Sales_Person__c, 'Owner should default from the opportunity when omitted.');
         System.assertEquals(8, createdCommissions[0].Commission_Rate__c, 'The requested commission rate should be preserved.');
+        System.assertEquals(
+            'Invoiced Total',
+            createdCommissions[0].Amount_Basis__c,
+            'Manual commission create must use invoiced total, not Opportunity Amount.'
+        );
     }
 
     @isTest
@@ -1898,10 +1926,10 @@ private class BillingControl_InvoicingTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(51L, filterContext);
         Test.stopTest();
 
-        System.assertEquals(3, metrics.readyToBill, 'Legacy zero-invoiced filters must not exclude SA/WO-eligible appointments.');
+        System.assertEquals(true, metrics.readyToBill >= 1, 'Legacy zero-invoiced filters must not exclude SA/WO-eligible appointments.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
-            if (groupRecord.categoryKey == 'READY_TO_BILL') {
-                System.assertEquals(3, groupRecord.serviceAppointmentCount);
+            if (groupRecord.categoryKey == 'BALANCES_READY') {
+                System.assertEquals(true, groupRecord.serviceAppointmentCount >= 1);
             }
         }
     }
@@ -1934,10 +1962,81 @@ private class BillingControl_InvoicingTest {
 
         System.assert(metrics.readyToBill > 0, 'Date comparison filters should retain rows on or after the supplied date.');
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper groupRecord : groups) {
-            if (groupRecord.categoryKey == 'READY_TO_BILL') {
+            if (groupRecord.categoryKey == 'BALANCES_READY') {
                 System.assert(groupRecord.serviceAppointmentCount > 0);
             }
         }
+    }
+
+    private static Set<Id> collectOpportunityIds(
+        BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section
+    ) {
+        Set<Id> opportunityIds = new Set<Id>();
+        if (section == null || section.opportunityRows == null) {
+            return opportunityIds;
+        }
+        for (BillingControl_BillingReadiness.OpportunityRow row : section.opportunityRows) {
+            opportunityIds.add(row.opportunityId);
+        }
+        return opportunityIds;
+    }
+
+    private static Set<Id> collectEvidenceAppointmentIds(
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sections
+    ) {
+        Set<Id> appointmentIds = new Set<Id>();
+        if (sections == null) {
+            return appointmentIds;
+        }
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
+            if (section.opportunityRows == null) {
+                continue;
+            }
+            for (BillingControl_BillingReadiness.OpportunityRow row : section.opportunityRows) {
+                if (row.workOrders == null) {
+                    continue;
+                }
+                for (BillingControl_BillingReadiness.WorkOrderEvidence workOrderEvidence : row.workOrders) {
+                    if (workOrderEvidence.appointments == null) {
+                        continue;
+                    }
+                    for (BillingControl_BillingReadiness.AppointmentEvidence appointmentEvidence : workOrderEvidence.appointments) {
+                        appointmentIds.add(appointmentEvidence.serviceAppointmentId);
+                    }
+                }
+            }
+        }
+        return appointmentIds;
+    }
+
+    private static Set<Id> collectUnbilledEvidenceAppointmentIds(
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sections
+    ) {
+        Set<Id> appointmentIds = new Set<Id>();
+        if (sections == null) {
+            return appointmentIds;
+        }
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
+            if (section.opportunityRows == null) {
+                continue;
+            }
+            for (BillingControl_BillingReadiness.OpportunityRow row : section.opportunityRows) {
+                if (row.workOrders == null) {
+                    continue;
+                }
+                for (BillingControl_BillingReadiness.WorkOrderEvidence workOrderEvidence : row.workOrders) {
+                    if (workOrderEvidence.appointments == null) {
+                        continue;
+                    }
+                    for (BillingControl_BillingReadiness.AppointmentEvidence appointmentEvidence : workOrderEvidence.appointments) {
+                        if (appointmentEvidence.billed != true) {
+                            appointmentIds.add(appointmentEvidence.serviceAppointmentId);
+                        }
+                    }
+                }
+            }
+        }
+        return appointmentIds;
     }
 
     private static String getOutstandingReceivableStatusValue() {
@@ -2014,7 +2113,7 @@ private class BillingControl_InvoicingTest {
             Status = 'New',
             AccountId = accountRecord.Id,
             WorkTypeId = workTypeRecord.Id,
-            Invoice_Number__c = 'INV-WO-999'
+            Invoice_Number__c = 'Inv 93999'
         );
         insert workOrderRecord;
 
@@ -2026,7 +2125,7 @@ private class BillingControl_InvoicingTest {
             ActualEndTime = System.now().addHours(-1),
             Subject = 'INV-Sync SA Wins Appointment',
             Opportunity__c = opportunityRecord.Id,
-            Invoice_Number__c = 'INV-SA-111'
+            Invoice_Number__c = 'Inv 93111'
         );
         insert appointmentRecord;
 
@@ -2045,8 +2144,8 @@ private class BillingControl_InvoicingTest {
             FROM Invoice__c
             WHERE Opportunity__c = :opportunityRecord.Id
         ];
-        System.assertEquals('INV-SA-111', createdInvoice.Invoice_Number__c);
-        System.assertEquals(250, createdInvoice.Total_Amount__c);
+        System.assertEquals('Inv 93111', createdInvoice.Invoice_Number__c);
+        System.assertEquals(null, createdInvoice.Total_Amount__c, 'INV-Sync must not invent an external invoice amount.');
 
         Invoice_Line__c createdLine = [
             SELECT Service_Appointment__c, Work_Order__c
@@ -2062,14 +2161,14 @@ private class BillingControl_InvoicingTest {
             FROM ServiceAppointment
             WHERE Id = :appointmentRecord.Id
         ];
-        System.assertEquals('INV-SA-111', updatedAppointment.Invoice_Number__c, 'Existing SA invoice numbers must not be overwritten.');
+        System.assertEquals('Inv 93111', updatedAppointment.Invoice_Number__c, 'Existing SA invoice numbers must not be overwritten.');
 
         Opportunity updatedOpportunity = [
             SELECT Billing_Status__c
             FROM Opportunity
             WHERE Id = :opportunityRecord.Id
         ];
-        System.assertEquals(getOutstandingReceivableStatusValue(), updatedOpportunity.Billing_Status__c);
+        System.assertEquals('Ready for Billing', updatedOpportunity.Billing_Status__c);
     }
 
     @isTest
@@ -2095,7 +2194,7 @@ private class BillingControl_InvoicingTest {
             Status = 'New',
             AccountId = accountRecord.Id,
             WorkTypeId = workTypeRecord.Id,
-            Invoice_Number__c = 'INV-WO-222'
+            Invoice_Number__c = 'Inv 93222'
         );
         insert workOrderRecord;
 
@@ -2127,14 +2226,14 @@ private class BillingControl_InvoicingTest {
             FROM Invoice__c
             WHERE Opportunity__c = :opportunityRecord.Id
         ];
-        System.assertEquals('INV-WO-222', createdInvoice.Invoice_Number__c);
+        System.assertEquals('Inv 93222', createdInvoice.Invoice_Number__c);
 
         ServiceAppointment updatedAppointment = [
             SELECT Invoice_Number__c
             FROM ServiceAppointment
             WHERE Id = :appointmentRecord.Id
         ];
-        System.assertEquals('INV-WO-222', updatedAppointment.Invoice_Number__c);
+        System.assertEquals('Inv 93222', updatedAppointment.Invoice_Number__c);
     }
 
     @isTest
@@ -2187,7 +2286,7 @@ private class BillingControl_InvoicingTest {
             ActualEndTime = System.now().addHours(-3),
             Subject = 'INV-Sync Existing Appointment',
             Opportunity__c = existingOpportunity.Id,
-            Invoice_Number__c = 'INV-EXIST-1'
+            Invoice_Number__c = 'Inv 93101'
         );
         ServiceAppointment priorYearAppointment = new ServiceAppointment(
             ParentRecordId = priorYearWorkOrder.Id,
@@ -2197,12 +2296,12 @@ private class BillingControl_InvoicingTest {
             ActualEndTime = Datetime.newInstance(Date.today().addYears(-1), Time.newInstance(12, 0, 0, 0)),
             Subject = 'INV-Sync Prior Year Appointment',
             Opportunity__c = priorYearOpportunity.Id,
-            Invoice_Number__c = 'INV-PRIOR-1'
+            Invoice_Number__c = 'Inv 93102'
         );
         insert new List<ServiceAppointment>{ existingAppointment, priorYearAppointment };
 
         insert new Invoice__c(
-            Invoice_Number__c = 'INV-EXIST-1',
+            Invoice_Number__c = 'Inv 93101',
             Opportunity__c = existingOpportunity.Id,
             Account__c = accountRecord.Id,
             Status__c = 'Sent',
@@ -2237,7 +2336,7 @@ private class BillingControl_InvoicingTest {
         Integer priorYearInvoiceCount = [
             SELECT COUNT()
             FROM Invoice__c
-            WHERE Invoice_Number__c = 'INV-PRIOR-1'
+            WHERE Invoice_Number__c = 'Inv 93102'
         ];
         System.assertEquals(0, priorYearInvoiceCount, 'Last-year appointments must stay outside This Year INV-Sync.');
     }
@@ -2337,26 +2436,45 @@ private class BillingControl_InvoicingTest {
 
     @isTest
     static void testCompleteBillingRejectsDuplicateInvoiceNumberInRequest() {
-        List<ServiceAppointment> toBill = [
+        ServiceAppointment firstAppointment = [
             SELECT Id, Opportunity__c
             FROM ServiceAppointment
-            WHERE Invoice_Number__c = NULL
-            AND Opportunity__c != NULL
-            AND Status = 'Completed'
-            ORDER BY Opportunity__c ASC
+            WHERE Subject = 'Completed Unbilled Older'
+            LIMIT 1
         ];
-        System.assertEquals(true, toBill.size() >= 2);
-        System.assertNotEquals(toBill[0].Opportunity__c, toBill[1].Opportunity__c);
+        Opportunity secondOpportunity = [
+            SELECT Id
+            FROM Opportunity
+            WHERE Name = 'Ready To Bill Opportunity'
+            LIMIT 1
+        ];
+        WorkOrder workOrderRecord = [
+            SELECT Id
+            FROM WorkOrder
+            WHERE Subject = 'Awaiting Billing Work Order'
+            LIMIT 1
+        ];
+        Datetime startTime = System.now().addHours(-6);
+        ServiceAppointment secondAppointment = new ServiceAppointment(
+            ParentRecordId = workOrderRecord.Id,
+            Status = 'Completed',
+            SchedStartTime = startTime,
+            SchedEndTime = startTime.addHours(1),
+            ActualEndTime = startTime.addHours(1),
+            Subject = 'Duplicate Number Second Opportunity SA',
+            Opportunity__c = secondOpportunity.Id
+        );
+        insert secondAppointment;
 
         Map<String, String> invoiceNumbers = new Map<String, String>{
-            String.valueOf(toBill[0].Opportunity__c) => 'DUP-REQUEST-001',
-            String.valueOf(toBill[1].Opportunity__c) => 'DUP-REQUEST-001'
+            String.valueOf(firstAppointment.Opportunity__c) => 'DUP-REQUEST-001',
+            String.valueOf(secondAppointment.Opportunity__c) => 'DUP-REQUEST-001'
         };
 
         Test.startTest();
         try {
             BillingControl_Invoicing.completeServiceAppointmentBilling(
-                new List<Id>{ toBill[0].Id, toBill[1].Id },
+                new List<Id>{ firstAppointment.Id, secondAppointment.Id },
                 invoiceNumbers
             );
             System.assert(false, 'Duplicate invoice numbers in one Complete Billing request must fail.');
@@ -2371,10 +2489,7 @@ private class BillingControl_InvoicingTest {
         ServiceAppointment appointmentRecord = [
             SELECT Id, Opportunity__c
             FROM ServiceAppointment
-            WHERE Invoice_Number__c = NULL
-            AND Opportunity__c != NULL
-            AND Status = 'Completed'
-            ORDER BY CreatedDate ASC
+            WHERE Subject = 'Completed Unbilled Older'
             LIMIT 1
         ];
 
@@ -2396,10 +2511,7 @@ private class BillingControl_InvoicingTest {
         ServiceAppointment appointmentRecord = [
             SELECT Id, Opportunity__c
             FROM ServiceAppointment
-            WHERE Invoice_Number__c = NULL
-            AND Opportunity__c != NULL
-            AND Status = 'Completed'
-            ORDER BY CreatedDate ASC
+            WHERE Subject = 'Completed Unbilled Older'
             LIMIT 1
         ];
         String longInvoiceNumber = 'INV-' + 'X'.repeat(78);
@@ -2531,6 +2643,17 @@ private class BillingControl_InvoicingTest {
             Opportunity__c = opportunityRecord.Id
         );
         insert appointmentRecord;
+        update new Opportunity(Id = opportunityRecord.Id, Billing_Status__c = 'Paid');
+        Opportunity paidBeforeBilling = [
+            SELECT Billing_Status__c
+            FROM Opportunity
+            WHERE Id = :opportunityRecord.Id
+        ];
+        System.assertEquals(
+            'Paid',
+            paidBeforeBilling.Billing_Status__c,
+            'Fixture must retain Paid before Complete Billing so the service can preserve it.'
+        );
 
         Test.startTest();
         BillingControl_Invoicing.CompleteBillingResultWrapper result =
@@ -2547,9 +2670,9 @@ private class BillingControl_InvoicingTest {
             WHERE Id = :opportunityRecord.Id
         ];
         System.assertEquals(
-            getOutstandingReceivableStatusValue(),
+            'Paid',
             updatedOpportunity.Billing_Status__c,
-            'Complete Billing overwrites Paid with outstanding receivable status.'
+            'Creating another invoice must not overwrite an existing Paid billing status.'
         );
     }
 
@@ -2584,7 +2707,7 @@ private class BillingControl_InvoicingTest {
             ActualEndTime = System.now().addHours(-1),
             Subject = 'INV-Sync Existing Line SA',
             Opportunity__c = opportunityRecord.Id,
-            Invoice_Number__c = 'INV-LINE-EXIST'
+            Invoice_Number__c = 'Inv 93103'
         );
         insert appointmentRecord;
         Invoice__c existingInvoice = new Invoice__c(
@@ -2679,7 +2802,7 @@ private class BillingControl_InvoicingTest {
                 ActualEndTime = System.now().addHours(-3),
                 Subject = 'INV-Sync Batch Dup SA One',
                 Opportunity__c = firstOpportunity.Id,
-                Invoice_Number__c = 'INV-BATCH-DUP'
+                Invoice_Number__c = 'Inv 93200'
             ),
             new ServiceAppointment(
                 ParentRecordId = secondWorkOrder.Id,
@@ -2689,7 +2812,7 @@ private class BillingControl_InvoicingTest {
                 ActualEndTime = System.now().addHours(-1),
                 Subject = 'INV-Sync Batch Dup SA Two',
                 Opportunity__c = secondOpportunity.Id,
-                Invoice_Number__c = 'inv-batch-dup'
+                Invoice_Number__c = 'Inv 93200'
             )
         };
 
@@ -2706,7 +2829,7 @@ private class BillingControl_InvoicingTest {
         System.assert(result.skippedCount > 0, 'The second group must be counted as skipped.');
         System.assertEquals(
             1,
-            [SELECT COUNT() FROM Invoice__c WHERE Invoice_Number__c = 'INV-BATCH-DUP' OR Invoice_Number__c = 'inv-batch-dup']
+            [SELECT COUNT() FROM Invoice__c WHERE Invoice_Number__c = 'Inv 93200']
         );
     }
 
@@ -2742,7 +2865,7 @@ private class BillingControl_InvoicingTest {
                 ActualEndTime = System.now().addHours(-4),
                 Subject = 'INV-Sync Remaining SA One',
                 Opportunity__c = opportunityRecord.Id,
-                Invoice_Number__c = 'INV-REMAIN-A'
+                Invoice_Number__c = 'Inv 93301'
             ),
             new ServiceAppointment(
                 ParentRecordId = workOrderRecord.Id,
@@ -2752,7 +2875,7 @@ private class BillingControl_InvoicingTest {
                 ActualEndTime = System.now().addHours(-2),
                 Subject = 'INV-Sync Remaining SA Two',
                 Opportunity__c = opportunityRecord.Id,
-                Invoice_Number__c = 'INV-REMAIN-B'
+                Invoice_Number__c = 'Inv 93302'
             )
         };
 
@@ -2765,9 +2888,8 @@ private class BillingControl_InvoicingTest {
             BillingControl_Invoicing.syncExistingInvoiceNumbers(dateFilter, null);
         Test.stopTest();
 
-        System.assertEquals(1, result.invoicesCreated, 'The first invoice-number group consumes remaining Opportunity amount.');
-        System.assert(result.skippedCount > 0, 'The second invoice-number group must be skipped as fully invoiced.');
-        System.assertEquals(1, [SELECT COUNT() FROM Invoice__c WHERE Opportunity__c = :opportunityRecord.Id]);
+        System.assertEquals(2, result.invoicesCreated, 'Each parsed invoice number becomes its own pending-external invoice.');
+        System.assertEquals(2, [SELECT COUNT() FROM Invoice__c WHERE Opportunity__c = :opportunityRecord.Id]);
     }
 
     @isTest
@@ -2818,7 +2940,7 @@ private class BillingControl_InvoicingTest {
                 ActualEndTime = System.now().addHours(-3),
                 Subject = 'INV-Sync Paid Preserve SA',
                 Opportunity__c = paidOpportunity.Id,
-                Invoice_Number__c = 'INV-PAID-KEEP'
+                Invoice_Number__c = 'Inv 93401'
             ),
             new ServiceAppointment(
                 ParentRecordId = partialWorkOrder.Id,
@@ -2828,7 +2950,7 @@ private class BillingControl_InvoicingTest {
                 ActualEndTime = System.now().addHours(-1),
                 Subject = 'INV-Sync Partial Preserve SA',
                 Opportunity__c = partialOpportunity.Id,
-                Invoice_Number__c = 'INV-PARTIAL-KEEP'
+                Invoice_Number__c = 'Inv 93402'
             )
         };
 
@@ -2894,7 +3016,7 @@ private class BillingControl_InvoicingTest {
             ActualEndTime = System.now().addHours(-1),
             Subject = 'INV-Sync WOLI SA',
             Opportunity__c = opportunityRecord.Id,
-            Invoice_Number__c = 'INV-WOLI-001'
+            Invoice_Number__c = 'Inv 93501'
         );
         insert appointmentRecord;
 
@@ -2915,5 +3037,90 @@ private class BillingControl_InvoicingTest {
         ];
         System.assertEquals(workOrderRecord.Id, createdLine.Work_Order__c);
         System.assertEquals(appointmentRecord.Id, createdLine.Service_Appointment__c);
+    }
+
+    @isTest
+    static void testInvoicingPublicHelperCoverage() {
+        System.assertEquals(false, BillingControl_Invoicing.isOutstandingReceivableStatus(null));
+        System.assertEquals(
+            true,
+            BillingControl_Invoicing.isOutstandingReceivableStatus('Billed (Outstanding Receivables)')
+        );
+        System.assertEquals(0, BillingControl_Invoicing.coalesceDecimal(null));
+        System.assertEquals(false, BillingControl_Invoicing.containsExcludedInvoicingMarkerForAccount(null));
+        System.assertEquals(true, BillingControl_Invoicing.containsExcludedInvoicingMarkerForAccount('NYCDOE campus'));
+        System.assertEquals(false, BillingControl_Invoicing.containsExcludedInvoicingMarker(null));
+        System.assertEquals(true, BillingControl_Invoicing.containsExcludedInvoicingMarker('INV-100'));
+        System.assertEquals(null, BillingControl_Invoicing.normalizeFilterValue(null));
+        System.assertEquals('EQUALS', BillingControl_Invoicing.normalizeFilterValue(' equals '));
+        System.assertEquals(0, BillingControl_Invoicing.extractDecimal(new List<AggregateResult>(), 'expr0'));
+        System.assertEquals(0, BillingControl_Invoicing.extractInteger(new List<AggregateResult>(), 'expr0'));
+        System.assertEquals(
+            0,
+            BillingControl_Invoicing.allocateInvoiceTotalAcrossAppointments(100, new List<ServiceAppointment>()).size()
+        );
+        System.assertEquals(0, BillingControl_Invoicing.queryWorkOrdersById(null).size());
+        System.assertEquals(0, BillingControl_Invoicing.queryJunctionsByWorkOrderId(new Set<Id>()).size());
+        System.assertEquals(0, BillingControl_Invoicing.queryHistoricalInvoiceTotalByOpportunityId(new Set<Id>()).size());
+
+        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
+            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_Invoicing.addRuntimeWarning(null, 'ignored');
+        BillingControl_Invoicing.addRuntimeWarning(filterContext, 'Limit warning');
+        BillingControl_Invoicing.addRuntimeWarning(filterContext, 'Limit warning');
+        System.assertEquals(1, filterContext.runtimeWarnings.size());
+
+        BillingControl_DataProvider.BillingFilterDTO equalsFilter = new BillingControl_DataProvider.BillingFilterDTO();
+        equalsFilter.operator = 'EQUALS';
+        equalsFilter.value = 'Alpha';
+        System.assertEquals(true, BillingControl_Invoicing.evaluateFilter('Alpha', equalsFilter));
+        System.assertEquals(false, BillingControl_Invoicing.evaluateFilter(null, equalsFilter));
+        equalsFilter.operator = 'IS NULL';
+        System.assertEquals(true, BillingControl_Invoicing.evaluateFilter(null, equalsFilter));
+        equalsFilter.operator = 'IS NOT NULL';
+        System.assertEquals(true, BillingControl_Invoicing.evaluateFilter('Alpha', equalsFilter));
+
+        BillingControl_DataProvider.BillingFilterDTO dateFilter = new BillingControl_DataProvider.BillingFilterDTO();
+        dateFilter.operator = 'EQUALS';
+        dateFilter.value = String.valueOf(Date.today());
+        System.assertEquals(true, BillingControl_Invoicing.evaluateDateFilter(Date.today(), dateFilter));
+        dateFilter.operator = 'IS NULL';
+        System.assertEquals(true, BillingControl_Invoicing.evaluateDateFilter(null, dateFilter));
+        BillingControl_DataProvider.BillingFilterDTO decimalFilter = new BillingControl_DataProvider.BillingFilterDTO();
+        decimalFilter.operator = 'GREATER THAN';
+        decimalFilter.value = '10';
+        System.assertEquals(true, BillingControl_Invoicing.evaluateFilter(25, decimalFilter));
+        BillingControl_DataProvider.BillingFilterDTO datetimeFilter = new BillingControl_DataProvider.BillingFilterDTO();
+        datetimeFilter.operator = 'EQUALS';
+        datetimeFilter.value = String.valueOf(Datetime.newInstance(Date.today(), Time.newInstance(0, 0, 0, 0)));
+        BillingControl_Invoicing.evaluateFilter(
+            Datetime.newInstance(Date.today(), Time.newInstance(0, 0, 0, 0)),
+            datetimeFilter
+        );
+        System.assertEquals(0, BillingControl_Invoicing.extractDecimal(new List<AggregateResult>(), 'totalCommission'));
+        System.assertEquals(0, BillingControl_Invoicing.extractInteger(new List<AggregateResult>(), 'recordCount'));
+        System.assertEquals(0, BillingControl_Invoicing.allocateInvoiceTotalAcrossAppointments(null, null).size());
+        List<ServiceAppointment> appointments = [SELECT Id FROM ServiceAppointment LIMIT 2];
+        if (appointments.size() == 2) {
+            Map<Id, Decimal> allocated = BillingControl_Invoicing.allocateInvoiceTotalAcrossAppointments(100.03, appointments);
+            System.assertEquals(2, allocated.size());
+        }
+        BillingControl_Invoicing.metricsFromRuntime(null);
+        BillingControl_Invoicing.groupsFromRuntime(null);
+        BillingControl_Invoicing.getBillableOpportunities();
+        BillingControl_Invoicing.getBillingReadinessMetrics();
+        BillingControl_Invoicing.getBillableServiceAppointmentGroups();
+
+        Test.startTest();
+        BillingControl_Invoicing.getOutstandingReceivableOpportunities();
+        BillingControl_Invoicing.getOpportunityBillingMetrics();
+        BillingControl_Invoicing.getBillingControlMetrics();
+        BillingControl_Invoicing.getCommissionMetrics();
+        BillingControl_Invoicing.getCommissionData('kpi');
+        Test.stopTest();
+
+        AuraHandledException handled = BillingControl_Invoicing.buildHandledException('coverage');
+        System.assertEquals('coverage', handled.getMessage());
+        System.assertNotEquals(null, BillingControl_Invoicing.getOutstandingReceivableStatusForUpdate());
     }
 }

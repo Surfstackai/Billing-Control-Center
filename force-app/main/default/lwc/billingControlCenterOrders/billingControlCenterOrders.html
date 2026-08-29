@@ -1,15 +1,17 @@
 <template>
     <div class="control-center-card">
-        <div class="hero">
-            <div class="hero__intro">
-                <p class="hero__eyebrow">Billing Control Center</p>
-                <h1 class="hero__title">{heroTitle}</h1>
-                <p class="hero__subtitle">{heroSubtitle}</p>
-            </div>
+        <div class={heroClass}>
+            <template if:true={showHeroIntro}>
+                <div class="hero__intro">
+                    <p class="hero__eyebrow">Billing Control Center</p>
+                    <h1 class="hero__title">{heroTitle}</h1>
+                    <p class="hero__subtitle">{heroSubtitle}</p>
+                </div>
+            </template>
             <div class="hero__controls">
                 <c-billing-control-center-date-filter
                     compact
-                    label="Date Range"
+                    label="Appointment status date"
                     selected-filter-key={dateFilterKey}
                     start-date={dateFilterStart}
                     end-date={dateFilterEnd}
@@ -27,7 +29,6 @@
                 </lightning-record-picker>
                 <div class="view-by">
                     <p class="view-by__title">View by</p>
-                    <p class="view-by__caption">WO View / Account view</p>
                     <div class="view-by__switch" role="group" aria-label="View by">
                         <button
                             type="button"
@@ -35,7 +36,7 @@
                             data-view="workOrder"
                             aria-pressed={isWorkOrderView}
                             onclick={handleListViewSelect}>
-                            <span class="slds-assistive-text">Work order view</span>
+                            WO
                         </button>
                         <button
                             type="button"
@@ -43,7 +44,7 @@
                             data-view="account"
                             aria-pressed={isAccountView}
                             onclick={handleListViewSelect}>
-                            <span class="slds-assistive-text">Account view</span>
+                            Account
                         </button>
                         <span class={viewSwitchKnobClass} aria-hidden="true"></span>
                     </div>
@@ -59,10 +60,10 @@
                 </lightning-input>
                 <template if:true={useExternalToolbar}>
                     <lightning-button
-                        label={refreshLabel}
+                        label={toolbarRefreshLabel}
                         icon-name="utility:refresh"
-                        variant="brand"
-                        disabled={isLoading}
+                        variant="neutral"
+                        disabled={isToolbarBusy}
                         onclick={handleRefresh}>
                     </lightning-button>
                 </template>
@@ -90,12 +91,18 @@
             is-visible={showDiagnostics}>
         </c-billing-control-center-diagnostics>
 
-        <template if:true={isLoading}>
+        <template if:true={showFullPageSpinner}>
             <lightning-spinner alternative-text="Loading billing control center"></lightning-spinner>
         </template>
 
         <div class="billing-kpi-container">
-            <c-billing-control-center-kpi-grid compact tiles={kpiTiles}></c-billing-control-center-kpi-grid>
+            <c-billing-control-center-kpi-grid
+                compact
+                tiles={kpiTiles}
+                selected-key={selectedKpiKey}
+                ontileclick={handleKpiTileClick}>
+            </c-billing-control-center-kpi-grid>
+            <p class="bcc-kpi-legend">{kpiLegendText}</p>
         </div>
 
         <section class="table-shell">
@@ -103,13 +110,19 @@
                 <span>{searchSummary}</span>
             </div>
 
-            <lightning-accordion class="bucket-accordion" allow-multiple-sections-open>
+            <lightning-accordion
+                class="bucket-accordion"
+                allow-multiple-sections-open
+                active-section-name={activeSectionNames}>
                 <template for:each={accordionSections} for:item="section">
                     <lightning-accordion-section
                         key={section.bucketKey}
                         name={section.bucketKey}
                         label={section.titleWithCount}>
                             <div class="bucket-section-body">
+                                <template if:true={section.showCountCaption}>
+                                    <p class="bucket-count-caption">{section.countCaption}</p>
+                                </template>
                                 <template if:true={section.isEmpty}>
                                     <p class="bucket-empty">No records in this bucket for the current filters.</p>
                                 </template>
@@ -266,6 +279,12 @@
                                                                                 </template>
                                                                             </div>
                                                                         </template>
+                                                                    </div>
+                                                                </template>
+
+                                                                <template if:true={column.isQuoteNumber}>
+                                                                    <div class="grouped-diary-table__single-value" title={row.quoteNumber}>
+                                                                        <span class="grouped-diary-table__single-text">{row.quoteNumber}</span>
                                                                     </div>
                                                                 </template>
 
@@ -468,7 +487,6 @@
 
     <template if:true={showLedgerModal}>
         <c-billing-control-center-ledger-modal
-            date-filter={dateFilter}
             ledger-id={selectedLedgerId}
             onclose={handleCloseLedgerModal}>
         </c-billing-control-center-ledger-modal>

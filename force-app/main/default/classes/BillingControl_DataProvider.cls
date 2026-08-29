@@ -44,7 +44,6 @@ public with sharing class BillingControl_DataProvider {
         'BILLINGCONTROL_INVOICING.GETCOMMISSIONMETRICS'
     };
 
-    @AuraEnabled
     public static OrdersRuntimeDataDTO getOrdersRuntimeData(
         Long refreshToken,
         BillingDateFilterDTO dateFilter,
@@ -68,7 +67,6 @@ public with sharing class BillingControl_DataProvider {
         return result;
     }
 
-    @AuraEnabled
     public static InvoicingRuntimeDataDTO getInvoicingRuntimeData(
         Long refreshToken,
         BillingDateFilterDTO dateFilter,
@@ -99,7 +97,6 @@ public with sharing class BillingControl_DataProvider {
         return result;
     }
 
-    @AuraEnabled
     public static ReceivablesRuntimeDataDTO getReceivablesRuntimeData(
         Long refreshToken,
         BillingDateFilterDTO dateFilter,
@@ -157,6 +154,51 @@ public with sharing class BillingControl_DataProvider {
         return result;
     }
 
+    @AuraEnabled
+    public static OrdersRuntimeDataDTO getOrdersRuntimeData(
+        Long refreshToken,
+        String filterKey,
+        String startDate,
+        String endDate,
+        String opportunityOwnerId
+    ) {
+        BillingDateFilterDTO dateFilter = new BillingDateFilterDTO();
+        dateFilter.filterKey = filterKey;
+        dateFilter.startDate = startDate;
+        dateFilter.endDate = endDate;
+        return getOrdersRuntimeData(refreshToken, dateFilter, opportunityOwnerId);
+    }
+
+    @AuraEnabled
+    public static InvoicingRuntimeDataDTO getInvoicingRuntimeData(
+        Long refreshToken,
+        String filterKey,
+        String startDate,
+        String endDate,
+        String opportunityOwnerId
+    ) {
+        BillingDateFilterDTO dateFilter = new BillingDateFilterDTO();
+        dateFilter.filterKey = filterKey;
+        dateFilter.startDate = startDate;
+        dateFilter.endDate = endDate;
+        return getInvoicingRuntimeData(refreshToken, dateFilter, opportunityOwnerId);
+    }
+
+    @AuraEnabled
+    public static ReceivablesRuntimeDataDTO getReceivablesRuntimeData(
+        Long refreshToken,
+        String filterKey,
+        String startDate,
+        String endDate,
+        String opportunityOwnerId
+    ) {
+        BillingDateFilterDTO dateFilter = new BillingDateFilterDTO();
+        dateFilter.filterKey = filterKey;
+        dateFilter.startDate = startDate;
+        dateFilter.endDate = endDate;
+        return getReceivablesRuntimeData(refreshToken, dateFilter, opportunityOwnerId);
+    }
+
     public static OrdersRuntimeDataDTO getOrdersRuntimeData(Long refreshToken, BillingDateFilterDTO dateFilter) {
         return getOrdersRuntimeData(refreshToken, dateFilter, null);
     }
@@ -187,6 +229,22 @@ public with sharing class BillingControl_DataProvider {
     }
 
     @AuraEnabled
+    public static BillingControl_WorkOrderLedger.LedgerDetailWrapper getWorkOrderLedgerDetailForRange(
+        Id ledgerId,
+        String filterKey,
+        String startDate,
+        String endDate
+    ) {
+        if (String.isBlank(filterKey) && String.isBlank(startDate) && String.isBlank(endDate)) {
+            return BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(ledgerId, null);
+        }
+        BillingDateFilterDTO dateFilter = new BillingDateFilterDTO();
+        dateFilter.filterKey = filterKey;
+        dateFilter.startDate = startDate;
+        dateFilter.endDate = endDate;
+        return getWorkOrderLedgerDetailForRange(ledgerId, dateFilter);
+    }
+
     public static BillingControl_WorkOrderLedger.LedgerDetailWrapper getWorkOrderLedgerDetailForRange(
         Id ledgerId,
         BillingDateFilterDTO dateFilter
@@ -226,17 +284,14 @@ public with sharing class BillingControl_DataProvider {
 
     private static void loadInvoicingRuntimeData(Long refreshToken, InvoicingRuntimeDataDTO result) {
         try {
-            result.metrics = BillingControl_Invoicing.getServiceAppointmentBillingMetricsWithRefresh(
-                refreshToken,
-                result.filterContext
-            );
-            result.groups = BillingControl_Invoicing.getBillableServiceAppointmentGroupsWithRefresh(
-                refreshToken,
-                result.filterContext
-            );
+            Long ignoredRefreshToken = refreshToken;
+            BillingControl_BillingReadiness.Runtime runtime =
+                BillingControl_BillingReadiness.load(result.filterContext);
+            result.metrics = BillingControl_Invoicing.metricsFromRuntime(runtime);
+            result.groups = BillingControl_Invoicing.groupsFromRuntime(runtime);
             appendRuntimeWarnings(result.warnings, result.filterContext);
-            if (countInvoicingRows(result.groups) == 0) {
-                result.warnings.add('No ready-to-bill Service Appointments found.');
+            if (result.metrics == null || result.metrics.readyToBill == 0) {
+                result.warnings.add('No billable Opportunities found.');
             }
         } catch (Exception ex) {
             result.warnings.add('Invoicing dataset missing or invalid.');
@@ -420,7 +475,10 @@ public with sharing class BillingControl_DataProvider {
     }
 
     private static BillingDateFilterDTO defaultThisYearDateFilter(BillingDateFilterDTO dateFilter) {
-        if (dateFilter != null && !String.isBlank(dateFilter.filterKey)) {
+        if (dateFilter != null
+            && (!String.isBlank(dateFilter.filterKey)
+                || (!String.isBlank(dateFilter.startDate) && !String.isBlank(dateFilter.endDate)))
+        ) {
             return dateFilter;
         }
         BillingDateFilterDTO fallback = new BillingDateFilterDTO();
@@ -436,7 +494,12 @@ public with sharing class BillingControl_DataProvider {
         Boolean isDateTimeField,
         List<String> responseWarnings
     ) {
-        if (context == null || dateFilter == null || String.isBlank(dateFilter.filterKey)) {
+        if (context == null || dateFilter == null) {
+            return;
+        }
+        if (String.isBlank(dateFilter.filterKey)
+            && (String.isBlank(dateFilter.startDate) || String.isBlank(dateFilter.endDate))
+        ) {
             return;
         }
 
@@ -488,15 +551,20 @@ public with sharing class BillingControl_DataProvider {
     }
 
     public static DateRangeDTO resolveDateRangeForInvSync(BillingDateFilterDTO dateFilter) {
-        BillingDateFilterDTO resolvedFilter = dateFilter;
-        if (resolvedFilter == null || String.isBlank(resolvedFilter.filterKey)) {
-            resolvedFilter = new BillingDateFilterDTO();
-            resolvedFilter.filterKey = 'This Year';
-        }
-        return resolveDateRange(resolvedFilter, new List<String>());
+        return resolveDateRange(defaultThisYearDateFilter(dateFilter), new List<String>());
     }
 
     private static DateRangeDTO resolveDateRange(BillingDateFilterDTO dateFilter, List<String> responseWarnings) {
+        Date explicitStart = parseDateValue(dateFilter != null ? dateFilter.startDate : null);
+        Date explicitEnd = parseDateValue(dateFilter != null ? dateFilter.endDate : null);
+        if (explicitStart != null && explicitEnd != null) {
+            if (explicitStart > explicitEnd) {
+                responseWarnings.add('Custom date filter start date must be on or before end date.');
+                return null;
+            }
+            return new DateRangeDTO(explicitStart, explicitEnd);
+        }
+
         String normalizedKey = normalizeKey(dateFilter != null ? dateFilter.filterKey : null);
         if (String.isBlank(normalizedKey)) {
             return null;
@@ -531,17 +599,8 @@ public with sharing class BillingControl_DataProvider {
             );
         }
         if (normalizedKey == 'CUSTOM') {
-            Date startDate = parseDateValue(dateFilter.startDate);
-            Date endDate = parseDateValue(dateFilter.endDate);
-            if (startDate == null || endDate == null) {
-                responseWarnings.add('Custom date filter requires both start date and end date.');
-                return null;
-            }
-            if (startDate > endDate) {
-                responseWarnings.add('Custom date filter start date must be on or before end date.');
-                return null;
-            }
-            return new DateRangeDTO(startDate, endDate);
+            responseWarnings.add('Custom date filter requires both start date and end date.');
+            return null;
         }
 
         responseWarnings.add('Unsupported date filter key: ' + dateFilter.filterKey + '.');
@@ -1005,9 +1064,11 @@ public with sharing class BillingControl_DataProvider {
         result.metrics.completedLaterCount = 0;
         result.metrics.completedLaterAmount = 0;
         result.groups = new List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper>{
-            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('AGED_COMPLETED', 'Aged Completed Work (>2 Days)'),
-            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('READY_TO_BILL', 'Billable Service Appointments'),
-            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('UNBILLED_REVENUE', 'Uninvoiced Revenue')
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('DEPOSITS_DUE', 'Deposits Due'),
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('BALANCES_READY', 'Balances Ready'),
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('UNDER_INVOICED', 'Under-Invoiced'),
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('NEEDS_REVIEW', 'Needs Review'),
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('BLOCKED', 'Blocked')
         };
     }
 
@@ -1090,9 +1151,9 @@ public with sharing class BillingControl_DataProvider {
     }
 
     public class BillingDateFilterDTO {
-        @AuraEnabled public String filterKey;
-        @AuraEnabled public String startDate;
-        @AuraEnabled public String endDate;
+        @AuraEnabled public String filterKey { get; set; }
+        @AuraEnabled public String startDate { get; set; }
+        @AuraEnabled public String endDate { get; set; }
     }
 
     public class OrdersRuntimeDataDTO {

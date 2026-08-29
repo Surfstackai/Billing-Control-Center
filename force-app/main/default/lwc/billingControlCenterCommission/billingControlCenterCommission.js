@@ -4,8 +4,8 @@ import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Billing_Control_Center_Admin_Access';
 
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
-import getReceivablesRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getReceivablesRuntimeData';
-import updateCommissionPaid from '@salesforce/apex/BillingControl_Invoicing.updateCommissionPaid';
+import getTabRuntime from '@salesforce/apex/BillingControl_ReceivablesWorklist.getTabRuntime';
+import setInvoiceAmount from '@salesforce/apex/BillingControl_ReceivablesWorklist.setInvoiceAmount';
 import {
     MIN_COLUMN_WIDTH,
     RECEIVABLES_COLUMN_WIDTHS_KEY,
@@ -14,6 +14,7 @@ import {
     saveColumnWidths
 } from 'c/billingControlCenterColumnResize';
 import { compareAccountGroup, decorateAccountGroups } from 'c/billingControlCenterAccountGroup';
+import { resolveDateRange } from 'c/billingControlCenterDateFilter';
 
 const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -23,73 +24,100 @@ const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
 
 const KPI_CONFIG = [
     {
-        key: 'revenueUnderCollection',
-        developerKey: 'ACCOUNTS_RECEIVABLE',
-        countKey: 'revenueUnderCollectionCount',
-        title: 'Receivables Outstanding',
+        key: 'outstandingAr',
+        developerKey: 'OUTSTANDING_AR',
+        countKey: 'outstandingArCount',
+        amountKey: 'outstandingAr',
+        title: 'Outstanding AR',
         icon: 'utility:moneybag',
-        hint: 'Opportunity Amount where Billing Status = Billed (Outstanding Receivable)'
+        hint: 'Open invoice balances, regardless of invoice date.'
     },
     {
-        key: 'commissionEarned',
-        developerKey: 'COMMISSION_ACCRUED',
-        countKey: 'commissionEarnedCount',
-        title: 'Commission Accrued',
-        icon: 'utility:approval',
-        hint: 'Commission Amount on billed opportunities awaiting collection'
+        key: 'overdue',
+        developerKey: 'OVERDUE',
+        countKey: 'overdueCount',
+        amountKey: 'overdue',
+        title: 'Overdue',
+        icon: 'utility:clock',
+        hint: 'Open invoices past due date.'
     },
     {
-        key: 'commissionPayable',
-        developerKey: 'COMMISSION_PAYABLE',
-        countKey: 'commissionPayableCount',
-        title: 'Commission Payable',
-        icon: 'utility:currency',
-        hint: 'Commission Amount on paid opportunities with unpaid balance'
+        key: 'partiallyPaid',
+        developerKey: 'PARTIALLY_PAID',
+        countKey: 'partiallyPaidCount',
+        amountKey: 'partiallyPaid',
+        title: 'Partially Paid',
+        icon: 'utility:pay_by_check',
+        hint: 'Invoices with a remaining balance after a receipt.'
+    },
+    {
+        key: 'needsAmount',
+        developerKey: 'NEEDS_AMOUNT',
+        countKey: 'needsAmountCount',
+        title: 'Needs Amount',
+        icon: 'utility:warning',
+        hint: 'Invoice headers waiting for an amount before they can collect.'
+    },
+    {
+        key: 'depositsOutstanding',
+        developerKey: 'DEPOSITS_OUTSTANDING',
+        countKey: 'depositsOutstandingCount',
+        amountKey: 'depositsOutstanding',
+        title: 'Deposits Outstanding',
+        icon: 'utility:money',
+        hint: 'Open deposit invoices.'
     }
 ];
 
 const CATEGORY_KEYS = {
-    REVENUE_UNDER_COLLECTION: 'REVENUE_UNDER_COLLECTION',
+    OUTSTANDING_AR: 'OUTSTANDING_AR',
+    OVERDUE: 'OVERDUE',
+    PARTIALLY_PAID: 'PARTIALLY_PAID',
+    NEEDS_AMOUNT: 'NEEDS_AMOUNT',
+    DEPOSITS_OUTSTANDING: 'DEPOSITS_OUTSTANDING',
     COMMISSION_EARNED: 'COMMISSION_EARNED',
     COMMISSION_PAYABLE: 'COMMISSION_PAYABLE'
 };
 
+const VIEW_SALESPERSON = 'salesperson';
+const VIEW_ALL = 'all';
 const DEFAULT_HERO_TITLE = 'Receivables';
-const DEFAULT_HERO_SUBTITLE = 'Track open invoices, posted receipts, and commission payouts.';
-const DEFAULT_TABLE_TITLE = 'Receivables Outstanding';
+const DEFAULT_HERO_SUBTITLE =
+    'Collect by salesperson. Status filters the invoice list; open AR is not hidden by due-date window.';
+const DEFAULT_TABLE_TITLE = 'Outstanding AR';
 const DEFAULT_REFRESH_LABEL = 'Refresh';
 const DEFAULT_POST_RECEIPT_LABEL = 'Post Receipt';
 const DEFAULT_PAY_COMMISSION_LABEL = 'Pay Commission';
-const DEFAULT_DATE_FILTER = { filterKey: 'This Year' };
-const VISIBLE_KPI_DEVELOPER_KEYS = new Set([
-    'ACCOUNTS_RECEIVABLE',
-    'OUTSTANDING_RECEIVABLES',
-    'COMMISSION_ACCRUED',
-    'OUTSTANDING_COMMISSION',
-    'COMMISSION_PAYABLE'
-]);
+const STATUS_CHIP_LABELS = {
+    OUTSTANDING_AR: 'Outstanding',
+    OVERDUE: 'Overdue',
+    PARTIALLY_PAID: 'Partially Paid',
+    NEEDS_AMOUNT: 'Needs Amount',
+    DEPOSITS_OUTSTANDING: 'Deposits'
+};
+const DEFAULT_DATE_FILTER = resolveDateRange('This Month');
+const KPI_CATEGORY_BY_KEY = {
+    outstandingAr: CATEGORY_KEYS.OUTSTANDING_AR,
+    OUTSTANDING_AR: CATEGORY_KEYS.OUTSTANDING_AR,
+    ACCOUNTS_RECEIVABLE: CATEGORY_KEYS.OUTSTANDING_AR,
+    OUTSTANDING_RECEIVABLES: CATEGORY_KEYS.OUTSTANDING_AR,
+    overdue: CATEGORY_KEYS.OVERDUE,
+    OVERDUE: CATEGORY_KEYS.OVERDUE,
+    partiallyPaid: CATEGORY_KEYS.PARTIALLY_PAID,
+    PARTIALLY_PAID: CATEGORY_KEYS.PARTIALLY_PAID,
+    needsAmount: CATEGORY_KEYS.NEEDS_AMOUNT,
+    NEEDS_AMOUNT: CATEGORY_KEYS.NEEDS_AMOUNT,
+    depositsOutstanding: CATEGORY_KEYS.DEPOSITS_OUTSTANDING,
+    DEPOSITS_OUTSTANDING: CATEGORY_KEYS.DEPOSITS_OUTSTANDING
+};
 const SECTION_DISPLAY_ORDER = [
-    CATEGORY_KEYS.REVENUE_UNDER_COLLECTION,
-    CATEGORY_KEYS.COMMISSION_EARNED,
-    CATEGORY_KEYS.COMMISSION_PAYABLE
+    CATEGORY_KEYS.OUTSTANDING_AR,
+    CATEGORY_KEYS.OVERDUE,
+    CATEGORY_KEYS.PARTIALLY_PAID,
+    CATEGORY_KEYS.NEEDS_AMOUNT,
+    CATEGORY_KEYS.DEPOSITS_OUTSTANDING
 ];
-const RECEIVABLES_DATASET_KEYS = {
-    INVOICES: 'RECEIVABLES_INVOICES',
-    COMMISSIONS: 'RECEIVABLES_COMMISSIONS'
-};
 const receivablesRuntimeCache = new Map();
-const RECEIVABLES_SECTION_KEY_BY_CATEGORY = {
-    [CATEGORY_KEYS.REVENUE_UNDER_COLLECTION]: 'INVOICES',
-    [CATEGORY_KEYS.COMMISSION_EARNED]: 'COMMISSIONS',
-    [CATEGORY_KEYS.COMMISSION_PAYABLE]: 'COMMISSIONS'
-};
-const RECEIVABLES_KPI_DEFINITIONS = {
-    ACCOUNTS_RECEIVABLE: KPI_CONFIG[0],
-    OUTSTANDING_RECEIVABLES: KPI_CONFIG[0],
-    COMMISSION_ACCRUED: KPI_CONFIG[1],
-    OUTSTANDING_COMMISSION: KPI_CONFIG[1],
-    COMMISSION_PAYABLE: KPI_CONFIG[2]
-};
 
 function normalizeConfigKey(value) {
     return value ? String(value).trim().toUpperCase() : '';
@@ -121,7 +149,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     _dateFilter = { ...DEFAULT_DATE_FILTER };
     _dateFilterSignature = JSON.stringify(DEFAULT_DATE_FILTER);
     _isConnected = false;
-    opportunityOwnerId;
+    _opportunityOwnerId = null;
     userPickerDisplayInfo = {
         primaryField: 'Name',
         additionalFields: ['Username']
@@ -134,15 +162,25 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     @api useExternalToolbar = false;
 
     metrics = {};
+    invoiceSections = [];
     commissionSections = [];
     selectedRows = [];
     expandedRows = [];
+    searchKey = '';
+    viewMode = VIEW_SALESPERSON;
+    statusFilter = CATEGORY_KEYS.OUTSTANDING_AR;
+    salespersonStatusByOwner = {};
+    selectedKpiKey = 'outstandingAr';
+    activeAccordionSections = [];
     isMetricsLoading = true;
     isDataLoading = true;
     isRefreshing = false;
     isActionLoading = false;
     isPostReceiptModalOpen = false;
     selectedOpportunityForReceipt = null;
+    isSetAmountModalOpen = false;
+    selectedInvoiceForAmount = null;
+    setAmountValue;
     selectedLedgerId;
     showLedgerModal = false;
     errorMessage;
@@ -164,8 +202,12 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     set dateFilter(value) {
-        const normalizedValue = value ? { ...value } : null;
-        const signature = JSON.stringify(normalizedValue || {});
+        const normalizedValue = resolveDateRange(
+            value?.filterKey || DEFAULT_DATE_FILTER.filterKey,
+            value?.startDate,
+            value?.endDate
+        );
+        const signature = JSON.stringify(normalizedValue);
         if (signature === this._dateFilterSignature) {
             return;
         }
@@ -173,6 +215,21 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this._dateFilter = normalizedValue;
         this._dateFilterSignature = signature;
 
+        if (this._isConnected) {
+            this.loadData();
+        }
+    }
+
+    @api
+    get opportunityOwnerId() {
+        return this._opportunityOwnerId;
+    }
+
+    set opportunityOwnerId(value) {
+        if (value === this._opportunityOwnerId) {
+            return;
+        }
+        this._opportunityOwnerId = value;
         if (this._isConnected) {
             this.loadData();
         }
@@ -218,44 +275,84 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         return this.isMetricsLoading || this.isDataLoading || this.isRefreshing || this.isActionLoading;
     }
 
+    get heroClass() {
+        return this.useExternalToolbar ? 'hero hero_toolbar-only' : 'hero';
+    }
+
+    get showHeroIntro() {
+        return !this.useExternalToolbar;
+    }
+
+    get showFullPageSpinner() {
+        return (this.isMetricsLoading || this.isDataLoading) && !(this.invoiceSections || []).length;
+    }
+
+    get toolbarRefreshLabel() {
+        return this.isRefreshing ? 'Refreshing…' : this.refreshLabel;
+    }
+
+    get activeSectionNames() {
+        return this.activeAccordionSections;
+    }
+
+    get searchSummary() {
+        const trimmed = (this.searchKey || '').trim();
+        if (trimmed) {
+            return `Filtered by "${trimmed}"`;
+        }
+        return 'All matching invoices';
+    }
+
+    get isSalespersonView() {
+        return this.viewMode !== VIEW_ALL;
+    }
+
+    get isAllReceivablesView() {
+        return this.viewMode === VIEW_ALL;
+    }
+
+    get salespersonViewVariant() {
+        return this.isSalespersonView ? 'brand' : 'neutral';
+    }
+
+    get allReceivablesViewVariant() {
+        return this.isAllReceivablesView ? 'brand' : 'neutral';
+    }
+
+    get statusFilterLabel() {
+        return STATUS_CHIP_LABELS[this.statusFilter] || 'Outstanding';
+    }
+
+    get searchQuery() {
+        return (this.searchKey || '').trim().toLowerCase();
+    }
+
     get showDiagnostics() {
         return hasBillingControlCenterAdminAccess && this.providerWarnings.length > 0;
     }
 
-    get kpiTiles() {
-        if (!this.receivablesConfigLoaded) {
-            return KPI_CONFIG.map(definition => this.buildKpiTile(definition));
-        }
-
-        const configuredKpis = this.receivablesTabConfig?.kpis || [];
-        if (configuredKpis.length === 0) {
-            return KPI_CONFIG.map(definition => this.buildKpiTile(definition));
-        }
-
-        const tiles = [];
-        configuredKpis.forEach(configRecord => {
-            const developerKey = normalizeConfigKey(configRecord?.developerKey);
-            const definition = RECEIVABLES_KPI_DEFINITIONS[developerKey];
-
-            if (!definition) {
-                console.warn(
-                    `Skipping unsupported Receivables KPI config: ${configRecord?.developerKey || 'unknown'}`
-                );
-                return;
-            }
-
-            if (!VISIBLE_KPI_DEVELOPER_KEYS.has(developerKey)) {
-                return;
-            }
-
-            if (definition.datasetKey && !this.receivablesDatasetsByKey[definition.datasetKey]) {
-                return;
-            }
-
-            tiles.push(this.buildKpiTile(definition, configRecord));
+    get statusStripItems() {
+        return KPI_CONFIG.map(definition => {
+            const tile = this.buildKpiTile(
+                definition,
+                this.receivablesKpisByKey[definition.developerKey]
+            );
+            const isSelected = this.statusFilter === definition.developerKey;
+            return {
+                key: definition.key,
+                developerKey: definition.developerKey,
+                title:
+                    definition.developerKey === CATEGORY_KEYS.DEPOSITS_OUTSTANDING
+                        ? 'Deposits'
+                        : definition.title,
+                metricText: tile.metricText,
+                countText: tile.countText,
+                className: isSelected
+                    ? 'ar-summary-strip__item ar-summary-strip__item_selected'
+                    : 'ar-summary-strip__item',
+                ariaSelected: isSelected ? 'true' : 'false'
+            };
         });
-
-        return tiles.length > 0 ? tiles : [this.buildKpiTile(KPI_CONFIG[0])];
     }
 
     get heroTitle() {
@@ -286,11 +383,11 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         return [
             {
                 key: 'refresh',
-                label: this.refreshLabel,
+                label: this.toolbarRefreshLabel,
                 iconName: 'utility:refresh',
-                variant: 'brand',
+                variant: 'neutral',
                 disabled: this.isLoading,
-                title: this.refreshLabel
+                title: this.toolbarRefreshLabel
             }
         ];
     }
@@ -304,167 +401,186 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     get tableActions() {
-        if (!this.showTableShell) {
-            return [];
-        }
-
-        if (!this.receivablesConfigLoaded) {
-            return this.buildDefaultTableActions();
-        }
-
-        const actions = [];
-        if (this.receivablesActionsByKey.POST_RECEIPT) {
-            actions.push({
-                key: 'postReceipt',
-                label: this.postReceiptLabel,
-                variant: 'brand',
-                disabled: this.isPostReceiptDisabled,
-                title: this.postReceiptLabel
-            });
-        }
-        if (this.receivablesActionsByKey.PAY_COMMISSION) {
-            actions.push({
-                key: 'payCommission',
-                label: this.payCommissionLabel,
-                variant: 'neutral',
-                disabled: this.isPayCommissionDisabled,
-                title: this.payCommissionLabel
-            });
-        }
-        return actions;
+        return this.buildDefaultTableActions();
     }
 
     get showTableShell() {
-        if (!this.receivablesConfigLoaded) {
-            return true;
-        }
-        return this.getRenderableCommissionSections().length > 0;
+        return true;
     }
 
-    get accordionSections() {
+    get filteredStatusInvoices() {
+        return this.invoicesForCategory(this.statusFilter).map(invoice => this.decorateInvoice(invoice));
+    }
+
+    get visibleInvoiceCount() {
+        if (this.isAllReceivablesView) {
+            return this.filteredStatusInvoices.length;
+        }
+        return this.salespersonGroups.reduce(
+            (total, group) =>
+                total +
+                group.opportunityGroups.reduce(
+                    (groupTotal, opportunityGroup) =>
+                        groupTotal + (opportunityGroup.invoices || []).length,
+                    0
+                ),
+            0
+        );
+    }
+
+    get allReceivablesOpportunityGroups() {
+        return this.groupInvoicesByOpportunity(this.filteredStatusInvoices);
+    }
+
+    get allReceivablesEmpty() {
+        return this.allReceivablesOpportunityGroups.length === 0;
+    }
+
+    get salespersonGroups() {
+        const outstandingIds = this.invoiceIdsForCategory(CATEGORY_KEYS.OUTSTANDING_AR);
+        const overdueIds = this.invoiceIdsForCategory(CATEGORY_KEYS.OVERDUE);
+        const partialIds = this.invoiceIdsForCategory(CATEGORY_KEYS.PARTIALLY_PAID);
+        const needsIds = this.invoiceIdsForCategory(CATEGORY_KEYS.NEEDS_AMOUNT);
+        const depositIds = this.invoiceIdsForCategory(CATEGORY_KEYS.DEPOSITS_OUTSTANDING);
         const expandedKeys = new Set(this.expandedRows);
         const selectedKeys = new Set(this.selectedRows);
+        const byOwner = new Map();
 
-        return this.getRenderableCommissionSections().map(section => ({
-            ...section,
-            titleWithCount: `${section.categoryLabel} (${section.opportunityCount || 0})`,
-            isEmpty: (section.opportunityCount || 0) === 0,
-            salespersonCount: (section.salespeople || []).length,
-            sectionTotalAmount: section.totalAmount || 0,
-            sectionTotalCommission: section.totalCommission || 0,
-            sectionTotalPaid: section.totalPaid || 0,
-            salespeople: section.salespeople.map(salesperson => ({
-                ...salesperson,
-                isExpanded: expandedKeys.has(salesperson.key),
-                isSelected: selectedKeys.has(salesperson.key),
-                expandIcon: expandedKeys.has(salesperson.key) ? 'utility:chevrondown' : 'utility:chevronright',
-                expandAltText: expandedKeys.has(salesperson.key)
-                    ? 'Collapse opportunities'
-                    : 'Expand opportunities',
-                opportunities: salesperson.opportunities.map(opportunity => ({
-                    ...opportunity,
-                    isSelected: selectedKeys.has(opportunity.key) || selectedKeys.has(salesperson.key)
-                }))
-            }))
-        }));
+        this.uniqueSearchInvoices.forEach(invoice => {
+            const ownerKey = invoice.ownerId || 'unassigned';
+            if (!byOwner.has(ownerKey)) {
+                byOwner.set(ownerKey, {
+                    key: 'sp-' + ownerKey,
+                    ownerId: invoice.ownerId || null,
+                    ownerName: invoice.ownerName || 'Unassigned',
+                    invoices: []
+                });
+            }
+            byOwner.get(ownerKey).invoices.push(invoice);
+        });
+
+        return Array.from(byOwner.values())
+            .map(group => {
+                const ownerMatch = invoice =>
+                    (invoice.ownerId || 'unassigned') === (group.ownerId || 'unassigned');
+                const all = group.invoices;
+                const statusKey =
+                    this.salespersonStatusByOwner[group.key] || this.statusFilter;
+                const decorated = this.invoicesForCategory(statusKey)
+                    .filter(ownerMatch)
+                    .map(invoice => this.decorateInvoice(invoice));
+                const childKeys = decorated.map(invoice => invoice.key);
+                const isExpanded = expandedKeys.has(group.key);
+                const isSelected =
+                    childKeys.length > 0 && childKeys.every(key => selectedKeys.has(key));
+                return {
+                    ...group,
+                    outstandingAr: this.sumBalances(all, outstandingIds),
+                    overdue: this.sumBalances(all, overdueIds),
+                    invoiceCount: all.length,
+                    partiallyPaid: this.sumBalances(all, partialIds),
+                    partiallyPaidCount: all.filter(invoice => partialIds.has(invoice.invoiceId)).length,
+                    needsAmountCount: all.filter(invoice => needsIds.has(invoice.invoiceId)).length,
+                    depositsOutstanding: this.sumBalances(all, depositIds),
+                    depositsOutstandingCount: all.filter(invoice =>
+                        depositIds.has(invoice.invoiceId)
+                    ).length,
+                    isExpanded,
+                    ariaExpanded: isExpanded ? 'true' : 'false',
+                    isSelected,
+                    selectLabel: 'Select invoices for ' + group.ownerName,
+                    expandIcon: isExpanded ? 'utility:chevrondown' : 'utility:chevronright',
+                    expandAltText: isExpanded ? 'Collapse invoices' : 'Expand invoices',
+                    cardClass: isExpanded
+                        ? 'salesperson-card salesperson-card_expanded'
+                        : 'salesperson-card',
+                    tableLabel: 'Invoices for ' + group.ownerName,
+                    opportunityGroups: this.groupInvoicesByOpportunity(decorated),
+                    invoiceCountInStatus: decorated.length,
+                    hasInvoicesInStripStatus: this.invoicesForCategory(this.statusFilter).some(
+                        ownerMatch
+                    ),
+                    isEmpty: decorated.length === 0,
+                    statusChips: this.buildStatusChips(group.key)
+                };
+            })
+            .sort((left, right) => (right.outstandingAr || 0) - (left.outstandingAr || 0))
+            .filter(group => group.hasInvoicesInStripStatus);
     }
 
-    get selectedOpportunities() {
-        const selectedKeys = new Set(this.selectedRows);
-        const opportunitiesById = new Map();
+    get salespersonGroupsEmpty() {
+        return this.salespersonGroups.length === 0;
+    }
 
-        this.getRenderableCommissionSections().forEach(section => {
-            section.salespeople.forEach(salesperson => {
-                const parentSelected = selectedKeys.has(salesperson.key);
-                salesperson.opportunities.forEach(opportunity => {
-                    if (!parentSelected && !selectedKeys.has(opportunity.key)) {
-                        return;
-                    }
+    get uniqueSearchInvoices() {
+        const byId = new Map();
+        (this.invoiceSections || []).forEach(section => {
+            (section.invoices || []).forEach(invoice => {
+                if (!invoice.invoiceId || byId.has(invoice.invoiceId)) {
+                    return;
+                }
+                if (!this.invoiceMatchesSearch(invoice)) {
+                    return;
+                }
+                byId.set(invoice.invoiceId, invoice);
+            });
+        });
+        return Array.from(byId.values());
+    }
 
-                    const opportunityKey = opportunity.opportunityId
-                        ? String(opportunity.opportunityId)
-                        : opportunity.key;
-                    if (!opportunitiesById.has(opportunityKey)) {
-                        opportunitiesById.set(opportunityKey, {
-                            ...opportunity,
-                            ownerName: salesperson.salespersonName,
-                            categoryKey: section.categoryKey
-                        });
-                    }
+    get allCanonicalInvoices() {
+        const byId = new Map();
+        (this.invoiceSections || []).forEach(section => {
+            (section.invoices || []).forEach(invoice => {
+                if (!invoice.invoiceId || byId.has(invoice.invoiceId)) {
+                    return;
+                }
+                byId.set(invoice.invoiceId, {
+                    ...invoice,
+                    key: 'inv-' + invoice.invoiceId
                 });
             });
         });
-
-        return Array.from(opportunitiesById.values());
+        return Array.from(byId.values());
     }
 
     get selectedInvoiceOpportunities() {
-        return this.selectedOpportunities
-            .filter(
-                opportunity =>
-                    opportunity.categoryKey === CATEGORY_KEYS.REVENUE_UNDER_COLLECTION &&
-                    opportunity.billingStatus !== 'Paid'
-            )
-            .map(opportunity => ({
-                opportunityId: opportunity.opportunityId,
-                opportunityName: opportunity.opportunityName || opportunity.name,
-                accountName: opportunity.accountName,
-                amount: opportunity.amount || 0,
-                amountPaid: opportunity.amountPaid || 0,
-                balanceDue: opportunity.balanceDue || 0,
-                ownerName: opportunity.ownerName
+        const selectedKeys = new Set(this.selectedRows);
+        return this.allCanonicalInvoices
+            .filter(invoice => selectedKeys.has(invoice.key) && invoice.canPostReceipt)
+            .map(invoice => ({
+                id: invoice.opportunityId,
+                opportunityId: invoice.opportunityId,
+                invoiceId: invoice.invoiceId,
+                invoiceNumber: invoice.invoiceNumber,
+                name: invoice.opportunityName,
+                opportunityName: invoice.opportunityName,
+                accountName: invoice.accountName,
+                amount: invoice.totalAmount || 0,
+                amountPaid: invoice.amountPaid || 0,
+                balanceDue: invoice.balanceDue || 0,
+                ownerName: invoice.ownerName
             }));
     }
 
-    get selectedCommissionIds() {
-        const selectedKeys = new Set(this.selectedRows);
-        const commissionIds = new Set();
-
-        this.getRenderableCommissionSections().forEach(section => {
-            if (section.categoryKey !== CATEGORY_KEYS.COMMISSION_PAYABLE) {
-                return;
-            }
-
-            section.salespeople.forEach(salesperson => {
-                const parentSelected = selectedKeys.has(salesperson.key);
-                salesperson.opportunities.forEach(opportunity => {
-                    if (!opportunity.commissionId) {
-                        return;
-                    }
-                    if (parentSelected || selectedKeys.has(opportunity.key)) {
-                        commissionIds.add(opportunity.commissionId);
-                    }
-                });
-            });
-        });
-
-        return Array.from(commissionIds);
-    }
-
     get selectedCount() {
-        return this.selectedOpportunities.length;
-    }
-
-    get opportunityCount() {
-        return this.getRenderableCommissionSections().reduce(
-            (total, section) => total + (section.opportunityCount || 0),
-            0
-        );
-    }
-
-    get salespersonCount() {
-        return this.getRenderableCommissionSections().reduce(
-            (total, section) => total + (section.salespeople ? section.salespeople.length : 0),
-            0
-        );
-    }
-
-    get isPayCommissionDisabled() {
-        return this.selectedCommissionIds.length === 0 || this.isActionLoading;
+        const selectedKeys = new Set(this.selectedRows);
+        return this.allCanonicalInvoices.filter(invoice => selectedKeys.has(invoice.key)).length;
     }
 
     get isPostReceiptDisabled() {
         return this.selectedInvoiceOpportunities.length !== 1 || this.isActionLoading;
+    }
+
+    get selectedNeedsAmountInvoices() {
+        const selectedKeys = new Set(this.selectedRows);
+        return this.allCanonicalInvoices.filter(
+            invoice => selectedKeys.has(invoice.key) && invoice.needsAmount
+        );
+    }
+
+    get isSetAmountDisabled() {
+        return this.selectedNeedsAmountInvoices.length !== 1 || this.isActionLoading;
     }
 
     handleParentSelection(event) {
@@ -473,16 +589,19 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             return;
         }
 
-        const salesperson = this.findSalespersonByKey(rowKey);
-        const childRows = salesperson ? salesperson.opportunities : [];
+        const group = this.salespersonGroups.find(item => item.key === rowKey);
+        const childKeys = [];
+        (group?.opportunityGroups || []).forEach(opportunityGroup => {
+            (opportunityGroup.invoices || []).forEach(invoice => childKeys.push(invoice.key));
+        });
         const nextSelection = new Set(this.selectedRows);
 
         if (event.target.checked) {
             nextSelection.add(rowKey);
-            childRows.forEach(opportunity => nextSelection.add(opportunity.key));
+            childKeys.forEach(key => nextSelection.add(key));
         } else {
             nextSelection.delete(rowKey);
-            childRows.forEach(opportunity => nextSelection.delete(opportunity.key));
+            childKeys.forEach(key => nextSelection.delete(key));
         }
 
         this.setSelectedRows(Array.from(nextSelection));
@@ -538,6 +657,22 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         window.open(url, '_blank');
     }
 
+    async handleOpenInvoice(event) {
+        const invoiceId = event.currentTarget.dataset.id;
+        if (!invoiceId) {
+            return;
+        }
+        const url = await this[NavigationMixin.GenerateUrl]({
+            type: 'standard__recordPage',
+            attributes: {
+                recordId: invoiceId,
+                objectApiName: 'Invoice__c',
+                actionName: 'view'
+            }
+        });
+        window.open(url, '_blank');
+    }
+
     handleViewLedger(event) {
         const host =
             event.currentTarget?.closest?.('[data-ledger-id]') ||
@@ -585,12 +720,12 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
 
     handleDateFilterChange(event) {
         const detail = event.detail || {};
-        const filterKey = detail.filterKey || DEFAULT_DATE_FILTER.filterKey;
-        this.dateFilter = {
-            filterKey,
-            startDate: filterKey === 'Custom' ? detail.startDate || null : null,
-            endDate: filterKey === 'Custom' ? detail.endDate || null : null
-        };
+        this.dateFilter = resolveDateRange(
+            detail.filterKey || DEFAULT_DATE_FILTER.filterKey,
+            detail.startDate,
+            detail.endDate
+        );
+        this.emitSharedFilterChange();
     }
 
     handleOpportunityOwnerChange(event) {
@@ -599,46 +734,76 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             return;
         }
         this.opportunityOwnerId = nextOwnerId;
-        if (this._isConnected) {
-            this.loadData();
+        this.emitSharedFilterChange();
+    }
+
+    emitSharedFilterChange() {
+        if (!this.useExternalToolbar) {
+            return;
+        }
+        this.dispatchEvent(
+            new CustomEvent('sharedfilterchange', {
+                detail: {
+                    dateFilter: { ...this.dateFilter },
+                    opportunityOwnerId: this.opportunityOwnerId || null
+                }
+            })
+        );
+    }
+
+    handleViewChange(event) {
+        const view = event.currentTarget?.dataset?.view;
+        if (view === VIEW_ALL || view === VIEW_SALESPERSON) {
+            this.viewMode = view;
         }
     }
 
-    async handlePayCommission() {
-        if (this.isPayCommissionDisabled) {
+    handleSearchChange(event) {
+        this.searchKey = event.target.value || '';
+    }
+
+    handleGroupStatusClick(event) {
+        const status = event.currentTarget?.dataset?.status;
+        const ownerKey = event.currentTarget?.dataset?.key;
+        const normalized =
+            KPI_CATEGORY_BY_KEY[status] ||
+            KPI_CATEGORY_BY_KEY[normalizeConfigKey(status)] ||
+            normalizeConfigKey(status);
+        if (!ownerKey || !normalized || !SECTION_DISPLAY_ORDER.includes(normalized)) {
             return;
         }
-
-        this.isActionLoading = true;
-        this.errorMessage = undefined;
-
-        try {
-            await updateCommissionPaid({ commissionIds: this.selectedCommissionIds });
-            this.setSelectedRows([]);
-
-            this.dispatchEvent(
-                new ShowToastEvent({
-                    title: 'Commission Updated',
-                    message: 'Selected commissions were marked as fully paid.',
-                    variant: 'success'
-                })
-            );
-
-            this.isRefreshing = true;
-            await this.loadData(true);
-        } catch (error) {
-            this.errorMessage = this.reduceError(error);
-        } finally {
-            this.isRefreshing = false;
-            this.isActionLoading = false;
+        this.salespersonStatusByOwner = {
+            ...this.salespersonStatusByOwner,
+            [ownerKey]: normalized
+        };
+        if (!this.expandedRows.includes(ownerKey)) {
+            this.setExpandedRows([...this.expandedRows, ownerKey]);
         }
+    }
+
+    applyStatusFilter(statusKey) {
+        const normalized =
+            KPI_CATEGORY_BY_KEY[statusKey] ||
+            KPI_CATEGORY_BY_KEY[normalizeConfigKey(statusKey)] ||
+            normalizeConfigKey(statusKey);
+        if (!normalized || !SECTION_DISPLAY_ORDER.includes(normalized)) {
+            return;
+        }
+        this.statusFilter = normalized;
+        const kpi = KPI_CONFIG.find(definition => definition.developerKey === normalized);
+        this.selectedKpiKey = kpi?.key || normalized;
+        this.salespersonStatusByOwner = {};
+    }
+
+    handleStatusStripClick(event) {
+        this.applyStatusFilter(event.currentTarget?.dataset?.status);
     }
 
     handleTableActionClick(event) {
         if (event.detail?.key === 'postReceipt') {
             this.handleOpenPostReceipt();
-        } else if (event.detail?.key === 'payCommission') {
-            this.handlePayCommission();
+        } else if (event.detail?.key === 'setInvoiceAmount') {
+            this.handleOpenSetAmount();
         }
     }
 
@@ -647,19 +812,70 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             return;
         }
 
-        const selectedOpportunity = this.selectedInvoiceOpportunities[0];
-        this.selectedOpportunityForReceipt = selectedOpportunity
+        const selectedInvoice = this.selectedInvoiceOpportunities[0];
+        this.selectedOpportunityForReceipt = selectedInvoice
             ? {
-                id: selectedOpportunity.opportunityId,
-                name: selectedOpportunity.opportunityName,
-                accountName: selectedOpportunity.accountName,
-                amount: selectedOpportunity.amount,
-                amountPaid: selectedOpportunity.amountPaid,
-                balanceDue: selectedOpportunity.balanceDue,
-                ownerName: selectedOpportunity.ownerName
+                id: selectedInvoice.opportunityId,
+                invoiceId: selectedInvoice.invoiceId,
+                invoiceNumber: selectedInvoice.invoiceNumber,
+                name: selectedInvoice.opportunityName,
+                accountName: selectedInvoice.accountName,
+                amount: selectedInvoice.amount,
+                amountPaid: selectedInvoice.amountPaid,
+                balanceDue: selectedInvoice.balanceDue,
+                ownerName: selectedInvoice.ownerName
             }
             : null;
         this.isPostReceiptModalOpen = this.selectedOpportunityForReceipt !== null;
+    }
+
+    handleOpenSetAmount() {
+        if (this.isSetAmountDisabled) {
+            return;
+        }
+        this.selectedInvoiceForAmount = this.selectedNeedsAmountInvoices[0];
+        this.setAmountValue = null;
+        this.isSetAmountModalOpen = true;
+    }
+
+    handleSetAmountClose() {
+        this.isSetAmountModalOpen = false;
+        this.selectedInvoiceForAmount = null;
+        this.setAmountValue = null;
+    }
+
+    handleSetAmountChange(event) {
+        this.setAmountValue = event.target.value;
+    }
+
+    async handleSetAmountSave() {
+        const amount = Number(this.setAmountValue);
+        if (!this.selectedInvoiceForAmount?.invoiceId || !Number.isFinite(amount) || amount <= 0) {
+            this.errorMessage = 'Enter an invoice amount greater than 0.';
+            return;
+        }
+        this.isActionLoading = true;
+        this.errorMessage = undefined;
+        try {
+            await setInvoiceAmount({
+                invoiceId: this.selectedInvoiceForAmount.invoiceId,
+                totalAmount: amount
+            });
+            this.handleSetAmountClose();
+            this.setSelectedRows([]);
+            this.dispatchEvent(
+                new ShowToastEvent({
+                    title: 'Invoice Amount Set',
+                    message: 'The invoice amount was saved.',
+                    variant: 'success'
+                })
+            );
+            await this.loadData(true);
+        } catch (error) {
+            this.errorMessage = this.reduceError(error);
+        } finally {
+            this.isActionLoading = false;
+        }
     }
 
     handlePostReceiptClose() {
@@ -689,64 +905,31 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                 title: this.postReceiptLabel
             },
             {
-                key: 'payCommission',
-                label: this.payCommissionLabel,
+                key: 'setInvoiceAmount',
+                label: 'Set Invoice Amount',
                 variant: 'neutral',
-                disabled: this.isPayCommissionDisabled,
-                title: this.payCommissionLabel
+                disabled: this.isSetAmountDisabled,
+                title: 'Set Invoice Amount'
             }
         ];
     }
 
     buildKpiTile(definition, configRecord) {
+        const countValue = this.metrics[definition.countKey] || 0;
         return {
             ...definition,
             title: definition.title,
             icon: configRecord?.iconName || definition.icon,
-            metricText: CURRENCY_FORMATTER.format(this.metrics[definition.key] || 0),
+            metricText: definition.amountKey
+                ? CURRENCY_FORMATTER.format(this.metrics[definition.amountKey] || 0)
+                : String(countValue),
             countText: this.buildKpiCountText(definition.countKey)
         };
     }
 
     getRenderableCommissionSections() {
-        let sections;
-        if (!this.receivablesConfigLoaded) {
-            sections = this.commissionSections;
-        } else {
-            const configuredSections = this.receivablesTabConfig?.sections || [];
-            if (configuredSections.length === 0) {
-                sections = this.commissionSections;
-            } else {
-                const supportedSectionKeys = new Set();
-                configuredSections.forEach(configRecord => {
-                    const developerKey = normalizeConfigKey(configRecord?.developerKey);
-                    if (developerKey === 'INVOICES' || developerKey === 'COMMISSIONS') {
-                        supportedSectionKeys.add(developerKey);
-                        return;
-                    }
-
-                    console.warn(
-                        `Skipping unsupported Receivables section config: ${configRecord?.developerKey || 'unknown'}`
-                    );
-                });
-
-                if (supportedSectionKeys.size === 0) {
-                    sections = this.commissionSections;
-                } else {
-                    sections = this.commissionSections.filter(section => {
-                        const sectionKey = RECEIVABLES_SECTION_KEY_BY_CATEGORY[section.categoryKey];
-                        if (!sectionKey || !supportedSectionKeys.has(sectionKey)) {
-                            return false;
-                        }
-
-                        const datasetKey = RECEIVABLES_DATASET_KEYS[sectionKey];
-                        return Boolean(this.receivablesDatasetsByKey[datasetKey]);
-                    });
-                }
-            }
-        }
-
-        return [...sections].sort((left, right) => {
+        const sections = [...(this.invoiceSections || []), ...(this.commissionSections || [])];
+        return sections.sort((left, right) => {
             const leftIndex = SECTION_DISPLAY_ORDER.indexOf(left.categoryKey);
             const rightIndex = SECTION_DISPLAY_ORDER.indexOf(right.categoryKey);
             return (leftIndex === -1 ? SECTION_DISPLAY_ORDER.length : leftIndex)
@@ -802,6 +985,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                 ...section,
                 categoryKey,
                 categoryLabel: section.categoryLabel || `Category ${sectionIndex + 1}`,
+                isInvoiceSection: false,
                 opportunityCount:
                     section.opportunityCount != null
                         ? section.opportunityCount
@@ -812,6 +996,125 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                 salespeople
             };
         });
+    }
+
+    normalizeInvoiceSections(sections) {
+        return (sections || []).map((section, sectionIndex) => {
+            const categoryKey = section.categoryKey || `INVOICE_CATEGORY_${sectionIndex}`;
+            const invoices = (section.rows || []).map((invoice, invoiceIndex) => ({
+                ...invoice,
+                key: 'inv-' + (invoice.invoiceId || invoiceIndex),
+                payments: invoice.payments || []
+            }));
+            return {
+                ...section,
+                categoryKey,
+                categoryLabel: section.categoryLabel || `Category ${sectionIndex + 1}`,
+                isInvoiceSection: true,
+                invoices,
+                invoiceCount: invoices.length,
+                totalAmount: section.totalAmount || 0,
+                salespeople: []
+            };
+        });
+    }
+
+    invoicesForCategory(categoryKey) {
+        const section = (this.invoiceSections || []).find(item => item.categoryKey === categoryKey);
+        return (section?.invoices || []).filter(invoice => this.invoiceMatchesSearch(invoice));
+    }
+
+    invoiceIdsForCategory(categoryKey) {
+        const section = (this.invoiceSections || []).find(item => item.categoryKey === categoryKey);
+        return new Set((section?.invoices || []).map(invoice => invoice.invoiceId).filter(Boolean));
+    }
+
+    sumBalances(invoices, idSet) {
+        return (invoices || []).reduce((total, invoice) => {
+            if (!idSet.has(invoice.invoiceId)) {
+                return total;
+            }
+            return total + Number(invoice.balanceDue || 0);
+        }, 0);
+    }
+
+    invoiceMatchesSearch(invoice) {
+        const searchQuery = this.searchQuery;
+        if (!searchQuery) {
+            return true;
+        }
+        const haystack = [
+            invoice.invoiceNumber,
+            invoice.quoteNumber,
+            invoice.opportunityName,
+            invoice.accountName,
+            invoice.ownerName,
+            invoice.status,
+            invoice.invoiceType
+        ]
+            .join(' ')
+            .toLowerCase();
+        return haystack.includes(searchQuery);
+    }
+
+    decorateInvoice(invoice) {
+        const key = 'inv-' + invoice.invoiceId;
+        const isExpanded = this.expandedRows.includes(key);
+        return {
+            ...invoice,
+            key,
+            isExpanded,
+            isSelected: this.selectedRows.includes(key),
+            expandIcon: isExpanded ? 'utility:chevrondown' : 'utility:chevronright',
+            expandAltText: isExpanded ? 'Collapse payment history' : 'Expand payment history',
+            hasPayments: (invoice.payments || []).length > 0,
+            paymentRowKey: key + '-payments',
+            paymentHeaderKey: key + '-payment-head'
+        };
+    }
+
+    buildStatusChips(ownerKey) {
+        const selectedStatus = this.salespersonStatusByOwner[ownerKey] || this.statusFilter;
+        return SECTION_DISPLAY_ORDER.map(status => ({
+            key: ownerKey + '-chip-' + status,
+            status,
+            label: STATUS_CHIP_LABELS[status] || status,
+            className:
+                status === selectedStatus ? 'status-chip status-chip_selected' : 'status-chip',
+            ariaSelected: status === selectedStatus ? 'true' : 'false'
+        }));
+    }
+
+    groupInvoicesByOpportunity(invoices) {
+        const groups = [];
+        const groupById = new Map();
+        (invoices || []).forEach(invoice => {
+            const opportunityId = invoice.opportunityId || 'none';
+            if (!groupById.has(opportunityId)) {
+                const metaParts = [
+                    invoice.accountName,
+                    invoice.quoteNumber ? 'Quote ' + invoice.quoteNumber : null
+                ].filter(Boolean);
+                const group = {
+                    key: 'opp-' + opportunityId,
+                    headerKey: 'opp-header-' + opportunityId,
+                    opportunityId: invoice.opportunityId,
+                    opportunityName: invoice.opportunityName || 'Untitled opportunity',
+                    quoteNumber: invoice.quoteNumber,
+                    accountName: invoice.accountName,
+                    billingStatus: invoice.billingStatus,
+                    invoicedTotal: invoice.opportunityInvoiced,
+                    paidTotal: invoice.opportunityPaid,
+                    outstanding: invoice.opportunityOutstanding,
+                    metaText: metaParts.join(' · '),
+                    invoices: []
+                };
+                groupById.set(opportunityId, group);
+                groups.push(group);
+            }
+            groupById.get(opportunityId).invoices.push(invoice);
+        });
+        return groups;
     }
 
     findSalespersonByKey(rowKey) {
@@ -829,12 +1132,16 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         const validParentKeys = new Set();
         const validKeys = new Set();
 
-        this.getRenderableCommissionSections().forEach(section => {
-            (section.salespeople || []).forEach(salesperson => {
-                validParentKeys.add(salesperson.key);
-                validKeys.add(salesperson.key);
-                (salesperson.opportunities || []).forEach(opportunity => validKeys.add(opportunity.key));
-            });
+        this.allCanonicalInvoices.forEach(invoice => {
+            validParentKeys.add(invoice.key);
+            validKeys.add(invoice.key);
+        });
+        const ownerKeys = new Set(
+            this.allCanonicalInvoices.map(invoice => 'sp-' + (invoice.ownerId || 'unassigned'))
+        );
+        ownerKeys.forEach(key => {
+            validParentKeys.add(key);
+            validKeys.add(key);
         });
 
         this.setExpandedRows(this.expandedRows.filter(key => validParentKeys.has(key)));
@@ -850,8 +1157,15 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     async loadData(forceRefresh = false) {
-        this.isMetricsLoading = true;
-        this.isDataLoading = true;
+        const hasExistingSections = (this.commissionSections || []).length > 0;
+        if (hasExistingSections) {
+            this.isRefreshing = true;
+            this.isMetricsLoading = false;
+            this.isDataLoading = false;
+        } else {
+            this.isMetricsLoading = true;
+            this.isDataLoading = true;
+        }
         this.errorMessage = undefined;
         const cacheKey = buildRuntimeCacheKey(this.dateFilter, this.opportunityOwnerId);
 
@@ -864,9 +1178,11 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             }
 
             const refreshToken = forceRefresh ? Date.now() : null;
-            const data = await getReceivablesRuntimeData({
+            const data = await getTabRuntime({
                 refreshToken,
-                dateFilter: this.dateFilter || null,
+                filterKey: this.dateFilter?.filterKey || DEFAULT_DATE_FILTER.filterKey,
+                startDate: this.dateFilter?.startDate || null,
+                endDate: this.dateFilter?.endDate || null,
                 opportunityOwnerId: this.opportunityOwnerId || null
             });
             receivablesRuntimeCache.set(cacheKey, cloneRuntimeData(data));
@@ -874,6 +1190,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         } catch (error) {
             this.providerWarnings = [];
             this.metrics = {};
+            this.invoiceSections = [];
             this.commissionSections = [];
             this.errorMessage = this.reduceError(error);
             this.setSelectedRows([]);
@@ -881,6 +1198,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         } finally {
             this.isMetricsLoading = false;
             this.isDataLoading = false;
+            this.isRefreshing = false;
         }
     }
 
@@ -888,8 +1206,14 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this.providerWarnings = data?.warnings || [];
         (data?.warnings || []).forEach(warning => console.warn(warning));
         this.metrics = data?.metrics || {};
-        this.commissionSections = this.normalizeSections(data?.sections || []);
+        this.invoiceSections = this.normalizeInvoiceSections(data?.invoiceSections || []);
+        this.commissionSections = this.normalizeSections(data?.commissionSections || []);
         this.reconcileActiveState();
+        const hasExpandedOwner = this.expandedRows.some(key => String(key).startsWith('sp-'));
+        const firstOwner = this.salespersonGroups[0];
+        if (!hasExpandedOwner && firstOwner) {
+            this.setExpandedRows([...this.expandedRows, firstOwner.key]);
+        }
     }
 
     handleColumnResizeStart(event) {
@@ -966,7 +1290,10 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         if (countKey === 'commissionEarnedCount' || countKey === 'commissionPayableCount') {
             return `${normalizedCount} ${normalizedCount === 1 ? 'Commission' : 'Commissions'}`;
         }
-        return `${normalizedCount} ${normalizedCount === 1 ? 'Opportunity' : 'Opportunities'}`;
+        if (countKey === 'needsAmountCount') {
+            return `${normalizedCount} ${normalizedCount === 1 ? 'Invoice' : 'Invoices'}`;
+        }
+        return `${normalizedCount} ${normalizedCount === 1 ? 'Invoice' : 'Invoices'}`;
     }
 
     async loadReceivablesConfig() {

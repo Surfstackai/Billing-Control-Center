@@ -1,5 +1,5 @@
 import { createElement } from 'lwc';
-import BillingControlCenterDateFilter from 'c/billingControlCenterDateFilter';
+import BillingControlCenterDateFilter, { resolveDateRange } from 'c/billingControlCenterDateFilter';
 
 function build(props = {}) {
     const element = createElement('c-billing-control-center-date-filter', {
@@ -29,11 +29,31 @@ describe('c-billing-control-center-date-filter', () => {
         }
     });
 
-    it('defaults to This Year', () => {
-        expect(build().selectedFilterKey).toBe('This Year');
+    it('defaults to This Month', () => {
+        expect(build().selectedFilterKey).toBe('This Month');
     });
 
-    it('emits a preset without custom dates', async () => {
+    it('shows resolved preset bounds next to the menu', async () => {
+        const element = build();
+        await Promise.resolve();
+        const bounds = element.shadowRoot.querySelector('.bcc-date-filter__bounds');
+        expect(bounds).not.toBeNull();
+        expect(bounds.textContent).toMatch(/\d{2}\/\d{2}\/\d{4}\s+–\s+\d{2}\/\d{2}\/\d{4}/);
+    });
+
+    it('emits This Month with the calendar-month bounds Apex must query', async () => {
+        const element = build();
+        const handler = jest.fn();
+        element.addEventListener('datefilterchange', handler);
+
+        selectPreset(element, 'This Month');
+        await Promise.resolve();
+
+        expect(handler.mock.calls[0][0].detail).toEqual(resolveDateRange('This Month'));
+        expect(handler.mock.calls[0][0].detail.startDate).toMatch(/^\d{4}-\d{2}-01$/);
+    });
+
+    it('emits a preset with resolved start and end dates', async () => {
         const element = build();
         const handler = jest.fn();
         element.addEventListener('datefilterchange', handler);
@@ -42,11 +62,9 @@ describe('c-billing-control-center-date-filter', () => {
         await Promise.resolve();
 
         expect(handler).toHaveBeenCalledTimes(1);
-        expect(handler.mock.calls[0][0].detail).toEqual({
-            filterKey: 'Last Year',
-            startDate: null,
-            endDate: null
-        });
+        expect(handler.mock.calls[0][0].detail).toEqual(resolveDateRange('Last Year'));
+        expect(handler.mock.calls[0][0].detail.startDate).not.toBeNull();
+        expect(handler.mock.calls[0][0].detail.endDate).not.toBeNull();
     });
 
     it('emits every preset key the server can resolve', async () => {

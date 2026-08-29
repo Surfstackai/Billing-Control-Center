@@ -11,6 +11,7 @@ import {
     saveColumnWidths
 } from 'c/billingControlCenterColumnResize';
 import { decorateAccountGroups, sortRowsWithAccountGroup } from 'c/billingControlCenterAccountGroup';
+import { resolveDateRange } from 'c/billingControlCenterDateFilter';
 
 const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -44,6 +45,14 @@ const WORK_TYPE_GROUP_LABELS = {
     [WORK_TYPE_GROUP_OTHER]: 'Other',
     [WORK_TYPE_GROUP_PIT_CLEANING]: 'Pit Cleaning'
 };
+
+function defaultExpandedWorkTypeGroups(bucketKeys = BUCKET_KEYS) {
+    return bucketKeys.flatMap(bucketKey => [
+        `${bucketKey}-${WORK_TYPE_GROUP_PIT_CLEANING}`,
+        `${bucketKey}-${WORK_TYPE_GROUP_OTHER}`
+    ]);
+}
+
 const DEFAULT_HERO_TITLE = 'Work Order Ledger';
 const DEFAULT_HERO_SUBTITLE = 'Accounting Reconciliation';
 const DEFAULT_TABLE_TITLE = 'Work Order Ledger by bucket';
@@ -78,7 +87,7 @@ const KPI_CONFIGS = [
         hint: 'Work Orders with an actual start and no actual end.'
     }
 ];
-const DEFAULT_DATE_FILTER = { filterKey: 'This Year' };
+const DEFAULT_DATE_FILTER = resolveDateRange('This Month');
 
 const WORK_ORDER_COLUMNS = [
     {
@@ -104,6 +113,14 @@ const WORK_ORDER_COLUMNS = [
             label: { fieldName: 'opportunityName' },
             target: '_blank'
         }
+    },
+    {
+        developerKey: 'QUOTE_NUMBER',
+        configFieldApiName: 'quoteNumber',
+        label: 'Quote #',
+        fieldName: 'quoteNumber',
+        type: 'text',
+        sortable: true
     },
     {
         developerKey: 'WORK_TYPE',
@@ -197,6 +214,7 @@ const WORK_ORDER_COLUMNS = [
 const COL_MODIFIER_BY_KEY = {
     ACCOUNT: 'account',
     OPPORTUNITY: 'opportunity',
+    QUOTE_NUMBER: 'default',
     WORK_TYPE: 'work-type',
     WORK_ORDER: 'work-order',
     SERVICE_APPOINTMENTS: 'service-appointment',
@@ -307,6 +325,7 @@ function buildRenderableColumns(columns, sortedBy, sortDirection, columnWidths) 
             isLeadColumn: index === 0,
             isAccount: developerKey === 'ACCOUNT',
             isOpportunity: developerKey === 'OPPORTUNITY',
+            isQuoteNumber: developerKey === 'QUOTE_NUMBER',
             isWorkType: developerKey === 'WORK_TYPE',
             isWorkOrder: developerKey === 'WORK_ORDER',
             isServiceAppointment: developerKey === 'SERVICE_APPOINTMENTS',
@@ -397,6 +416,7 @@ function normalizeAppointmentRows(row) {
         return {
             ...opportunity,
             lineKey,
+            quoteNumber: opportunity.quoteNumber,
             opportunityUrl: opportunity.opportunityId
                 ? `/lightning/r/Opportunity/${opportunity.opportunityId}/view`
                 : null
@@ -415,7 +435,7 @@ function normalizeAppointmentRows(row) {
     }, []);
 
     const opportunitySearchTerms = relatedOpportunities.reduce((terms, opportunity) => {
-        terms.push(opportunity.opportunityName, opportunity.ownerName);
+        terms.push(opportunity.opportunityName, opportunity.quoteNumber, opportunity.ownerName);
         return terms;
     }, []);
 
@@ -705,7 +725,7 @@ export default class BillingControlCenterOrders extends LightningElement {
     _dateFilterSignature = JSON.stringify(DEFAULT_DATE_FILTER);
     _isConnected = false;
     _loadSequence = 0;
-    opportunityOwnerId;
+    _opportunityOwnerId = null;
     userPickerDisplayInfo = {
         primaryField: 'Name',
         additionalFields: ['Username']
@@ -724,12 +744,15 @@ export default class BillingControlCenterOrders extends LightningElement {
     viewState = {
         listViewMode: LIST_VIEW_ACCOUNT,
         sortState: defaultSortState(),
-        expandedWorkTypeGroups: []
+        expandedWorkTypeGroups: defaultExpandedWorkTypeGroups()
     };
     kpiState = {};
     errorMessage;
     providerWarnings = [];
     isLoading = true;
+    isRefreshing = false;
+    selectedKpiKey;
+    activeAccordionSections = [];
     ordersTabConfig;
     ordersConfigLoaded = false;
     ordersDatasetIsActive = true;
@@ -775,8 +798,27 @@ export default class BillingControlCenterOrders extends LightningElement {
         this.applyDateFilter(value);
     }
 
+    @api
+    get opportunityOwnerId() {
+        return this._opportunityOwnerId;
+    }
+
+    set opportunityOwnerId(value) {
+        if (value === this._opportunityOwnerId) {
+            return;
+        }
+        this._opportunityOwnerId = value;
+        if (this._isConnected) {
+            this.loadData();
+        }
+    }
+
     applyDateFilter(value) {
-        const normalizedValue = value ? { ...value } : { ...DEFAULT_DATE_FILTER };
+        const normalizedValue = resolveDateRange(
+            value?.filterKey || DEFAULT_DATE_FILTER.filterKey,
+            value?.startDate,
+            value?.endDate
+        );
         const signature = JSON.stringify(normalizedValue);
         if (signature === this._dateFilterSignature) {
             return;
@@ -823,6 +865,34 @@ export default class BillingControlCenterOrders extends LightningElement {
         return this.ordersActionsByKey.REFRESH?.label || DEFAULT_REFRESH_LABEL;
     }
 
+    get toolbarRefreshLabel() {
+        return this.isRefreshing ? 'Refreshing…' : this.refreshLabel;
+    }
+
+    get heroClass() {
+        return this.useExternalToolbar ? 'hero hero_toolbar-only' : 'hero';
+    }
+
+    get showHeroIntro() {
+        return !this.useExternalToolbar;
+    }
+
+    get showFullPageSpinner() {
+        return this.isLoading && !(this.sections || []).length;
+    }
+
+    get isToolbarBusy() {
+        return this.isLoading || this.isRefreshing;
+    }
+
+    get kpiLegendText() {
+        return 'KPI tiles count uninvoiced work still to bill. Lists still show invoiced visits.';
+    }
+
+    get activeSectionNames() {
+        return this.activeAccordionSections;
+    }
+
     get heroActions() {
         if (this.useExternalToolbar) {
             return [];
@@ -835,11 +905,11 @@ export default class BillingControlCenterOrders extends LightningElement {
         return [
             {
                 key: 'refresh',
-                label: this.refreshLabel,
+                label: this.toolbarRefreshLabel,
                 iconName: 'utility:refresh',
-                variant: 'brand',
-                disabled: this.isLoading,
-                title: this.refreshLabel
+                variant: 'neutral',
+                disabled: this.isLoading || this.isRefreshing,
+                title: this.toolbarRefreshLabel
             }
         ];
     }
@@ -971,7 +1041,7 @@ export default class BillingControlCenterOrders extends LightningElement {
         this.viewState = {
             listViewMode: next,
             sortState: nextSort,
-            expandedWorkTypeGroups: []
+            expandedWorkTypeGroups: defaultExpandedWorkTypeGroups()
         };
     }
 
@@ -1009,13 +1079,13 @@ export default class BillingControlCenterOrders extends LightningElement {
 
     handleDateFilterChange(event) {
         const detail = event.detail || {};
-        const filterKey = detail.filterKey || DEFAULT_DATE_FILTER.filterKey;
-        this._dateFilter = {
-            filterKey,
-            startDate: filterKey === 'Custom' ? detail.startDate || null : null,
-            endDate: filterKey === 'Custom' ? detail.endDate || null : null
-        };
+        this._dateFilter = resolveDateRange(
+            detail.filterKey || DEFAULT_DATE_FILTER.filterKey,
+            detail.startDate,
+            detail.endDate
+        );
         this._dateFilterSignature = JSON.stringify(this._dateFilter);
+        this.emitSharedFilterChange();
         if (this._isConnected) {
             this.loadData(true);
         }
@@ -1026,10 +1096,54 @@ export default class BillingControlCenterOrders extends LightningElement {
         if (nextOwnerId === this.opportunityOwnerId) {
             return;
         }
-        this.opportunityOwnerId = nextOwnerId;
+        this._opportunityOwnerId = nextOwnerId;
+        this.emitSharedFilterChange();
         if (this._isConnected) {
             this.loadData();
         }
+    }
+
+    emitSharedFilterChange() {
+        if (!this.useExternalToolbar) {
+            return;
+        }
+        this.dispatchEvent(
+            new CustomEvent('sharedfilterchange', {
+                detail: {
+                    dateFilter: { ...this.dateFilter },
+                    opportunityOwnerId: this.opportunityOwnerId || null
+                }
+            })
+        );
+    }
+
+    handleKpiTileClick(event) {
+        const detail = event.detail || {};
+        const rawKey = detail.developerKey || detail.key;
+        this.selectedKpiKey = rawKey;
+        const bucketKey = normalizeConfigKey(
+            KPI_CONFIGS.find(
+                config =>
+                    config.key === rawKey ||
+                    normalizeConfigKey(config.developerKey) === normalizeConfigKey(rawKey)
+            )?.developerKey || rawKey
+        );
+        if (!bucketKey || !BUCKET_KEYS.includes(bucketKey)) {
+            return;
+        }
+
+        this.activeAccordionSections = [bucketKey];
+        const nextExpanded = new Set(this.expandedWorkTypeGroups);
+        nextExpanded.add(`${bucketKey}-${WORK_TYPE_GROUP_PIT_CLEANING}`);
+        nextExpanded.add(`${bucketKey}-${WORK_TYPE_GROUP_OTHER}`);
+        this.setViewState({ expandedWorkTypeGroups: Array.from(nextExpanded) });
+
+        Promise.resolve().then(() => {
+            const section = this.template.querySelector(
+                `lightning-accordion-section[name="${bucketKey}"]`
+            );
+            section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
     }
 
     buildKpiTilesFromDefinitions(definitions) {
@@ -1132,6 +1246,17 @@ export default class BillingControlCenterOrders extends LightningElement {
             new Set(this.expandedWorkTypeGroups)
         );
 
+        const kpiDefinition = KPI_CONFIGS.find(
+            tile => normalizeConfigKey(tile.developerKey) === normalizeConfigKey(section.bucketKey)
+        );
+        const kpiCount = kpiDefinition ? this.kpiState[kpiDefinition.countKey] : undefined;
+        const listCount = visibleAppointmentCount;
+        const showCountCaption =
+            listCount !== undefined && kpiCount !== undefined && listCount !== kpiCount;
+        const countCaption = showCountCaption
+            ? `${listCount} in list · ${kpiCount} still to bill (KPI)`
+            : undefined;
+
         return {
             bucketKey: section.bucketKey,
             sectionLabel: label,
@@ -1144,6 +1269,10 @@ export default class BillingControlCenterOrders extends LightningElement {
             sortDirection: bucketSort.sortDirection,
             columns: columns,
             visibleAppointmentCount,
+            kpiCount,
+            listCount,
+            showCountCaption,
+            countCaption,
             sectionOrder
         };
     }
@@ -1233,7 +1362,11 @@ export default class BillingControlCenterOrders extends LightningElement {
     }
 
     async loadData(forceRefresh = false) {
-        this.isLoading = true;
+        if ((this.sections || []).length > 0) {
+            this.isRefreshing = true;
+        } else {
+            this.isLoading = true;
+        }
         this.errorMessage = undefined;
         const cacheKey = buildRuntimeCacheKey(this.dateFilter, this.opportunityOwnerId);
         // A slow earlier request must never overwrite a newer date filter's result.
@@ -1255,11 +1388,9 @@ export default class BillingControlCenterOrders extends LightningElement {
             );
             const runtimeData = await getOrdersRuntimeData({
                 refreshToken: forceRefresh ? Date.now() : refreshToken,
-                dateFilter: {
-                    filterKey: this.dateFilter?.filterKey || DEFAULT_DATE_FILTER.filterKey,
-                    startDate: this.dateFilter?.startDate || null,
-                    endDate: this.dateFilter?.endDate || null
-                },
+                filterKey: this.dateFilter?.filterKey || DEFAULT_DATE_FILTER.filterKey,
+                startDate: this.dateFilter?.startDate || null,
+                endDate: this.dateFilter?.endDate || null,
                 opportunityOwnerId: this.opportunityOwnerId || null
             });
             ordersRuntimeCache.set(cacheKey, cloneRuntimeData(runtimeData));
@@ -1277,12 +1408,13 @@ export default class BillingControlCenterOrders extends LightningElement {
             this._sectionRev += 1;
             this.setViewState({
                 sortState: defaultSortState(this.listViewMode),
-                expandedWorkTypeGroups: []
+                expandedWorkTypeGroups: defaultExpandedWorkTypeGroups()
             });
             this.errorMessage = this.reduceError(error);
         } finally {
             if (loadSequence === this._loadSequence) {
                 this.isLoading = false;
+                this.isRefreshing = false;
             }
         }
     }
@@ -1316,7 +1448,7 @@ export default class BillingControlCenterOrders extends LightningElement {
         this._sectionRev += 1;
         this.setViewState({
             sortState: defaultSortState(this.listViewMode),
-            expandedWorkTypeGroups: []
+            expandedWorkTypeGroups: defaultExpandedWorkTypeGroups()
         });
     }
 

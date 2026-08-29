@@ -18,6 +18,7 @@ public with sharing class BillingControl_Receivables {
     private static final String KPI_LABEL_COMMISSION_PAYABLE = 'Commission Payable';
     private static final String INVOICE_STATUS_PARTIALLY_PAID = 'Partially Paid';
     private static final String INVOICE_STATUS_PAID = 'Paid';
+    private static final String INVOICE_STATUS_VOID = 'Void';
 
     public static BillingControl_Invoicing.PaymentReceiptResultWrapper postReceipt(BillingControl_Invoicing.PostReceiptInputWrapper input) {
         if (input == null || input.opportunityId == null) {
@@ -44,31 +45,72 @@ public with sharing class BillingControl_Receivables {
             FOR UPDATE
         ];
 
-        Invoice__c invoiceRecord = getOpenReceivableInvoice(opportunityRecord.Id);
-        if (invoiceRecord == null) {
-            throw new AuraHandledException(
-                'No open Invoice__c is available for this opportunity. Complete Billing or INV-Sync before recording a receipt.'
-            );
+        Invoice__c invoiceRecord = resolveInvoiceForReceipt(opportunityRecord.Id, input.invoiceId);
+        return applyReceipt(opportunityRecord, invoiceRecord, input);
+    }
+
+    @AuraEnabled
+    public static BillingControl_Invoicing.PaymentReceiptResultWrapper postInvoiceReceipt(
+        Id opportunityId,
+        Id invoiceId,
+        Decimal amountReceived,
+        Date paymentDate,
+        String paymentMethod,
+        String referenceNumber
+    ) {
+        BillingControl_Invoicing.PostReceiptInputWrapper input = new BillingControl_Invoicing.PostReceiptInputWrapper();
+        input.opportunityId = opportunityId;
+        input.amountReceived = amountReceived;
+        input.paymentDate = paymentDate;
+        input.paymentMethod = paymentMethod;
+        input.referenceNumber = referenceNumber;
+
+        if (input.opportunityId == null) {
+            throw new AuraHandledException('A valid opportunity is required.');
         }
+        if (input.amountReceived == null || input.amountReceived <= 0) {
+            throw new AuraHandledException('Payment amount must be greater than 0.');
+        }
+        if (input.paymentDate == null) {
+            throw new AuraHandledException('Payment date is required.');
+        }
+        if (String.isBlank(input.paymentMethod)) {
+            throw new AuraHandledException('Payment method is required.');
+        }
+        if (String.isBlank(input.referenceNumber)) {
+            throw new AuraHandledException('Reference number is required.');
+        }
+
+        Opportunity opportunityRecord = [
+            SELECT Id, Billing_Status__c, AccountId
+            FROM Opportunity
+            WHERE Id = :input.opportunityId
+            LIMIT 1
+            FOR UPDATE
+        ];
+        Invoice__c invoiceRecord = resolveInvoiceForReceipt(opportunityRecord.Id, invoiceId);
+        return applyReceipt(opportunityRecord, invoiceRecord, input);
+    }
+
+    private static BillingControl_Invoicing.PaymentReceiptResultWrapper applyReceipt(
+        Opportunity opportunityRecord,
+        Invoice__c invoiceRecord,
+        BillingControl_Invoicing.PostReceiptInputWrapper input
+    ) {
         Decimal invoiceAmount = invoiceRecord.Total_Amount__c != null ? invoiceRecord.Total_Amount__c : 0;
         Decimal previouslyPaid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
+        Decimal balanceDue = invoiceAmount - previouslyPaid;
 
         if (invoiceAmount <= 0) {
             throw new AuraHandledException(
                 'The receivable invoice total must be greater than 0 before recording a receipt.'
             );
         }
-
-        Decimal totalPaid = previouslyPaid + input.amountReceived;
-
-        if (input.amountReceived > invoiceAmount - previouslyPaid) {
-            throw new AuraHandledException('Payment amount cannot exceed the balance due.');
-        }
-        if (totalPaid > invoiceAmount) {
+        if (input.amountReceived > balanceDue) {
             throw new AuraHandledException('Payment amount cannot exceed the balance due.');
         }
 
-        insert new Invoice_Payment__c(
+        Invoice_Payment__c paymentRecord = new Invoice_Payment__c(
             Opportunity__c = input.opportunityId,
             Invoice__c = invoiceRecord.Id,
             Amount_Received__c = input.amountReceived,
@@ -76,27 +118,42 @@ public with sharing class BillingControl_Receivables {
             Payment_Method__c = input.paymentMethod,
             Reference_Number__c = input.referenceNumber
         );
+        insert paymentRecord;
 
-        String nextStatus = totalPaid < invoiceAmount ? PARTIALLY_PAID : PAID;
-        update new Opportunity(
-            Id = opportunityRecord.Id,
-            Billing_Status__c = nextStatus
-        );
+        BillingControl_InvoiceMath.recalculate(new Set<Id>{ invoiceRecord.Id });
+        writePaymentLedgerEntry(opportunityRecord.Id, invoiceRecord, paymentRecord, input.amountReceived);
 
-        Decimal updatedInvoicePaid = (invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0) + input.amountReceived;
-        Decimal updatedBalanceDue = invoiceAmount - updatedInvoicePaid;
-        update new Invoice__c(
-            Id = invoiceRecord.Id,
-            Amount_Paid__c = updatedInvoicePaid,
-            Balance_Due__c = updatedBalanceDue,
-            Status__c = updatedBalanceDue <= 0 ? INVOICE_STATUS_PAID : INVOICE_STATUS_PARTIALLY_PAID
-        );
+        Invoice__c refreshedInvoice = [
+            SELECT Id, Total_Amount__c, Amount_Paid__c, Balance_Due__c, Status__c
+            FROM Invoice__c
+            WHERE Id = :invoiceRecord.Id
+            LIMIT 1
+        ];
 
-        applyPartialCommissionAccrual(input.opportunityId, input.amountReceived, invoiceAmount, totalPaid >= invoiceAmount);
+        BillingControl_OpportunityFinancials.Snapshot snapshot =
+            BillingControl_OpportunityFinancials.load(new Set<Id>{ opportunityRecord.Id }).get(opportunityRecord.Id);
+        String previousStatus = opportunityRecord.Billing_Status__c;
+        String nextStatus = previousStatus;
+        if (snapshot != null && snapshot.paidInFull) {
+            nextStatus = PAID;
+        } else if (snapshot != null && snapshot.paidTotal > 0) {
+            nextStatus = PARTIALLY_PAID;
+        }
+
+        if (nextStatus != previousStatus) {
+            update new Opportunity(
+                Id = opportunityRecord.Id,
+                Billing_Status__c = nextStatus
+            );
+        }
+
+        if (nextStatus == PAID && previousStatus != PAID) {
+            BillingControl_CommissionLifecycle.markPayable(opportunityRecord.Id);
+        }
 
         BillingControl_Invoicing.PaymentReceiptResultWrapper result = new BillingControl_Invoicing.PaymentReceiptResultWrapper();
-        result.totalPaid = totalPaid;
-        result.balanceDue = invoiceAmount - totalPaid;
+        result.totalPaid = refreshedInvoice.Amount_Paid__c != null ? refreshedInvoice.Amount_Paid__c : 0;
+        result.balanceDue = refreshedInvoice.Balance_Due__c != null ? refreshedInvoice.Balance_Due__c : 0;
         result.billingStatus = nextStatus;
         return result;
     }
@@ -129,31 +186,59 @@ public with sharing class BillingControl_Receivables {
             metrics.revenueUnderCollection += outstandingAmount;
         }
 
-        AggregateResult[] commissionEarnedResults = Database.query(
-            'SELECT COUNT(Id) recordCount, SUM(Commission_Amount__c) totalCommission'
+        List<Commission__c> earnedCommissionRecords = Database.query(
+            'SELECT Id, Opportunity__c, Commission_Rate__c'
             + ' FROM Commission__c'
             + buildCommissionWhereClause(commissionsFilterContext, true, false)
         );
-        metrics.commissionEarnedCount = BillingControl_Invoicing.extractInteger(commissionEarnedResults, 'recordCount');
-        metrics.commissionEarned = BillingControl_Invoicing.extractDecimal(commissionEarnedResults, 'totalCommission');
+        Set<Id> earnedOpportunityIds = new Set<Id>();
+        for (Commission__c earnedCommissionRecord : earnedCommissionRecords) {
+            if (earnedCommissionRecord.Opportunity__c != null) {
+                earnedOpportunityIds.add(earnedCommissionRecord.Opportunity__c);
+            }
+        }
+        Map<Id, BillingControl_OpportunityFinancials.Snapshot> earnedFinancials =
+            BillingControl_OpportunityFinancials.load(earnedOpportunityIds);
+        for (Commission__c earnedCommissionRecord : earnedCommissionRecords) {
+            BillingControl_OpportunityFinancials.Snapshot snapshot =
+                earnedFinancials.get(earnedCommissionRecord.Opportunity__c);
+            metrics.commissionEarnedCount++;
+            metrics.commissionEarned += BillingControl_CommissionLifecycle.computedCommissionAmount(
+                snapshot != null ? snapshot.invoicedTotal : 0,
+                earnedCommissionRecord.Commission_Rate__c
+            );
+        }
 
         List<Commission__c> payableCommissionRecords = queryOrderLinkedReceivableCommissionRecords(commissionsFilterContext);
+        Set<Id> payableOpportunityIds = new Set<Id>();
         for (Commission__c payableCommissionRecord : payableCommissionRecords) {
-            String billingStatus = payableCommissionRecord != null && payableCommissionRecord.Opportunity__r != null
-                ? payableCommissionRecord.Opportunity__r.Billing_Status__c
-                : null;
-            Decimal commissionAmount = payableCommissionRecord != null && payableCommissionRecord.Commission_Amount__c != null
-                ? payableCommissionRecord.Commission_Amount__c
-                : 0;
-            Decimal commissionPaid = payableCommissionRecord != null && payableCommissionRecord.Commission_Paid__c != null
-                ? payableCommissionRecord.Commission_Paid__c
-                : 0;
-            if (billingStatus != PAID || commissionPaid >= commissionAmount) {
+            if (payableCommissionRecord.Opportunity__c != null) {
+                payableOpportunityIds.add(payableCommissionRecord.Opportunity__c);
+            }
+        }
+        Map<Id, BillingControl_OpportunityFinancials.Snapshot> payableFinancials =
+            BillingControl_OpportunityFinancials.load(payableOpportunityIds);
+        for (Commission__c payableCommissionRecord : payableCommissionRecords) {
+            BillingControl_OpportunityFinancials.Snapshot snapshot =
+                payableFinancials.get(payableCommissionRecord.Opportunity__c);
+            Decimal commissionAmount = BillingControl_CommissionLifecycle.computedCommissionAmount(
+                snapshot != null ? snapshot.invoicedTotal : 0,
+                payableCommissionRecord.Commission_Rate__c
+            );
+            Decimal remainingPayable = 0;
+            if (isCommissionPaid(payableCommissionRecord) || isCommissionCancelled(payableCommissionRecord)) {
+                continue;
+            }
+            if (payableCommissionRecord.Status__c != 'Payable') {
                 continue;
             }
 
             metrics.commissionPayableCount++;
-            metrics.commissionPayable += (commissionAmount - commissionPaid);
+            remainingPayable = commissionAmount - resolvedCommissionPaidAmount(payableCommissionRecord);
+            if (remainingPayable < 0) {
+                remainingPayable = 0;
+            }
+            metrics.commissionPayable += remainingPayable;
         }
 
         return metrics;
@@ -213,21 +298,27 @@ public with sharing class BillingControl_Receivables {
             }
         }
 
+        Set<Id> commissionOpportunityIds = new Set<Id>();
+        for (Commission__c commissionRecord : commissionRecords) {
+            if (commissionRecord != null && commissionRecord.Opportunity__c != null) {
+                commissionOpportunityIds.add(commissionRecord.Opportunity__c);
+            }
+        }
+        Map<Id, BillingControl_OpportunityFinancials.Snapshot> commissionFinancials =
+            BillingControl_OpportunityFinancials.load(commissionOpportunityIds);
+
         for (Commission__c commissionRecord : commissionRecords) {
             Id commissionOpportunityId = commissionRecord != null ? commissionRecord.Opportunity__c : null;
             ReceivableOrderSummary invoiceSummary = commissionOpportunityId != null
                 ? receivableSummaryByOpportunityId.get(commissionOpportunityId)
                 : null;
             Decimal outstandingAmount = invoiceSummary != null ? BillingControl_Invoicing.coalesceDecimal(invoiceSummary.balanceDue) : 0;
-            Decimal commissionAmount = commissionRecord != null && commissionRecord.Commission_Amount__c != null
-                ? commissionRecord.Commission_Amount__c
-                : 0;
-            Decimal commissionPaid = commissionRecord != null && commissionRecord.Commission_Paid__c != null
-                ? commissionRecord.Commission_Paid__c
-                : 0;
-            String billingStatus = commissionRecord != null && commissionRecord.Opportunity__r != null
-                ? commissionRecord.Opportunity__r.Billing_Status__c
-                : null;
+            BillingControl_Invoicing.OpportunityWrapper commissionOpportunity =
+                buildOpportunityFromOrderLinkedCommission(
+                    commissionRecord,
+                    invoiceSummary,
+                    commissionFinancials.get(commissionOpportunityId)
+                );
 
             if (outstandingAmount > 0) {
                 addOpportunityToCommissionSection(
@@ -235,17 +326,17 @@ public with sharing class BillingControl_Receivables {
                     salespersonIndexByCategoryKey.get(earnedSection.categoryKey),
                     commissionRecord.Sales_Person__c,
                     commissionRecord.Sales_Person__r != null ? commissionRecord.Sales_Person__r.Name : null,
-                    buildOpportunityFromOrderLinkedCommission(commissionRecord, invoiceSummary)
+                    commissionOpportunity
                 );
             }
 
-            if (billingStatus == PAID && commissionPaid < commissionAmount) {
+            if (commissionRecord.Status__c == 'Payable') {
                 addOpportunityToCommissionSection(
                     payableSection,
                     salespersonIndexByCategoryKey.get(payableSection.categoryKey),
                     commissionRecord.Sales_Person__c,
                     commissionRecord.Sales_Person__r != null ? commissionRecord.Sales_Person__r.Name : null,
-                    buildOpportunityFromOrderLinkedCommission(commissionRecord, invoiceSummary)
+                    commissionOpportunity
                 );
             }
         }
@@ -305,7 +396,10 @@ public with sharing class BillingControl_Receivables {
             + ' Opportunity__r.Billing_Status__c,'
             + ' Sales_Person__c,'
             + ' Sales_Person__r.Name,'
+            + ' Commission_Rate__c,'
             + ' Commission_Amount__c,'
+            + ' Status__c,'
+            + ' Paid_Amount__c,'
             + ' Commission_Paid__c'
             + ' FROM Commission__c'
             + buildCommissionPrefilterWhereClause(filterContext)
@@ -453,6 +547,14 @@ public with sharing class BillingControl_Receivables {
         Commission__c commissionRecord,
         ReceivableOrderSummary invoiceSummary
     ) {
+        return buildOpportunityFromOrderLinkedCommission(commissionRecord, invoiceSummary, null);
+    }
+
+    public static BillingControl_Invoicing.OpportunityWrapper buildOpportunityFromOrderLinkedCommission(
+        Commission__c commissionRecord,
+        ReceivableOrderSummary invoiceSummary,
+        BillingControl_OpportunityFinancials.Snapshot snapshot
+    ) {
         BillingControl_Invoicing.OpportunityWrapper opportunity = new BillingControl_Invoicing.OpportunityWrapper();
         Opportunity linkedOpportunity = commissionRecord != null ? commissionRecord.Opportunity__r : null;
         opportunity.opportunityId = commissionRecord != null ? commissionRecord.Opportunity__c : null;
@@ -479,8 +581,11 @@ public with sharing class BillingControl_Receivables {
         opportunity.ownerName = commissionRecord != null && commissionRecord.Sales_Person__r != null
             ? commissionRecord.Sales_Person__r.Name
             : null;
-        opportunity.commissionAmount = commissionRecord != null ? BillingControl_Invoicing.coalesceDecimal(commissionRecord.Commission_Amount__c) : 0;
-        opportunity.commissionPaid = commissionRecord != null ? BillingControl_Invoicing.coalesceDecimal(commissionRecord.Commission_Paid__c) : 0;
+        opportunity.commissionAmount = BillingControl_CommissionLifecycle.computedCommissionAmount(
+            snapshot != null ? snapshot.invoicedTotal : 0,
+            commissionRecord != null ? commissionRecord.Commission_Rate__c : 0
+        );
+        opportunity.commissionPaid = resolvedCommissionPaidAmount(commissionRecord);
         opportunity.commissionId = commissionRecord != null ? commissionRecord.Id : null;
         return opportunity;
     }
@@ -577,26 +682,38 @@ public with sharing class BillingControl_Receivables {
         }
     }
 
+    private static Boolean isCommissionPaid(Commission__c commissionRecord) {
+        return commissionRecord != null && commissionRecord.Status__c == 'Paid';
+    }
+
+    private static Boolean isCommissionCancelled(Commission__c commissionRecord) {
+        return commissionRecord != null && commissionRecord.Status__c == 'Cancelled';
+    }
+
+    private static Decimal resolvedCommissionPaidAmount(Commission__c commissionRecord) {
+        if (commissionRecord == null || commissionRecord.Status__c != 'Paid') {
+            return 0;
+        }
+        if (commissionRecord.Paid_Amount__c != null) {
+            return commissionRecord.Paid_Amount__c;
+        }
+        return 0;
+    }
+
     public static void updateCommissionPaid(List<Id> commissionIds) {
-        if (commissionIds == null || commissionIds.isEmpty()) {
-            return;
-        }
+        BillingControl_CommissionLifecycle.payCommissions(commissionIds, Date.today(), null);
+    }
 
-        List<Commission__c> commissionsToUpdate = new List<Commission__c>();
-        for (Commission__c commissionRecord : [
-            SELECT Id, Commission_Amount__c, Commission_Paid__c
-            FROM Commission__c
-            WHERE Id IN :commissionIds
-        ]) {
-            if (commissionRecord.Commission_Paid__c != commissionRecord.Commission_Amount__c) {
-                commissionRecord.Commission_Paid__c = commissionRecord.Commission_Amount__c;
-                commissionsToUpdate.add(commissionRecord);
-            }
-        }
+    public static void payCommissions(
+        List<Id> commissionIds,
+        Date paidDate,
+        Map<Id, Decimal> paidAmountOverrides
+    ) {
+        BillingControl_CommissionLifecycle.payCommissions(commissionIds, paidDate, paidAmountOverrides);
+    }
 
-        if (!commissionsToUpdate.isEmpty()) {
-            update commissionsToUpdate;
-        }
+    public static void markCommissionsPayable(Id opportunityId) {
+        BillingControl_CommissionLifecycle.markPayable(opportunityId);
     }
 
     public static BillingControl_Invoicing.CommissionResultWrapper createCommissionRecords(List<BillingControl_Invoicing.CommissionInputWrapper> inputs) {
@@ -647,6 +764,8 @@ public with sharing class BillingControl_Receivables {
             commissionRecord.Opportunity__c = input.opportunityId;
             commissionRecord.Commission_Rate__c = input.commissionRate;
             commissionRecord.Sales_Person__c = salesPersonId;
+            commissionRecord.Status__c = 'Accrued';
+            commissionRecord.Amount_Basis__c = 'Invoiced Total';
             commissionRecord.Unique_Key__c = String.valueOf(input.opportunityId) + String.valueOf(salesPersonId);
             commissionRecords.add(commissionRecord);
             commissionOpportunityIds.add(input.opportunityId);
@@ -658,7 +777,6 @@ public with sharing class BillingControl_Receivables {
         }
 
         Database.SaveResult[] saveResults = Database.insert(commissionRecords, false);
-        Set<Id> successfulOpportunityIds = new Set<Id>();
 
         for (Integer index = 0; index < saveResults.size(); index++) {
             Database.SaveResult saveResult = saveResults[index];
@@ -670,7 +788,6 @@ public with sharing class BillingControl_Receivables {
                 : '';
 
             if (saveResult.isSuccess()) {
-                successfulOpportunityIds.add(opportunityId);
                 result.successCount = (result.successCount == null ? 0 : result.successCount) + 1;
                 continue;
             }
@@ -694,17 +811,6 @@ public with sharing class BillingControl_Receivables {
         }
 
 
-        if (!successfulOpportunityIds.isEmpty()) {
-            List<Opportunity> opportunitiesToUpdate = new List<Opportunity>();
-            for (Id opportunityId : successfulOpportunityIds) {
-                opportunitiesToUpdate.add(new Opportunity(
-                    Id = opportunityId,
-                    Billing_Status__c = BillingControl_Invoicing.getOutstandingReceivableStatusForUpdate()
-                ));
-            }
-            update opportunitiesToUpdate;
-        }
-
         if (result.successCount == 0 && result.errorMessages.isEmpty()) {
             result.errorMessages.add('No commission records were created.');
         }
@@ -712,69 +818,152 @@ public with sharing class BillingControl_Receivables {
         return result;
     }
 
-    public static Invoice__c getOpenReceivableInvoice(Id opportunityId) {
-        List<Invoice__c> existingInvoices = [
+    public static Invoice__c getInvoiceForReceipt(Id invoiceId, Id opportunityId) {
+        if (invoiceId == null) {
+            throw new AuraHandledException('Select an invoice before recording a receipt.');
+        }
+
+        List<Invoice__c> invoices = [
             SELECT Id,
                 Invoice_Number__c,
+                Opportunity__c,
                 Amount_Paid__c,
                 Balance_Due__c,
-                Total_Amount__c
+                Total_Amount__c,
+                Status__c
             FROM Invoice__c
-            WHERE Opportunity__c = :opportunityId
-            AND Status__c != :INVOICE_STATUS_PAID
+            WHERE Id = :invoiceId
             LIMIT 1
             FOR UPDATE
         ];
-        return existingInvoices.isEmpty() ? null : existingInvoices[0];
+        if (invoices.isEmpty()) {
+            throw new AuraHandledException('The selected invoice could not be found.');
+        }
+        Invoice__c invoiceRecord = invoices[0];
+        if (opportunityId != null && invoiceRecord.Opportunity__c != opportunityId) {
+            throw new AuraHandledException('The selected invoice does not belong to this opportunity.');
+        }
+        if (invoiceRecord.Status__c == INVOICE_STATUS_VOID) {
+            throw new AuraHandledException('Receipts cannot be recorded against a void invoice.');
+        }
+        Decimal invoiceAmount = invoiceRecord.Total_Amount__c != null ? invoiceRecord.Total_Amount__c : 0;
+        Decimal previouslyPaid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
+        if (invoiceAmount <= 0) {
+            throw new AuraHandledException('Set the invoice amount before recording a receipt.');
+        }
+        if (invoiceAmount - previouslyPaid <= 0 || invoiceRecord.Status__c == INVOICE_STATUS_PAID) {
+            throw new AuraHandledException('This invoice has no remaining balance.');
+        }
+        return invoiceRecord;
     }
 
-    public static void applyPartialCommissionAccrual(
+    public static Invoice__c resolveInvoiceForReceipt(Id opportunityId, Id invoiceId) {
+        if (invoiceId != null) {
+            return getInvoiceForReceipt(invoiceId, opportunityId);
+        }
+
+        List<Invoice__c> openInvoices = [
+            SELECT Id,
+                Invoice_Number__c,
+                Opportunity__c,
+                Amount_Paid__c,
+                Balance_Due__c,
+                Total_Amount__c,
+                Status__c
+            FROM Invoice__c
+            WHERE Opportunity__c = :opportunityId
+            AND Status__c != :INVOICE_STATUS_PAID
+            AND Status__c != :INVOICE_STATUS_VOID
+            AND Total_Amount__c != NULL
+            AND Total_Amount__c > 0
+            FOR UPDATE
+        ];
+        List<Invoice__c> receivableInvoices = new List<Invoice__c>();
+        for (Invoice__c invoiceRecord : openInvoices) {
+            Decimal invoiceAmount = invoiceRecord.Total_Amount__c != null ? invoiceRecord.Total_Amount__c : 0;
+            Decimal previouslyPaid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
+            if (invoiceAmount - previouslyPaid > 0) {
+                receivableInvoices.add(invoiceRecord);
+            }
+        }
+        if (receivableInvoices.isEmpty()) {
+            throw new AuraHandledException(
+                'No open Invoice__c is available for this opportunity. Complete Billing or INV-Sync before recording a receipt.'
+            );
+        }
+        if (receivableInvoices.size() > 1) {
+            throw new AuraHandledException('Select an invoice before recording a receipt.');
+        }
+        return receivableInvoices[0];
+    }
+
+    public static Invoice__c getOpenReceivableInvoice(Id opportunityId) {
+        try {
+            return resolveInvoiceForReceipt(opportunityId, null);
+        } catch (AuraHandledException caught) {
+            return null;
+        }
+    }
+
+    private static void writePaymentLedgerEntry(
         Id opportunityId,
-        Decimal paymentAmount,
-        Decimal invoiceAmount,
-        Boolean isFinalPayment
+        Invoice__c invoiceRecord,
+        Invoice_Payment__c paymentRecord,
+        Decimal paymentAmount
     ) {
-        if (opportunityId == null || paymentAmount == null || paymentAmount <= 0 || invoiceAmount == null || invoiceAmount <= 0) {
+        List<Opportunity_WorkOrder__c> junctions = [
+            SELECT Work_Order__c
+            FROM Opportunity_WorkOrder__c
+            WHERE Opportunity__c = :opportunityId
+            AND Work_Order__c != NULL
+            LIMIT 1
+        ];
+        if (junctions.isEmpty()) {
             return;
         }
-
-        Decimal paymentRatio = paymentAmount / invoiceAmount;
-        List<Commission__c> commissionsToUpdate = new List<Commission__c>();
-        for (Commission__c commissionRecord : [
-            SELECT Id, Commission_Amount__c, Commission_Paid__c
-            FROM Commission__c
-            WHERE Opportunity__c = :opportunityId
-        ]) {
-            Decimal commissionAmount = commissionRecord.Commission_Amount__c != null
-                ? commissionRecord.Commission_Amount__c
-                : 0;
-            Decimal commissionPaid = commissionRecord.Commission_Paid__c != null
-                ? commissionRecord.Commission_Paid__c
-                : 0;
-
-            if (commissionAmount <= 0 || commissionPaid >= commissionAmount) {
-                continue;
-            }
-
-            if (isFinalPayment) {
-                commissionRecord.Commission_Paid__c = commissionAmount;
-                commissionsToUpdate.add(commissionRecord);
-                continue;
-            }
-
-            Decimal accrualAmount = (commissionAmount * paymentRatio).setScale(2);
-            Decimal remainingAmount = commissionAmount - commissionPaid;
-            Decimal commissionDelta = accrualAmount > remainingAmount ? remainingAmount : accrualAmount;
-            if (commissionDelta <= 0) {
-                continue;
-            }
-            commissionRecord.Commission_Paid__c = commissionPaid + commissionDelta;
-            commissionsToUpdate.add(commissionRecord);
+        Id workOrderId = junctions[0].Work_Order__c;
+        List<Work_Order_Ledger__c> ledgers = [
+            SELECT Id
+            FROM Work_Order_Ledger__c
+            WHERE Work_Order__c = :workOrderId
+            LIMIT 1
+        ];
+        Work_Order_Ledger__c ledgerRecord;
+        if (ledgers.isEmpty()) {
+            WorkOrder workOrderRecord = [
+                SELECT Id, AccountId
+                FROM WorkOrder
+                WHERE Id = :workOrderId
+                LIMIT 1
+            ];
+            ledgerRecord = new Work_Order_Ledger__c(
+                Work_Order__c = workOrderId,
+                Work_Order_Key__c = String.valueOf(workOrderId),
+                Account__c = workOrderRecord.AccountId
+            );
+            insert ledgerRecord;
+        } else {
+            ledgerRecord = ledgers[0];
         }
 
-        if (!commissionsToUpdate.isEmpty()) {
-            update commissionsToUpdate;
+        String eventKey = 'PAYMENT_RECORDED|' + String.valueOf(paymentRecord.Id) + '|' + String.valueOf(workOrderId);
+        if (eventKey.length() > 80) {
+            eventKey = eventKey.substring(0, 80);
         }
+        insert new Work_Order_Ledger_Entry__c(
+            Work_Order_Ledger__c = ledgerRecord.Id,
+            Event_Type__c = 'PAYMENT_RECORDED',
+            Event_Key__c = eventKey,
+            Event_Datetime__c = System.now(),
+            Invoice__c = invoiceRecord.Id,
+            Opportunity__c = opportunityId,
+            Amount__c = paymentAmount,
+            Description__c = 'Payment recorded on invoice ' + invoiceRecord.Invoice_Number__c,
+            System_Generated__c = true,
+            Changed_By__c = UserInfo.getUserId(),
+            Source_Object__c = 'Invoice',
+            Source_Record_Id__c = String.valueOf(paymentRecord.Id)
+        );
     }
 
     public static String buildReceivableInvoicesWhereClause(

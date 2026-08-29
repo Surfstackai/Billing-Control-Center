@@ -1,0 +1,96 @@
+<template>
+    <lightning-card title={cardTitle}>
+        <div class="slds-p-horizontal_medium slds-p-bottom_medium">
+            <template if:true={errorMessage}>
+                <div class="slds-notify slds-notify_alert slds-theme_error slds-m-bottom_small" role="alert">{errorMessage}</div>
+            </template>
+            <template if:true={isServiceAppointment}>
+                <template if:true={visitIsUnassigned}>
+                    <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_warning slds-m-bottom_small" role="status">
+                        This visit is not assigned to an Opportunity. Assigning it is optional for Create. Open the Work Order Ledger to assign it, or optionally set this job on the visit.
+                    </div>
+                    <div class="slds-text-title slds-m-bottom_xx-small">Not assigned</div>
+                    <p class="slds-text-body_small slds-m-bottom_small">{visitLabel}</p>
+                </template>
+                <template if:true={visitIsAssigned}>
+                    <div class="slds-text-title slds-m-bottom_xx-small">Assigned to a job</div>
+                    <p class="slds-text-body_small slds-m-bottom_small">{visitLabel}</p>
+                </template>
+                <template if:true={hasLedger}>
+                    <lightning-button
+                        label="View Ledger"
+                        variant="base"
+                        onclick={handleViewLedger}
+                        disabled={isSaving}
+                        class="slds-m-bottom_small">
+                    </lightning-button>
+                </template>
+            </template>
+            <template if:true={requiresOpportunityChoice}>
+                <p class="slds-text-body_regular slds-m-bottom_small">Which commercial job does this invoice belong to?</p>
+            </template>
+            <template if:true={showOpportunityPicker}>
+                <lightning-combobox
+                    name="opportunityId"
+                    label="Opportunity"
+                    value={selectedOpportunityId}
+                    options={opportunityOptions}
+                    onchange={handleOpportunityChange}
+                    required
+                    disabled={isSaving}>
+                </lightning-combobox>
+            </template>
+            <lightning-input
+                type="number"
+                label="Invoice amount"
+                value={invoiceAmount}
+                formatter="currency"
+                step="0.01"
+                onchange={handleAmountChange}
+                required={amountRequired}
+                disabled={isSaving}
+                class="slds-m-top_small">
+            </lightning-input>
+            <lightning-input
+                type="text"
+                label="Invoice number"
+                value={invoiceNumber}
+                maxlength="80"
+                onchange={handleInvoiceNumberChange}
+                disabled={isSaving}
+                placeholder="Leave blank to auto-generate"
+                class="slds-m-top_small">
+            </lightning-input>
+            <lightning-input
+                type="checkbox"
+                label="This invoices the full remaining quoted amount."
+                checked={acceptFullRemaining}
+                onchange={handleAcceptFullRemainingChange}
+                disabled={isSaving}
+                class="slds-m-top_small">
+            </lightning-input>
+            <lightning-input
+                type="checkbox"
+                label="Allow this invoice to exceed the Opportunity amount."
+                checked={acceptVariance}
+                onchange={handleAcceptVarianceChange}
+                disabled={isSaving}
+                class="slds-m-top_small">
+            </lightning-input>
+            <template if:true={showAttributionOptIn}>
+                <lightning-input
+                    type="checkbox"
+                    label="Also set this Service Appointment's Opportunity to this job."
+                    checked={updateOperationalAttribution}
+                    onchange={handleAttributionChange}
+                    disabled={isSaving}
+                    class="slds-m-top_small">
+                </lightning-input>
+            </template>
+            <div class="slds-m-top_medium">
+                <lightning-button label="Cancel" onclick={handleCancel} disabled={isSaving}></lightning-button>
+                <lightning-button class="slds-m-left_small" variant="brand" label={createLabel} onclick={handleCreate} disabled={isCreateDisabled}></lightning-button>
+            </div>
+        </div>
+    </lightning-card>
+</template>

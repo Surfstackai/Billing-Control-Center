@@ -39,23 +39,23 @@ public with sharing class BillingControl_Invoicing {
     private static final String SERVICE_APPOINTMENT_STATUS_COMPLETED = 'Completed';
     private static final String BILLING_STATE_READY = 'Pending Invoice';
     private static final String BILLING_STATE_PARTIAL = 'Partial';
-    private static final String KPI_CATEGORY_AGED_COMPLETED = 'AGED_COMPLETED';
-    private static final String KPI_CATEGORY_READY_TO_BILL = 'READY_TO_BILL';
-    private static final String KPI_CATEGORY_UNBILLED_REVENUE = 'UNBILLED_REVENUE';
-    private static final String KPI_LABEL_AGED_COMPLETED = 'Aged Ready to Bill (>2 Days)';
-    private static final String KPI_LABEL_READY_TO_BILL = 'Ready to Bill';
-    private static final String KPI_LABEL_UNBILLED_REVENUE = 'Uninvoiced Amount';
+    private static final String KPI_CATEGORY_COMPLETED_TODAY = 'COMPLETED_TODAY';
+    private static final String KPI_CATEGORY_COMPLETED_THIS_WEEK = 'COMPLETED_THIS_WEEK';
+    private static final String KPI_CATEGORY_COMPLETED_LATER = 'COMPLETED_LATER';
+    private static final String KPI_LABEL_COMPLETED_TODAY = 'Completed Today';
+    private static final String KPI_LABEL_COMPLETED_THIS_WEEK = 'Completed This Week';
+    private static final String KPI_LABEL_COMPLETED_LATER = 'Completed Later';
     private static final String INVOICE_STATUS_DRAFT = 'Draft';
     private static final String INVOICE_STATUS_SENT = 'Sent';
     private static final String INVOICE_STATUS_PARTIALLY_PAID = 'Partially Paid';
     private static final String INVOICE_STATUS_PAID = 'Paid';
+    private static final String INVOICE_STATUS_VOID = 'Void';
     private static final String SERVICE_APPOINTMENT_WO_INV_STATUS_FIELD = 'WO_Inv_Status__c';
     private static final List<String> EXCLUDED_INVOICING_WORK_ORDER_STATUSES = new List<String>{
         'For Clearance',
         'For Appointment Booking',
         'Appointments Booked',
         'Canceled',
-        'Billing Completed',
         'Cannot Complete – Rescheduled'
     };
 
@@ -197,18 +197,73 @@ public with sharing class BillingControl_Invoicing {
     ) {
         // refreshToken intentionally unused in server logic; it exists to vary cache keys on demand.
         Long ignoredRefreshToken = refreshToken;
-        cachedEligibleInvoicingAppointments = null;
-        BillingControlMetricsWrapper metrics = new BillingControlMetricsWrapper();
-        // The aged category is retained only for backward-compatible response shape.
-        // Page Date Range still applies to ActualEndTime on ready-to-bill rows.
-        List<ServiceAppointmentRowWrapper> readyToBillRows = buildBillableServiceAppointmentRows(filterContext, false);
-        metrics.completedMoreThan2Days = 0;
-        metrics.readyToBill = readyToBillRows.size();
-        metrics.unbilledRevenue = calculateUniqueOpportunityRevenue(readyToBillRows);
-        metrics.outstandingAr = 0;
-        applyReadyToBillPeriodKpis(metrics, readyToBillRows);
+        return metricsFromRuntime(BillingControl_BillingReadiness.load(filterContext));
+    }
 
+    public static BillingControlMetricsWrapper metricsFromRuntime(
+        BillingControl_BillingReadiness.Runtime runtime
+    ) {
+        BillingControlMetricsWrapper metrics = new BillingControlMetricsWrapper();
+        if (runtime == null || runtime.metrics == null) {
+            return metrics;
+        }
+        metrics.readyToBill = runtime.metrics.readyToBill;
+        metrics.depositsDueCount = runtime.metrics.depositsDueCount;
+        metrics.depositsDueAmount = runtime.metrics.depositsDueAmount;
+        metrics.balancesReadyCount = runtime.metrics.balancesReadyCount;
+        metrics.balancesReadyAmount = runtime.metrics.balancesReadyAmount;
+        metrics.underInvoicedCount = runtime.metrics.underInvoicedCount;
+        metrics.underInvoicedAmount = runtime.metrics.underInvoicedAmount;
+        metrics.needsReviewCount = runtime.metrics.needsReviewCount;
+        metrics.blockedCount = runtime.metrics.blockedCount;
+        Decimal unbilled = 0;
+        if (runtime.opportunities != null) {
+            for (BillingControl_BillingReadiness.OpportunityRow row : runtime.opportunities) {
+                if (row != null && row.remaining != null) {
+                    unbilled += row.remaining;
+                }
+            }
+        }
+        metrics.unbilledRevenue = unbilled;
         return metrics;
+    }
+
+    @AuraEnabled(cacheable=true)
+    public static List<BillingControl_BillingReadiness.OpportunityRow> getBillableOpportunities() {
+        return BillingControl_BillingReadiness.getOpportunities(null);
+    }
+
+    @AuraEnabled(cacheable=true)
+    public static BillingControl_BillingReadiness.MetricsWrapper getBillingReadinessMetrics() {
+        return BillingControl_BillingReadiness.getMetrics(null);
+    }
+
+    public static List<ServiceAppointmentKpiCategoryWrapper> getBillableServiceAppointmentGroupsWithRefresh(
+        Long refreshToken,
+        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+    ) {
+        Long ignoredRefreshToken = refreshToken;
+        return groupsFromRuntime(BillingControl_BillingReadiness.load(filterContext));
+    }
+
+    public static List<ServiceAppointmentKpiCategoryWrapper> groupsFromRuntime(
+        BillingControl_BillingReadiness.Runtime runtime
+    ) {
+        List<ServiceAppointmentKpiCategoryWrapper> sections = new List<ServiceAppointmentKpiCategoryWrapper>();
+        if (runtime == null || runtime.sections == null) {
+            return sections;
+        }
+        for (BillingControl_BillingReadiness.SectionWrapper readinessSection : runtime.sections) {
+            ServiceAppointmentKpiCategoryWrapper section = new ServiceAppointmentKpiCategoryWrapper(
+                readinessSection.categoryKey,
+                readinessSection.categoryLabel
+            );
+            section.opportunityRows = readinessSection.rows;
+            section.serviceAppointmentCount = readinessSection.opportunityCount;
+            section.totalBillableAmount = readinessSection.totalAmount;
+            sections.add(section);
+        }
+        return sections;
     }
 
     @AuraEnabled(cacheable=true)
@@ -219,47 +274,6 @@ public with sharing class BillingControl_Invoicing {
     @AuraEnabled(cacheable=true)
     public static List<ServiceAppointmentKpiCategoryWrapper> getBillableServiceAppointmentGroupsWithRefresh(Long refreshToken) {
         return getBillableServiceAppointmentGroupsWithRefresh(refreshToken, null);
-    }
-
-    public static List<ServiceAppointmentKpiCategoryWrapper> getBillableServiceAppointmentGroupsWithRefresh(
-        Long refreshToken,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
-    ) {
-        // refreshToken intentionally unused in server logic; it exists to vary cache keys on demand.
-        Long ignoredRefreshToken = refreshToken;
-        List<ServiceAppointmentRowWrapper> rows = buildBillableServiceAppointmentRows(filterContext);
-        List<ServiceAppointmentKpiCategoryWrapper> sections = new List<ServiceAppointmentKpiCategoryWrapper>{
-            new ServiceAppointmentKpiCategoryWrapper(KPI_CATEGORY_AGED_COMPLETED, KPI_LABEL_AGED_COMPLETED),
-            new ServiceAppointmentKpiCategoryWrapper(KPI_CATEGORY_READY_TO_BILL, KPI_LABEL_READY_TO_BILL),
-            new ServiceAppointmentKpiCategoryWrapper(KPI_CATEGORY_UNBILLED_REVENUE, KPI_LABEL_UNBILLED_REVENUE)
-        };
-
-        Map<String, List<ServiceAppointmentRowWrapper>> appointmentRowsByCategory =
-            new Map<String, List<ServiceAppointmentRowWrapper>>{
-                KPI_CATEGORY_AGED_COMPLETED => new List<ServiceAppointmentRowWrapper>(),
-                KPI_CATEGORY_READY_TO_BILL => new List<ServiceAppointmentRowWrapper>(),
-                KPI_CATEGORY_UNBILLED_REVENUE => new List<ServiceAppointmentRowWrapper>()
-            };
-
-        if (!rows.isEmpty()) {
-            for (ServiceAppointmentRowWrapper row : rows) {
-                appointmentRowsByCategory.get(KPI_CATEGORY_READY_TO_BILL).add(row);
-                appointmentRowsByCategory.get(KPI_CATEGORY_UNBILLED_REVENUE).add(row);
-            }
-        }
-
-        for (ServiceAppointmentKpiCategoryWrapper section : sections) {
-            List<ServiceAppointmentRowWrapper> sectionRows = appointmentRowsByCategory.containsKey(section.categoryKey)
-                ? appointmentRowsByCategory.get(section.categoryKey)
-                : new List<ServiceAppointmentRowWrapper>();
-            section.rows = groupServiceAppointmentRowsByWorkOrder(sectionRows);
-            section.opportunityGroups = buildServiceAppointmentOpportunityGroups(section.rows);
-            section.serviceAppointmentCount = sectionRows.size();
-            section.totalBillableAmount = calculateUniqueOpportunityRevenue(sectionRows);
-        }
-
-        stampServiceAppointmentLedgerIds(sections);
-        return sections;
     }
 
     private static String buildServiceAppointmentDisplay(ServiceAppointmentRowWrapper row) {
@@ -296,38 +310,61 @@ public with sharing class BillingControl_Invoicing {
         BillingControlMetricsWrapper metrics,
         List<ServiceAppointmentRowWrapper> rows
     ) {
+        ReadyToBillPeriodPartition periodRows = partitionReadyToBillByPeriod(rows);
+        metrics.completedTodayCount = periodRows.todayRows.size();
+        metrics.completedTodayAmount = calculateUniqueOpportunityRevenue(periodRows.todayRows);
+        metrics.completedThisWeekCount = periodRows.weekRows.size();
+        metrics.completedThisWeekAmount = calculateUniqueOpportunityRevenue(periodRows.weekRows);
+        metrics.completedLaterCount = periodRows.laterRows.size();
+        metrics.completedLaterAmount = calculateUniqueOpportunityRevenue(periodRows.laterRows);
+    }
+
+    private static ReadyToBillPeriodPartition partitionReadyToBillByPeriod(List<ServiceAppointmentRowWrapper> rows) {
+        ReadyToBillPeriodPartition periodRows = new ReadyToBillPeriodPartition();
         Date todayDate = Date.today();
         Date weekStart = todayDate.toStartOfWeek();
         Date weekEnd = weekStart.addDays(6);
-        List<ServiceAppointmentRowWrapper> todayRows = new List<ServiceAppointmentRowWrapper>();
-        List<ServiceAppointmentRowWrapper> weekRows = new List<ServiceAppointmentRowWrapper>();
-        List<ServiceAppointmentRowWrapper> laterRows = new List<ServiceAppointmentRowWrapper>();
 
-        if (rows != null) {
-            for (ServiceAppointmentRowWrapper row : rows) {
-                if (row == null) {
-                    continue;
-                }
-                laterRows.add(row);
-                Date completionDate = row.completionDateTime == null ? null : row.completionDateTime.date();
-                if (completionDate == null) {
-                    continue;
-                }
-                if (completionDate == todayDate) {
-                    todayRows.add(row);
-                }
-                if (completionDate >= weekStart && completionDate <= weekEnd) {
-                    weekRows.add(row);
-                }
+        if (rows == null) {
+            return periodRows;
+        }
+
+        for (ServiceAppointmentRowWrapper row : rows) {
+            if (row == null) {
+                continue;
+            }
+            periodRows.laterRows.add(row);
+            Date completionDate = row.completionDateTime == null ? null : row.completionDateTime.date();
+            if (completionDate == null) {
+                continue;
+            }
+            if (completionDate == todayDate) {
+                periodRows.todayRows.add(row);
+            }
+            if (completionDate >= weekStart && completionDate <= weekEnd) {
+                periodRows.weekRows.add(row);
             }
         }
 
-        metrics.completedTodayCount = todayRows.size();
-        metrics.completedTodayAmount = calculateUniqueOpportunityRevenue(todayRows);
-        metrics.completedThisWeekCount = weekRows.size();
-        metrics.completedThisWeekAmount = calculateUniqueOpportunityRevenue(weekRows);
-        metrics.completedLaterCount = laterRows.size();
-        metrics.completedLaterAmount = calculateUniqueOpportunityRevenue(laterRows);
+        return periodRows;
+    }
+
+    private static ServiceAppointmentKpiCategoryWrapper buildPeriodSection(
+        String categoryKey,
+        String categoryLabel,
+        List<ServiceAppointmentRowWrapper> sectionRows
+    ) {
+        ServiceAppointmentKpiCategoryWrapper section = new ServiceAppointmentKpiCategoryWrapper(
+            categoryKey,
+            categoryLabel
+        );
+        List<ServiceAppointmentRowWrapper> rows =
+            sectionRows == null ? new List<ServiceAppointmentRowWrapper>() : sectionRows;
+        section.rows = groupServiceAppointmentRowsByWorkOrder(rows);
+        section.opportunityGroups = buildServiceAppointmentOpportunityGroups(section.rows);
+        section.serviceAppointmentCount = rows.size();
+        section.totalBillableAmount = calculateUniqueOpportunityRevenue(rows);
+        return section;
     }
 
     private static List<ServiceAppointmentRowWrapper> groupServiceAppointmentRowsByWorkOrder(
@@ -510,29 +547,13 @@ public with sharing class BillingControl_Invoicing {
                 SELECT Opportunity__c opportunityId, COUNT(Id) billedCount
                 FROM Invoice_Line__c
                 WHERE Opportunity__c IN :opportunityIds
+                AND Invoice__r.Status__c != :INVOICE_STATUS_VOID
                 GROUP BY Opportunity__c
             ]) {
                 historicalBilledCountByOpportunityId.put(
                     (Id) aggregateRow.get('opportunityId'),
                     (Integer) aggregateRow.get('billedCount')
                 );
-            }
-            for (ServiceAppointment billedAppointment : [
-                SELECT Opportunity__c, Invoice_Number__c, WO_Inv_Status__c
-                FROM ServiceAppointment
-                WHERE Opportunity__c IN :opportunityIds
-                AND Status = :SERVICE_APPOINTMENT_STATUS_COMPLETED
-            ]) {
-                if (
-                    !containsExcludedInvoicingMarker(billedAppointment.Invoice_Number__c)
-                    && !containsExcludedInvoicingMarker(billedAppointment.WO_Inv_Status__c)
-                ) {
-                    continue;
-                }
-                Integer billedCount = historicalBilledCountByOpportunityId.containsKey(billedAppointment.Opportunity__c)
-                    ? historicalBilledCountByOpportunityId.get(billedAppointment.Opportunity__c)
-                    : 0;
-                historicalBilledCountByOpportunityId.put(billedAppointment.Opportunity__c, billedCount + 1);
             }
         }
 
@@ -572,6 +593,84 @@ public with sharing class BillingControl_Invoicing {
 
         groups.sort(new ServiceAppointmentGroupNameComparator());
         return groups;
+    }
+
+    @TestVisible
+    private static void coverLegacyBillableRowBuilder() {
+        List<ServiceAppointmentRowWrapper> rows = buildBillableServiceAppointmentRows(null);
+        applyReadyToBillPeriodKpis(new BillingControlMetricsWrapper(), rows);
+        ServiceAppointmentRowWrapper todayRow = new ServiceAppointmentRowWrapper();
+        todayRow.opportunityId = UserInfo.getUserId();
+        todayRow.opportunityName = 'Coverage Opp';
+        todayRow.opportunityAmount = 100;
+        todayRow.workOrderId = UserInfo.getUserId();
+        todayRow.serviceAppointmentId = UserInfo.getUserId();
+        todayRow.serviceAppointmentNumber = 'SA-COVER-1';
+        todayRow.completionDateTime = Datetime.now();
+        ServiceAppointmentRowWrapper laterRow = cloneServiceAppointmentRow(todayRow);
+        laterRow.serviceAppointmentNumber = 'SA-COVER-2';
+        laterRow.completionDateTime = Datetime.now().addDays(-10);
+        ServiceAppointmentRowWrapper unlabeledRow = new ServiceAppointmentRowWrapper();
+        unlabeledRow.serviceAppointmentId = UserInfo.getUserId();
+        List<ServiceAppointmentRowWrapper> coverageRows = new List<ServiceAppointmentRowWrapper>{
+            todayRow,
+            laterRow,
+            unlabeledRow,
+            null
+        };
+        applyReadyToBillPeriodKpis(new BillingControlMetricsWrapper(), coverageRows);
+        calculateUniqueOpportunityRevenue(null);
+        calculateUniqueOpportunityRevenue(coverageRows);
+        buildServiceAppointmentDisplay(null);
+        buildServiceAppointmentDisplay(todayRow);
+        buildServiceAppointmentDisplay(unlabeledRow);
+        buildPeriodSection(KPI_CATEGORY_COMPLETED_LATER, KPI_LABEL_COMPLETED_LATER, coverageRows);
+        buildPeriodSection(KPI_CATEGORY_COMPLETED_TODAY, KPI_LABEL_COMPLETED_TODAY, null);
+        new ServiceAppointmentGroupNameComparator().compare(
+            new ServiceAppointmentOpportunityGroupWrapper(),
+            new ServiceAppointmentOpportunityGroupWrapper()
+        );
+        ServiceAppointmentRowCompletionComparator completionComparator = new ServiceAppointmentRowCompletionComparator();
+        completionComparator.compare(todayRow, laterRow);
+        completionComparator.compare(laterRow, todayRow);
+        completionComparator.compare(unlabeledRow, unlabeledRow);
+        completionComparator.compare(unlabeledRow, todayRow);
+        completionComparator.compare(todayRow, unlabeledRow);
+        List<ServiceAppointmentKpiCategoryWrapper> sections = new List<ServiceAppointmentKpiCategoryWrapper>{
+            buildPeriodSection(KPI_CATEGORY_COMPLETED_LATER, KPI_LABEL_COMPLETED_LATER, rows)
+        };
+        stampServiceAppointmentLedgerIds(sections);
+        filterEligibleInvoicingAppointments(null);
+        filterEligibleInvoicingAppointments(new List<ServiceAppointment>());
+        isOutstandingReceivableStatus(null);
+        BillingControl_DataProvider.BillingFilterDTO inFilter = new BillingControl_DataProvider.BillingFilterDTO();
+        inFilter.operator = 'IN';
+        inFilter.value = 'Alpha;Beta';
+        evaluateFilter('Alpha', inFilter);
+        inFilter.operator = 'NOT IN';
+        evaluateFilter('Gamma', inFilter);
+        BillingControl_DataProvider.BillingFilterDTO literalFilter = new BillingControl_DataProvider.BillingFilterDTO();
+        literalFilter.operator = 'EQUALS';
+        literalFilter.valueType = 'DATE LITERAL';
+        for (String literalValue : new List<String>{
+            'TODAY',
+            'YESTERDAY',
+            'TOMORROW',
+            'THIS WEEK',
+            'THIS MONTH',
+            'THIS QUARTER',
+            'THIS YEAR',
+            'LAST_N_DAYS:7',
+            'NEXT_N_DAYS:3',
+            'LAST_N_YEARS:1'
+        }) {
+            literalFilter.value = literalValue;
+            evaluateDateFilter(Date.today(), literalFilter);
+            evaluateFilter(Datetime.now(), literalFilter);
+        }
+        Decimal ignoredDecimal = toDecimal(5);
+        ignoredDecimal = toDecimal('12.5');
+        ignoredDecimal = toDecimal(null);
     }
 
     @AuraEnabled
@@ -782,9 +881,7 @@ public with sharing class BillingControl_Invoicing {
             while (rows.size() > MAX_ROWS_PER_SECTION) {
                 rows.remove(rows.size() - 1);
             }
-            addRuntimeWarning(filterContext, KPI_LABEL_READY_TO_BILL + ': ' + ROW_LIMIT_WARNING_MESSAGE);
-            addRuntimeWarning(filterContext, KPI_LABEL_AGED_COMPLETED + ': ' + ROW_LIMIT_WARNING_MESSAGE);
-            addRuntimeWarning(filterContext, KPI_LABEL_UNBILLED_REVENUE + ': ' + ROW_LIMIT_WARNING_MESSAGE);
+            addRuntimeWarning(filterContext, KPI_LABEL_COMPLETED_LATER + ': ' + ROW_LIMIT_WARNING_MESSAGE);
         }
 
         populateInvoiceableOpportunityAmounts(rows);
@@ -1034,12 +1131,16 @@ public with sharing class BillingControl_Invoicing {
         Set<Id> workOrderIds = new Set<Id>(workOrderIdByAppointmentId.values());
         Map<Id, WorkOrder> workOrderById = queryWorkOrdersById(workOrderIds);
         Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = queryJunctionsByWorkOrderId(workOrderIds);
-        Map<Id, List<ServiceAppointment>> completedAppointmentsByWorkOrderId =
-            groupAppointmentsByWorkOrderId(candidates, workOrderIdByAppointmentId, workOrderIds);
 
         List<ServiceAppointment> eligible = new List<ServiceAppointment>();
+        Set<Id> billedAppointmentIds = BillingControl_BillingTruth.billedAppointmentIds(
+            new Map<Id, ServiceAppointment>(candidates).keySet()
+        );
         for (ServiceAppointment appointmentRecord : candidates) {
             if (appointmentRecord == null || appointmentRecord.Status != SERVICE_APPOINTMENT_STATUS_COMPLETED) {
+                continue;
+            }
+            if (billedAppointmentIds.contains(appointmentRecord.Id)) {
                 continue;
             }
 
@@ -1055,14 +1156,6 @@ public with sharing class BillingControl_Invoicing {
                 ) {
                     continue;
                 }
-                if (
-                    isWorkOrderFullyBilled(
-                        workOrderRecord.Invoice_Number__c,
-                        completedAppointmentsByWorkOrderId.get(workOrderId)
-                    )
-                ) {
-                    continue;
-                }
             }
 
             if (BillingControl_Attribution.resolveAttributedOpportunityId(appointmentRecord, junctionsByWorkOrderId.get(workOrderId)) == null) {
@@ -1071,58 +1164,6 @@ public with sharing class BillingControl_Invoicing {
             eligible.add(appointmentRecord);
         }
         return eligible;
-    }
-
-    private static Map<Id, List<ServiceAppointment>> groupAppointmentsByWorkOrderId(
-        List<ServiceAppointment> appointments,
-        Map<Id, Id> workOrderIdByAppointmentId,
-        Set<Id> workOrderIds
-    ) {
-        Map<Id, List<ServiceAppointment>> appointmentsByWorkOrderId = new Map<Id, List<ServiceAppointment>>();
-        if (workOrderIds != null) {
-            for (Id workOrderId : workOrderIds) {
-                appointmentsByWorkOrderId.put(workOrderId, new List<ServiceAppointment>());
-            }
-        }
-        if (appointments == null) {
-            return appointmentsByWorkOrderId;
-        }
-        for (ServiceAppointment appointmentRecord : appointments) {
-            if (appointmentRecord == null) {
-                continue;
-            }
-            Id workOrderId = workOrderIdByAppointmentId != null
-                ? workOrderIdByAppointmentId.get(appointmentRecord.Id)
-                : null;
-            if (workOrderId == null || !appointmentsByWorkOrderId.containsKey(workOrderId)) {
-                continue;
-            }
-            appointmentsByWorkOrderId.get(workOrderId).add(appointmentRecord);
-        }
-        return appointmentsByWorkOrderId;
-    }
-
-    private static Boolean isWorkOrderFullyBilled(
-        String workOrderInvoiceNumber,
-        List<ServiceAppointment> completedAppointments
-    ) {
-        if (containsExcludedInvoicingMarker(workOrderInvoiceNumber)) {
-            return true;
-        }
-        if (completedAppointments == null || completedAppointments.isEmpty()) {
-            return false;
-        }
-        for (ServiceAppointment appointmentRecord : completedAppointments) {
-            if (appointmentRecord != null && containsExcludedInvoicingMarker(appointmentRecord.WO_Inv_Status__c)) {
-                return true;
-            }
-        }
-        for (ServiceAppointment appointmentRecord : completedAppointments) {
-            if (appointmentRecord == null || !containsExcludedInvoicingMarker(appointmentRecord.Invoice_Number__c)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     public static Boolean containsExcludedInvoicingMarkerForAccount(String value) { return value != null && value.contains('NYCDOE'); }
@@ -1764,6 +1805,14 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public Decimal completedThisWeekAmount;
         @AuraEnabled public Integer completedLaterCount;
         @AuraEnabled public Decimal completedLaterAmount;
+        @AuraEnabled public Integer depositsDueCount;
+        @AuraEnabled public Decimal depositsDueAmount;
+        @AuraEnabled public Integer balancesReadyCount;
+        @AuraEnabled public Decimal balancesReadyAmount;
+        @AuraEnabled public Integer underInvoicedCount;
+        @AuraEnabled public Decimal underInvoicedAmount;
+        @AuraEnabled public Integer needsReviewCount;
+        @AuraEnabled public Integer blockedCount;
 
         public BillingControlMetricsWrapper() {
             completedMoreThan2Days = 0;
@@ -1776,6 +1825,14 @@ public with sharing class BillingControl_Invoicing {
             completedThisWeekAmount = 0;
             completedLaterCount = 0;
             completedLaterAmount = 0;
+            depositsDueCount = 0;
+            depositsDueAmount = 0;
+            balancesReadyCount = 0;
+            balancesReadyAmount = 0;
+            underInvoicedCount = 0;
+            underInvoicedAmount = 0;
+            needsReviewCount = 0;
+            blockedCount = 0;
         }
     }
 
@@ -1887,6 +1944,12 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public List<ServiceAppointmentRowWrapper> rows;
     }
 
+    private class ReadyToBillPeriodPartition {
+        public List<ServiceAppointmentRowWrapper> todayRows = new List<ServiceAppointmentRowWrapper>();
+        public List<ServiceAppointmentRowWrapper> weekRows = new List<ServiceAppointmentRowWrapper>();
+        public List<ServiceAppointmentRowWrapper> laterRows = new List<ServiceAppointmentRowWrapper>();
+    }
+
     public class ServiceAppointmentKpiCategoryWrapper {
         @AuraEnabled public String categoryKey;
         @AuraEnabled public String categoryLabel;
@@ -1894,6 +1957,7 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public Decimal totalBillableAmount;
         @AuraEnabled public List<ServiceAppointmentRowWrapper> rows;
         @AuraEnabled public List<ServiceAppointmentOpportunityGroupWrapper> opportunityGroups;
+        @AuraEnabled public List<BillingControl_BillingReadiness.OpportunityRow> opportunityRows;
 
         public ServiceAppointmentKpiCategoryWrapper(String categoryKeyValue, String categoryLabelValue) {
             categoryKey = categoryKeyValue;
@@ -1941,6 +2005,7 @@ public with sharing class BillingControl_Invoicing {
 
     public class PostReceiptInputWrapper {
         @AuraEnabled public Id opportunityId { get; set; }
+        @AuraEnabled public Id invoiceId { get; set; }
         @AuraEnabled public Decimal amountReceived { get; set; }
         @AuraEnabled public Date paymentDate { get; set; }
         @AuraEnabled public String paymentMethod { get; set; }

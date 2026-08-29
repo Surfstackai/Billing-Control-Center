@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<LightningComponentBundle xmlns="http://soap.sforce.com/2006/04/metadata">
+    <apiVersion>65.0</apiVersion>
+    <isExposed>true</isExposed>
+    <masterLabel>Work Order Opportunity Lookup</masterLabel>
+    <targets>
+        <target>lightning__FlowScreen</target>
+    </targets>
+    <targetConfigs>
+        <targetConfig targets="lightning__FlowScreen">
+            <property name="label" type="String" label="Label" role="inputOnly"/>
+            <property name="placeholder" type="String" label="Placeholder" role="inputOnly"/>
+            <property name="required" type="Boolean" label="Required" role="inputOnly"/>
+            <property name="allowedOpportunityIdsCsv" type="String" label="Allowed Opportunity Ids CSV" role="inputOnly"/>
+            <property name="selectedOpportunityId" type="String" label="Selected Opportunity Id" role="outputOnly"/>
+        </targetConfig>
+    </targetConfigs>
+</LightningComponentBundle>

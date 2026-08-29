@@ -1,7 +1,7 @@
 @IsTest
 private class BillingControl_ReadyToBillKpiTest {
     @IsTest
-    static void readyToBillPeriodKpisDeduplicateOpportunityAmount() {
+    static void readinessSectionsCountUniqueOpportunities() {
         WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ready To Bill KPI Account');
         insert accountRecord;
@@ -66,25 +66,54 @@ private class BillingControl_ReadyToBillKpiTest {
         Test.startTest();
         BillingControl_Invoicing.BillingControlMetricsWrapper metrics =
             BillingControl_Invoicing.getServiceAppointmentBillingMetrics();
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sections =
+            BillingControl_Invoicing.getBillableServiceAppointmentGroups();
         Test.stopTest();
 
-        Integer expectedTodayCount = 4;
-        Decimal expectedTodayAmount = 10000;
-        Integer expectedWeekCount = earlierThisWeek == null ? 4 : 5;
-        Decimal expectedWeekAmount = earlierThisWeek == null ? 10000 : 15000;
-        Integer expectedLaterCount = earlierThisWeek == null ? 5 : 6;
-        Decimal expectedLaterAmount = earlierThisWeek == null ? 12000 : 17000;
+        Integer expectedBalanceReady = earlierThisWeek == null ? 2 : 3;
+        System.assertEquals(expectedBalanceReady, metrics.balancesReadyCount, 'Quoted Opportunities with unbilled visits are Balances Ready.');
+        System.assertEquals(1, metrics.blockedCount, 'Null Amount Opportunity is Blocked.');
+        System.assertEquals(expectedBalanceReady + 1, metrics.readyToBill, 'Unique Opportunities across readiness reasons.');
 
-        System.assertEquals(expectedTodayCount, metrics.completedTodayCount, 'Today counts Ready to Bill Service Appointments.');
-        System.assertEquals(expectedTodayAmount, metrics.completedTodayAmount, 'Today amounts are unique by Opportunity.');
-        System.assertEquals(expectedWeekCount, metrics.completedThisWeekCount, 'This Week includes Completed Today.');
-        System.assertEquals(expectedWeekAmount, metrics.completedThisWeekAmount, 'This Week amounts are unique by Opportunity.');
-        System.assertEquals(expectedLaterCount, metrics.completedLaterCount, 'Completed Later includes every Ready to Bill record.');
-        System.assertEquals(expectedLaterAmount, metrics.completedLaterAmount, 'Completed Later amounts are unique by Opportunity.');
-        System.assertEquals(metrics.readyToBill, metrics.completedLaterCount);
-        System.assertEquals(metrics.unbilledRevenue, metrics.completedLaterAmount);
-        System.assertEquals(true, metrics.completedTodayCount <= metrics.completedThisWeekCount);
-        System.assertEquals(true, metrics.completedThisWeekCount <= metrics.completedLaterCount);
+        Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sectionByKey =
+            new Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper>();
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
+            sectionByKey.put(section.categoryKey, section);
+        }
+        System.assertEquals(5, sections.size());
+        System.assertEquals(
+            expectedBalanceReady,
+            sectionByKey.get('BALANCES_READY').opportunityRows.size()
+        );
+        System.assertEquals(1, sectionByKey.get('BLOCKED').opportunityRows.size());
+        System.assertEquals(true, collectOpportunityIds(sectionByKey.get('BALANCES_READY')).contains(opportunityToday.Id));
+        System.assertEquals(1, countMatches(sectionByKey.get('BALANCES_READY'), opportunityToday.Id));
+    }
+
+    private static Integer countMatches(
+        BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section,
+        Id opportunityId
+    ) {
+        Integer matchCount = 0;
+        for (Id rowOpportunityId : collectOpportunityIds(section)) {
+            if (rowOpportunityId == opportunityId) {
+                matchCount++;
+            }
+        }
+        return matchCount;
+    }
+
+    private static Set<Id> collectOpportunityIds(
+        BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section
+    ) {
+        Set<Id> opportunityIds = new Set<Id>();
+        if (section == null || section.opportunityRows == null) {
+            return opportunityIds;
+        }
+        for (BillingControl_BillingReadiness.OpportunityRow row : section.opportunityRows) {
+            opportunityIds.add(row.opportunityId);
+        }
+        return opportunityIds;
     }
 
     private static Opportunity insertOpportunity(Id accountId, Id workTypeId, String name, Decimal amount) {

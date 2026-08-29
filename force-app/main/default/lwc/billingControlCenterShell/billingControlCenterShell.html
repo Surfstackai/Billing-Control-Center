@@ -86,18 +86,35 @@
         <main class="bcc-shell__content">
             <template if:true={isOrdersActive}>
                 <c-billing-control-center-orders
-                    use-external-toolbar>
+                    use-external-toolbar
+                    date-filter={sharedDateFilter}
+                    opportunity-owner-id={sharedOpportunityOwnerId}
+                    onsharedfilterchange={handleSharedFilterChange}>
                 </c-billing-control-center-orders>
             </template>
             <template if:true={isInvoicingActive}>
                 <c-billing-control-center-billing
-                    use-external-toolbar>
+                    use-external-toolbar
+                    date-filter={sharedDateFilter}
+                    opportunity-owner-id={sharedOpportunityOwnerId}
+                    onsharedfilterchange={handleSharedFilterChange}>
                 </c-billing-control-center-billing>
             </template>
             <template if:true={isReceivablesActive}>
                 <c-billing-control-center-commission
-                    use-external-toolbar>
+                    use-external-toolbar
+                    date-filter={sharedDateFilter}
+                    opportunity-owner-id={sharedOpportunityOwnerId}
+                    onsharedfilterchange={handleSharedFilterChange}>
                 </c-billing-control-center-commission>
+            </template>
+            <template if:true={isCommissionsActive}>
+                <c-billing-control-center-commissions
+                    use-external-toolbar
+                    date-filter={sharedDateFilter}
+                    opportunity-owner-id={sharedOpportunityOwnerId}
+                    onsharedfilterchange={handleSharedFilterChange}>
+                </c-billing-control-center-commissions>
             </template>
         </main>
     </div>

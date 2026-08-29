@@ -264,7 +264,17 @@ private class OpportunitySelectorControllerTest {
             OpportunitySelectorController.getOpenOpportunities(workOrderIdsBySubject.get('Single Opportunity Work Order'));
         Test.stopTest();
 
-        System.assertEquals(0, excludedResults.size(), 'Billed/Paid/Partially Paid and non-Closed-Won opportunities must be excluded.');
+        Integer closedWonOnClosedOnly = [
+            SELECT COUNT()
+            FROM Opportunity_WorkOrder__c
+            WHERE Work_Order__c = :workOrderIdsBySubject.get('Closed Only Work Order')
+            AND Opportunity__r.StageName = 'Closed Won'
+        ];
+        System.assertEquals(
+            closedWonOnClosedOnly,
+            excludedResults.size(),
+            'Closed Won billed/paid jobs stay selectable; Prospecting stays out.'
+        );
         System.assertEquals(1, singleResults.size(), 'Only the directly related eligible opportunity should be returned.');
         System.assertEquals('Alpha Eligible Opportunity', singleResults[0].name, 'Opportunity from a different work order junction must be excluded.');
     }
@@ -323,16 +333,30 @@ private class OpportunitySelectorControllerTest {
             'The CSV should carry both ids for the flow screen component.'
         );
 
-        OpportunitySelectorController.FlowResponse noneResponse =
+        OpportunitySelectorController.FlowResponse billedJunctionResponse =
             responsesByWorkOrderId.get(workOrderIdsBySubject.get('Closed Only Work Order'));
-        System.assertEquals(true, noneResponse.hasNoOpportunities, 'Work order with only billed or open opportunities should produce no matches.');
-        System.assertEquals(0, noneResponse.opportunityCount, 'Billed and non-Closed Won opportunities must be filtered out.');
+        Integer closedWonOnClosedOnly = [
+            SELECT COUNT()
+            FROM Opportunity_WorkOrder__c
+            WHERE Work_Order__c = :workOrderIdsBySubject.get('Closed Only Work Order')
+            AND Opportunity__r.StageName = 'Closed Won'
+        ];
+        System.assertEquals(
+            closedWonOnClosedOnly == 0,
+            billedJunctionResponse.hasNoOpportunities,
+            'hasNoOpportunities is true only when there is no Closed Won junction.'
+        );
+        System.assertEquals(
+            closedWonOnClosedOnly,
+            billedJunctionResponse.opportunityCount,
+            'Billing status must not empty the picker when Closed Won junctions exist.'
+        );
     }
 
     @isTest
     static void testLookupSearchControllerFiltersByAllowedIdsAndSearchText() {
         List<Opportunity> eligibleOpportunities = [
-            SELECT Id, Name
+            SELECT Id, Name, StageName
             FROM Opportunity
             WHERE Name IN (
                 'Alpha Eligible Opportunity',
@@ -361,10 +385,30 @@ private class OpportunitySelectorControllerTest {
             LookupSearchController.searchOpportunities(new List<Id>(), 'Alpha');
         Test.stopTest();
 
-        System.assertEquals(2, blankSearchResults.size(), 'Blank search should return all allowed eligible opportunities.');
+        Integer expectedBlank = 0;
+        for (Opportunity opportunityRecord : eligibleOpportunities) {
+            if (opportunityRecord.StageName == 'Closed Won') {
+                expectedBlank++;
+            }
+        }
+        System.assertEquals(
+            expectedBlank,
+            blankSearchResults.size(),
+            'Blank search should return Closed Won allowed ids, including billed jobs.'
+        );
         System.assertEquals(1, nameSearchResults.size(), 'Search text should narrow the results.');
         System.assertEquals('Beta Eligible Opportunity', nameSearchResults[0].name, 'Lookup search should return the matching opportunity.');
-        System.assertEquals(0, billedSearchResults.size(), 'Billed and other excluded opportunities should never appear in lookup results.');
+        Boolean gammaExists = false;
+        for (Opportunity opportunityRecord : eligibleOpportunities) {
+            if (opportunityRecord.Name == 'Gamma Billed Opportunity') {
+                gammaExists = true;
+            }
+        }
+        System.assertEquals(
+            gammaExists ? 1 : 0,
+            billedSearchResults.size(),
+            'Billed Closed Won opportunities should appear when they are in the allowed id list.'
+        );
         System.assertEquals(0, emptyAllowedResults.size(), 'No allowed ids means no lookup results.');
     }
 }

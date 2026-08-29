@@ -18,6 +18,9 @@
                     </lightning-menu-item>
                 </template>
             </lightning-button-menu>
+            <template if:true={showBoundsLabel}>
+                <span class="bcc-date-filter__bounds">{boundsLabel}</span>
+            </template>
             <template if:true={isCustomRange}>
                 <lightning-input
                     class="bcc-date-filter__date"

@@ -1,0 +1,77 @@
+<template>
+    <div class="slds-form-element">
+        <label if:true={label} class="slds-form-element__label" for="opportunity-search">
+            <abbr if:true={required} class="slds-required" title="required">*</abbr>{label}
+        </label>
+        <div class={containerClass}>
+            <div class="slds-combobox__form-element slds-input-has-icon slds-input-has-icon_right" role="none">
+                <lightning-input
+                    id="opportunity-search"
+                    type="search"
+                    variant="label-hidden"
+                    value={searchText}
+                    placeholder={placeholder}
+                    autocomplete="off"
+                    disabled={hasSelection}
+                    oninput={handleSearchChange}
+                    onfocus={handleInputFocus}
+                ></lightning-input>
+                <button
+                    if:true={hasSelection}
+                    class="slds-button slds-button_icon slds-input__icon slds-input__icon_right"
+                    type="button"
+                    title="Clear selection"
+                    onclick={handleClearSelection}
+                >
+                    <lightning-icon icon-name="utility:close" size="x-small" alternative-text="Clear"></lightning-icon>
+                </button>
+            </div>
+
+            <div if:true={hasSelection} class="slds-pill_container slds-m-top_x-small">
+                <lightning-pill label={selectedOpportunityName} onremove={handleClearSelection}></lightning-pill>
+            </div>
+
+            <div if:true={showDropdown} class="slds-dropdown slds-dropdown_length-7 slds-dropdown_fluid" role="listbox">
+                <ul class="slds-listbox slds-listbox_vertical" role="presentation">
+                    <template if:true={hasResults}>
+                        <template for:each={results} for:item="opportunity">
+                            <li key={opportunity.id} class="slds-listbox__item" role="presentation">
+                                <button
+                                    class="slds-listbox__option slds-listbox__option_plain slds-media slds-media_small slds-media_center result-button"
+                                    type="button"
+                                    data-id={opportunity.id}
+                                    data-name={opportunity.name}
+                                    onclick={handleSelect}
+                                >
+                                    <lightning-icon
+                                        icon-name="standard:opportunity"
+                                        size="small"
+                                        alternative-text="Opportunity"
+                                        class="slds-m-right_small"
+                                    ></lightning-icon>
+                                    <span class="slds-media__body slds-text-align_left">
+                                        <span class="slds-listbox__option-text slds-listbox__option-text_entity">
+                                            {opportunity.name}
+                                        </span>
+                                        <span class="slds-listbox__option-meta slds-listbox__option-meta_entity">
+                                            {opportunity.detail}
+                                        </span>
+                                    </span>
+                                </button>
+                            </li>
+                        </template>
+                    </template>
+                    <template if:false={hasResults}>
+                        <li class="slds-listbox__item" role="presentation">
+                            <div class="slds-p-around_small slds-text-body_small slds-text-color_weak">
+                                No eligible open opportunities found.
+                            </div>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+        </div>
+
+        <div if:true={errorMessage} class="slds-form-element__help">{errorMessage}</div>
+    </div>
+</template>

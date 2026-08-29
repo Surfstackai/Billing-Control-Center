@@ -3,6 +3,7 @@ import { NavigationMixin } from 'lightning/navigation';
 import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Billing_Control_Center_Admin_Access';
 
 import getTabs from '@salesforce/apex/BillingControl_ConfigService.getTabs';
+import { resolveDateRange } from 'c/billingControlCenterDateFilter';
 
 const GROUP_BILLING = 'Billing';
 const GROUP_STANDARD = 'Standard';
@@ -12,24 +13,28 @@ const TARGET_OBJECT_HOME = 'Object Home';
 const TARGET_APP = 'App';
 const TARGET_URL = 'URL';
 
-const SUPPORTED_INTERNAL_TABS = new Set(['ORDERS', 'INVOICING', 'RECEIVABLES']);
+const SUPPORTED_INTERNAL_TABS = new Set(['ORDERS', 'INVOICING', 'RECEIVABLES', 'COMMISSIONS']);
 
 const DEFAULT_INTERNAL_ITEMS = [
     { developerKey: 'ORDERS', label: 'Work Order Ledger' },
     { developerKey: 'INVOICING', label: 'Invoicing' },
-    { developerKey: 'RECEIVABLES', label: 'Receivables' }
+    { developerKey: 'RECEIVABLES', label: 'Receivables' },
+    { developerKey: 'COMMISSIONS', label: 'Commissions' }
 ];
 
 const DEFAULT_ICONS = {
     ORDERS: 'utility:table',
     INVOICING: 'utility:money',
     RECEIVABLES: 'utility:chart',
+    COMMISSIONS: 'utility:currency',
     OPPORTUNITIES: 'utility:opportunity',
     WORK_ORDERS: 'utility:work_order_type',
     SERVICE_APPOINTMENTS: 'utility:event',
     REPORTS: 'utility:report',
     SETTINGS: 'utility:settings'
 };
+
+const DEFAULT_DATE_FILTER = resolveDateRange('This Month');
 
 function normalizeKey(value) {
     return value ? String(value).trim().toUpperCase() : '';
@@ -51,6 +56,8 @@ export default class BillingControlCenterShell extends NavigationMixin(Lightning
     adminNavItems = [];
     activeTabKey = 'ORDERS';
     isSidebarCollapsed = false;
+    sharedDateFilter = { ...DEFAULT_DATE_FILTER };
+    sharedOpportunityOwnerId = null;
 
     connectedCallback() {
         this.loadShellConfig();
@@ -66,6 +73,10 @@ export default class BillingControlCenterShell extends NavigationMixin(Lightning
 
     get isReceivablesActive() {
         return this.activeTabKey === 'RECEIVABLES';
+    }
+
+    get isCommissionsActive() {
+        return this.activeTabKey === 'COMMISSIONS';
     }
 
     get hasAdminItems() {
@@ -90,6 +101,16 @@ export default class BillingControlCenterShell extends NavigationMixin(Lightning
 
     get toggleAlternativeText() {
         return this.isSidebarCollapsed ? 'Expand navigation' : 'Collapse navigation';
+    }
+
+    handleSharedFilterChange(event) {
+        const detail = event.detail || {};
+        if (detail.dateFilter) {
+            this.sharedDateFilter = { ...detail.dateFilter };
+        }
+        if (Object.prototype.hasOwnProperty.call(detail, 'opportunityOwnerId')) {
+            this.sharedOpportunityOwnerId = detail.opportunityOwnerId || null;
+        }
     }
 
     async loadShellConfig() {
@@ -159,6 +180,17 @@ export default class BillingControlCenterShell extends NavigationMixin(Lightning
                 billing.push(item);
             }
         });
+
+        if (!billing.some(item => normalizeKey(item.developerKey) === 'COMMISSIONS')) {
+            billing.push({
+                developerKey: 'COMMISSIONS',
+                label: 'Commissions',
+                iconName: DEFAULT_ICONS.COMMISSIONS,
+                displayOrder: 40,
+                navigationGroup: GROUP_BILLING,
+                navigationTargetType: TARGET_INTERNAL_TAB
+            });
+        }
 
         return {
             billing: this.decorateNavItems(billing, true),

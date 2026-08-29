@@ -77,6 +77,43 @@
     border-radius: var(--bcc-radius);
     padding: 0.95rem 1rem;
     box-shadow: 0 8px 22px rgba(15, 23, 42, 0.06);
+    text-align: left;
+    width: 100%;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+}
+
+.kpi-tile:hover,
+.kpi-tile:focus-visible {
+    border-color: var(--bcc-accent);
+    outline: none;
+}
+
+.kpi-tile_selected {
+    border-color: var(--bcc-accent);
+    background: var(--bcc-accent-soft);
+}
+
+.hero_toolbar-only {
+    align-items: center;
+}
+
+.hero_toolbar-only .hero__controls {
+    width: 100%;
+}
+
+.bcc-kpi-legend {
+    margin: -0.35rem 0 0.85rem;
+    color: var(--bcc-muted);
+    font-size: 0.8rem;
+    line-height: 1.35;
+}
+
+.bucket-count-caption {
+    margin: 0 0 0.65rem;
+    color: var(--bcc-muted);
+    font-size: 0.78rem;
 }
 
 .kpi-tile__header {

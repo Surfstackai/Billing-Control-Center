@@ -1007,6 +1007,62 @@ private class BillingControl_WorkOrderLedgerTest {
     }
 
     @IsTest
+    static void explicitMonthBoundsExcludeReadyWorkOutsideTheWindowEvenWithoutFilterKey() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Ledger Explicit Bounds Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Explicit Bounds Type', 1);
+        Opportunity opportunityRecord = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'Explicit Bounds Opp', 275);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'September Earliest Ledger WO');
+        Date todayDate = Date.today();
+        Integer year = todayDate.year();
+        Datetime septemberEarliest = Datetime.newInstance(
+            Date.newInstance(year, 9, 18),
+            Time.newInstance(8, 0, 0, 0)
+        );
+        ServiceAppointment readyAppointment = buildAppointment(
+            workOrderRecord.Id,
+            'None',
+            null,
+            null,
+            'September Earliest SA'
+        );
+        readyAppointment.EarliestStartTime = septemberEarliest;
+        readyAppointment.DueDate = septemberEarliest.addDays(7);
+        insert readyAppointment;
+        insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
+
+        BillingControl_DataProvider.BillingDateFilterDTO augustWithoutKey =
+            new BillingControl_DataProvider.BillingDateFilterDTO();
+        augustWithoutKey.filterKey = null;
+        augustWithoutKey.startDate = String.valueOf(Date.newInstance(year, 8, 1));
+        augustWithoutKey.endDate = String.valueOf(Date.newInstance(year, 8, 31));
+
+        Test.startTest();
+        BillingControl_DataProvider.DateRangeDTO augustWindow =
+            BillingControl_DataProvider.resolveDateRangeForInvSync(augustWithoutKey);
+        BillingControl_WorkOrderLedger.RuntimeBundle augustRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(68L, null, augustWindow);
+        BillingControl_WorkOrderLedger.RuntimeBundle yearRuntime =
+            BillingControl_WorkOrderLedger.getRuntime(69L, null, thisYearWindow(todayDate));
+        Test.stopTest();
+
+        System.assertEquals(Date.newInstance(year, 8, 1), augustWindow.startDate);
+        System.assertEquals(Date.newInstance(year, 8, 31), augustWindow.endDate);
+        System.assertEquals(
+            null,
+            findAnyRow(augustRuntime.sections, workOrderRecord.Id),
+            'August bounds must exclude Ready work whose Earliest Start Permitted is 18 September, even if filterKey is blank.'
+        );
+        System.assertNotEquals(
+            null,
+            findAnyRow(yearRuntime.sections, workOrderRecord.Id),
+            'Current Year must still include the September Ready appointment.'
+        );
+    }
+
+    @IsTest
     static void dateFilterExcludesClosedWorkOrderAppointments() {
         WorkOrderLedgerAutomationControl.disableForTests();
         String closedStatus = firstClosedWorkOrderStatus();

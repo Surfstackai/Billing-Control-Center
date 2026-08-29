@@ -210,8 +210,17 @@
     font-size: 0.875rem;
 }
 
-.ledger-action {
-    display: inline-flex;
+.evidence-tree {
+    padding: 0.5rem 0.75rem 0.75rem;
+    background: var(--bcc-surface-muted, #f3f3f3);
+}
+
+.evidence-tree__work-order + .evidence-tree__work-order {
+    margin-top: 0.75rem;
+}
+
+.evidence-tree__appointment {
+    margin-top: 0.35rem;
 }
 
 @media (max-width: 720px) {

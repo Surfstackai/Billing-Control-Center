@@ -28,3 +28,9 @@
 .bcc-date-filter__date {
     width: 9.5rem;
 }
+
+.bcc-date-filter__bounds {
+    font-size: 0.75rem;
+    color: var(--bcc-muted, #706e6b);
+    white-space: nowrap;
+}

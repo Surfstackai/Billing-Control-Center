@@ -90,6 +90,36 @@
             <default>false</default>
             <label>ACCOUNTING_NOTE</label>
         </value>
+        <value>
+            <fullName>INVOICE_CREATED</fullName>
+            <default>false</default>
+            <label>INVOICE_CREATED</label>
+        </value>
+        <value>
+            <fullName>INVOICE_VOIDED</fullName>
+            <default>false</default>
+            <label>INVOICE_VOIDED</label>
+        </value>
+        <value>
+            <fullName>PAYMENT_RECORDED</fullName>
+            <default>false</default>
+            <label>PAYMENT_RECORDED</label>
+        </value>
+        <value>
+            <fullName>COMMISSION_ACCRUED</fullName>
+            <default>false</default>
+            <label>COMMISSION_ACCRUED</label>
+        </value>
+        <value>
+            <fullName>COMMISSION_PAYABLE</fullName>
+            <default>false</default>
+            <label>COMMISSION_PAYABLE</label>
+        </value>
+        <value>
+            <fullName>COMMISSION_PAID</fullName>
+            <default>false</default>
+            <label>COMMISSION_PAID</label>
+        </value>
         </valueSetDefinition>
     </valueSet>
 </CustomField>

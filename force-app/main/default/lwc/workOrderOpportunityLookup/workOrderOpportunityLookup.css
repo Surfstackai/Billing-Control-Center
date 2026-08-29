@@ -1,0 +1,11 @@
+.result-button {
+    width: 100%;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+}
+
+.result-button:hover,
+.result-button:focus {
+    background: var(--lwc-colorBackgroundRowHover, #f3f3f3);
+}

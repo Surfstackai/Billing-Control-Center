@@ -1,14 +1,31 @@
 <template>
     <div class="control-center-card">
-        <div class="hero">
-            <div class="hero__intro">
-                <p class="hero__eyebrow">Billing Control Center</p>
-                <h1 class="hero__title">{heroTitle}</h1>
-                <p class="hero__subtitle">{heroSubtitle}</p>
-            </div>
+        <div class={heroClass}>
+            <template if:true={showHeroIntro}>
+                <div class="hero__intro">
+                    <p class="hero__eyebrow">Billing Control Center</p>
+                    <h1 class="hero__title">{heroTitle}</h1>
+                    <p class="hero__subtitle">{heroSubtitle}</p>
+                </div>
+            </template>
             <div class="hero__controls">
+                <lightning-button-group class="view-toggle">
+                    <lightning-button
+                        label="By Salesperson"
+                        variant={salespersonViewVariant}
+                        data-view="salesperson"
+                        onclick={handleViewChange}>
+                    </lightning-button>
+                    <lightning-button
+                        label="All Receivables"
+                        variant={allReceivablesViewVariant}
+                        data-view="all"
+                        onclick={handleViewChange}>
+                    </lightning-button>
+                </lightning-button-group>
                 <c-billing-control-center-date-filter
                     compact
+                    label="Due date"
                     selected-filter-key={dateFilterKey}
                     start-date={dateFilterStart}
                     end-date={dateFilterEnd}
@@ -24,15 +41,24 @@
                     matching-info={userPickerMatchingInfo}
                     onchange={handleOpportunityOwnerChange}>
                 </lightning-record-picker>
+                <lightning-input
+                    class="toolbar-search"
+                    type="search"
+                    label="Search"
+                    variant="label-hidden"
+                    placeholder="Search invoice, quote, account, opportunity, salesperson"
+                    value={searchKey}
+                    onchange={handleSearchChange}>
+                </lightning-input>
                 <c-billing-control-center-action-bar
                     actions={tableActions}
                     onactionclick={handleTableActionClick}>
                 </c-billing-control-center-action-bar>
                 <template if:true={useExternalToolbar}>
                     <lightning-button
-                        label={refreshLabel}
+                        label={toolbarRefreshLabel}
                         icon-name="utility:refresh"
-                        variant="brand"
+                        variant="neutral"
                         disabled={isLoading}
                         onclick={handleRefresh}>
                     </lightning-button>
@@ -61,266 +87,416 @@
             is-visible={showDiagnostics}>
         </c-billing-control-center-diagnostics>
 
-        <template if:true={isLoading}>
-            <lightning-spinner alternative-text="Refreshing commission data" size="small"></lightning-spinner>
+        <template if:true={showFullPageSpinner}>
+            <lightning-spinner alternative-text="Refreshing receivables" size="small"></lightning-spinner>
         </template>
 
-        <div class="billing-kpi-container">
-            <c-billing-control-center-kpi-grid tiles={kpiTiles}></c-billing-control-center-kpi-grid>
+        <div class="ar-summary-strip" role="tablist" aria-label="Receivable status">
+            <template for:each={statusStripItems} for:item="item">
+                <button
+                    key={item.key}
+                    class={item.className}
+                    type="button"
+                    role="tab"
+                    aria-selected={item.ariaSelected}
+                    data-status={item.developerKey}
+                    onclick={handleStatusStripClick}>
+                    <span class="ar-summary-strip__label">{item.title}</span>
+                    <span class="ar-summary-strip__metric">{item.metricText}</span>
+                    <span class="ar-summary-strip__count">{item.countText}</span>
+                </button>
+            </template>
         </div>
 
         <template if:true={showTableShell}>
             <section class="table-shell billing-console-shell">
                 <div class="billing-tab-panel">
                     <div class="table-meta">
-                        <span><lightning-formatted-number value={salespersonCount}></lightning-formatted-number> Salespeople</span>
-                        <span><lightning-formatted-number value={opportunityCount}></lightning-formatted-number> Opportunities</span>
+                        <span><lightning-formatted-number value={visibleInvoiceCount}></lightning-formatted-number> Invoices</span>
                         <span><lightning-formatted-number value={selectedCount}></lightning-formatted-number> Selected</span>
+                        <span>{searchSummary}</span>
+                        <span>{statusFilterLabel}</span>
                     </div>
 
-                    <lightning-accordion class="bucket-accordion" allow-multiple-sections-open>
-                        <template for:each={accordionSections} for:item="section">
-                            <lightning-accordion-section
-                                key={section.categoryKey}
-                                name={section.categoryKey}
-                                label={section.titleWithCount}>
-                                <div class="bucket-section-body">
-                                    <template if:true={section.isEmpty}>
-                                        <p class="bucket-empty">No opportunities contribute to this KPI.</p>
-                                    </template>
-                                    <template if:false={section.isEmpty}>
-                                        <div class="table-meta section-meta">
-                                            <span><lightning-formatted-number value={section.salespersonCount}></lightning-formatted-number> Salespeople</span>
-                                            <span><lightning-formatted-number value={section.opportunityCount}></lightning-formatted-number> Opportunities</span>
+                    <template if:true={isSalespersonView}>
+                        <template if:true={salespersonGroupsEmpty}>
+                            <p class="bucket-empty">No invoices match the current filters.</p>
+                        </template>
+                        <template for:each={salespersonGroups} for:item="group">
+                            <article key={group.key} class={group.cardClass}>
+                                <div class="salesperson-card__bar">
+                                    <lightning-input
+                                        type="checkbox"
+                                        variant="label-hidden"
+                                        label={group.selectLabel}
+                                        data-key={group.key}
+                                        checked={group.isSelected}
+                                        onchange={handleParentSelection}>
+                                    </lightning-input>
+                                    <button
+                                        class="salesperson-card__toggle"
+                                        type="button"
+                                        data-key={group.key}
+                                        aria-expanded={group.ariaExpanded}
+                                        onclick={handleToggleRow}>
+                                        <span class="salesperson-card__identity">
+                                            <span class="salesperson-card__name">{group.ownerName}</span>
+                                            <lightning-icon
+                                                icon-name={group.expandIcon}
+                                                size="xx-small"
+                                                alternative-text={group.expandAltText}>
+                                            </lightning-icon>
+                                        </span>
+                                        <span class="salesperson-card__metrics">
                                             <span>
-                                                <lightning-formatted-number
-                                                    value={section.sectionTotalAmount}
-                                                    format-style="currency"
-                                                    currency-code="USD"
-                                                    maximum-fraction-digits="2">
-                                                </lightning-formatted-number>
-                                                Invoice Amount
+                                                <lightning-formatted-number value={group.outstandingAr} format-style="currency" currency-code="USD" maximum-fraction-digits="0"></lightning-formatted-number>
+                                                Outstanding
                                             </span>
                                             <span>
-                                                <lightning-formatted-number
-                                                    value={section.sectionTotalCommission}
-                                                    format-style="currency"
-                                                    currency-code="USD"
-                                                    maximum-fraction-digits="2">
-                                                </lightning-formatted-number>
-                                                Commission
+                                                <lightning-formatted-number value={group.overdue} format-style="currency" currency-code="USD" maximum-fraction-digits="0"></lightning-formatted-number>
+                                                Overdue
                                             </span>
+                                            <span>
+                                                <lightning-formatted-number value={group.invoiceCount}></lightning-formatted-number>
+                                                invoices
+                                            </span>
+                                        </span>
+                                        <span class="salesperson-card__secondary">
+                                            <span>
+                                                <lightning-formatted-number value={group.partiallyPaid} format-style="currency" currency-code="USD" maximum-fraction-digits="0"></lightning-formatted-number>
+                                                Partially Paid ({group.partiallyPaidCount})
+                                            </span>
+                                            <span>Needs Amount ({group.needsAmountCount})</span>
+                                            <span>
+                                                <lightning-formatted-number value={group.depositsOutstanding} format-style="currency" currency-code="USD" maximum-fraction-digits="0"></lightning-formatted-number>
+                                                Deposits ({group.depositsOutstandingCount})
+                                            </span>
+                                        </span>
+                                    </button>
+                                </div>
+                                <template if:true={group.isExpanded}>
+                                    <div class="salesperson-card__body">
+                                        <div class="status-chips" role="tablist" aria-label="Filter this salesperson">
+                                            <template for:each={group.statusChips} for:item="chip">
+                                                <button
+                                                    key={chip.key}
+                                                    class={chip.className}
+                                                    type="button"
+                                                    role="tab"
+                                                    aria-selected={chip.ariaSelected}
+                                                    data-status={chip.status}
+                                                    data-key={group.key}
+                                                    onclick={handleGroupStatusClick}>
+                                                    {chip.label}
+                                                </button>
+                                            </template>
                                         </div>
-                                        <div class="slds-scrollable_x bucket-table-host">
-                                            <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout grouped-diary-table" aria-label="Receivables by salesperson">
-                                                <colgroup>
-                                                    <col style="width:4.5rem;" />
-                                                    <col style={receivableColumnStyles.salesperson} />
-                                                    <col style={receivableColumnStyles.account} />
-                                                    <col style={receivableColumnStyles.opportunities} />
-                                                    <col style={receivableColumnStyles.invoiceAmount} />
-                                                    <col style={receivableColumnStyles.commissionAmount} />
-                                                    <col style={receivableColumnStyles.commissionPaid} />
-                                                    <col style={receivableColumnStyles.outstandingCommission} />
-                                                </colgroup>
-                                                <thead>
-                                                    <tr class="slds-line-height_reset">
-                                                        <th scope="col" style="width:4.5rem;">
-                                                            <span class="slds-assistive-text">Selection and expansion</span>
-                                                        </th>
-                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.salesperson}>
-                                                            <strong>Sales Person / Opportunity</strong>
-                                                            <span class="bcc-column-resize-handle" data-column-key="salesperson" onmousedown={handleColumnResizeStart} title="Resize column"></span>
-                                                        </th>
-                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.account}>
-                                                            <strong>Account Name</strong>
-                                                            <span class="bcc-column-resize-handle" data-column-key="account" onmousedown={handleColumnResizeStart} title="Resize column"></span>
-                                                        </th>
-                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.opportunities}>
-                                                            <strong>Opportunities</strong>
-                                                            <span class="bcc-column-resize-handle" data-column-key="opportunities" onmousedown={handleColumnResizeStart} title="Resize column"></span>
-                                                        </th>
-                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.invoiceAmount}>
-                                                            <strong>Invoice Amount</strong>
-                                                            <span class="bcc-column-resize-handle" data-column-key="invoiceAmount" onmousedown={handleColumnResizeStart} title="Resize column"></span>
-                                                        </th>
-                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.commissionAmount}>
-                                                            <strong>Commission Amount</strong>
-                                                            <span class="bcc-column-resize-handle" data-column-key="commissionAmount" onmousedown={handleColumnResizeStart} title="Resize column"></span>
-                                                        </th>
-                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.commissionPaid}>
-                                                            <strong>Commission Paid</strong>
-                                                            <span class="bcc-column-resize-handle" data-column-key="commissionPaid" onmousedown={handleColumnResizeStart} title="Resize column"></span>
-                                                        </th>
-                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.outstandingCommission}>
-                                                            <strong>Outstanding Commission</strong>
-                                                            <span class="bcc-column-resize-handle" data-column-key="outstandingCommission" onmousedown={handleColumnResizeStart} title="Resize column"></span>
-                                                        </th>
-                                                        <th scope="col" class="bcc-resizable-header" style={receivableColumnStyles.ledger}>
-                                                            <strong>Ledger</strong>
-                                                            <span class="bcc-column-resize-handle" data-column-key="ledger" onmousedown={handleColumnResizeStart} title="Resize column"></span>
-                                                        </th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    <template for:each={section.salespeople} for:item="salesperson">
-                                                        <tr key={salesperson.key} class="slds-hint-parent">
-                                                            <td>
-                                                                <div class="slds-grid slds-gutters_x-small slds-grid_vertical-align-center slds-align_absolute-center">
-                                                                    <div>
-                                                                        <lightning-input
-                                                                            type="checkbox"
-                                                                            variant="label-hidden"
-                                                                            label={salesperson.salespersonName}
-                                                                            data-key={salesperson.key}
-                                                                            checked={salesperson.isSelected}
-                                                                            onchange={handleParentSelection}>
-                                                                        </lightning-input>
-                                                                    </div>
-                                                                    <div>
-                                                                        <lightning-button-icon
-                                                                            icon-name={salesperson.expandIcon}
-                                                                            variant="bare"
-                                                                            alternative-text={salesperson.expandAltText}
-                                                                            title={salesperson.expandAltText}
-                                                                            data-key={salesperson.key}
-                                                                            onclick={handleToggleRow}>
-                                                                        </lightning-button-icon>
-                                                                    </div>
-                                                                </div>
-                                                            </td>
-                                                            <th scope="row" data-label="Sales Person / Opportunity">{salesperson.salespersonName}</th>
-                                                            <td data-label="Account Name"></td>
-                                                            <td data-label="Opportunities">
-                                                                <lightning-formatted-number value={salesperson.opportunityCount}></lightning-formatted-number>
-                                                            </td>
-                                                            <td data-label="Invoice Amount">
-                                                                <lightning-formatted-number
-                                                                    value={salesperson.totalAmount}
-                                                                    format-style="currency"
-                                                                    currency-code="USD"
-                                                                    maximum-fraction-digits="2">
-                                                                </lightning-formatted-number>
-                                                            </td>
-                                                            <td data-label="Commission Amount">
-                                                                <lightning-formatted-number
-                                                                    value={salesperson.totalCommission}
-                                                                    format-style="currency"
-                                                                    currency-code="USD"
-                                                                    maximum-fraction-digits="2">
-                                                                </lightning-formatted-number>
-                                                            </td>
-                                                            <td data-label="Commission Paid">
-                                                                <lightning-formatted-number
-                                                                    value={salesperson.totalPaid}
-                                                                    format-style="currency"
-                                                                    currency-code="USD"
-                                                                    maximum-fraction-digits="2">
-                                                                </lightning-formatted-number>
-                                                            </td>
-                                                            <td data-label="Outstanding Commission">
-                                                                <lightning-formatted-number
-                                                                    value={salesperson.outstandingCommission}
-                                                                    format-style="currency"
-                                                                    currency-code="USD"
-                                                                    maximum-fraction-digits="2">
-                                                                </lightning-formatted-number>
-                                                            </td>
-                                                            <td data-label="Ledger"></td>
+                                        <template if:true={group.isEmpty}>
+                                            <p class="bucket-empty">No invoices in this status for this salesperson.</p>
+                                        </template>
+                                        <template if:false={group.isEmpty}>
+                                            <div class="slds-scrollable_x bucket-table-host">
+                                                <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout grouped-diary-table" aria-label={group.tableLabel}>
+                                                    <thead>
+                                                        <tr class="slds-line-height_reset">
+                                                            <th scope="col" style="width:4.5rem;"><span class="slds-assistive-text">Selection and expansion</span></th>
+                                                            <th scope="col"><strong>Invoice</strong></th>
+                                                            <th scope="col"><strong>Type</strong></th>
+                                                            <th scope="col"><strong>Invoice Date</strong></th>
+                                                            <th scope="col"><strong>Due</strong></th>
+                                                            <th scope="col"><strong>Days</strong></th>
+                                                            <th scope="col"><strong>Amount</strong></th>
+                                                            <th scope="col"><strong>Paid</strong></th>
+                                                            <th scope="col"><strong>Balance</strong></th>
+                                                            <th scope="col"><strong>Status</strong></th>
                                                         </tr>
-
-                                                        <template if:true={salesperson.isExpanded}>
-                                                            <template for:each={salesperson.opportunities} for:item="opportunity">
-                                                                <tr key={opportunity.key} class={opportunity.rowClass}>
+                                                    </thead>
+                                                    <template for:each={group.opportunityGroups} for:item="oppGroup">
+                                                        <tbody key={oppGroup.key}>
+                                                            <tr class="opp-group-header-row">
+                                                                <td colspan="10">
+                                                                    <div class="opp-group-header">
+                                                                        <div class="opp-group-header__copy">
+                                                                            <button
+                                                                                class="slds-button slds-button_reset opp-group-header__name"
+                                                                                type="button"
+                                                                                data-id={oppGroup.opportunityId}
+                                                                                onclick={handleOpenOpportunity}>
+                                                                                {oppGroup.opportunityName}
+                                                                            </button>
+                                                                            <p class="opp-group-header__meta">{oppGroup.metaText}</p>
+                                                                        </div>
+                                                                        <div class="opp-group-header__balance">
+                                                                            <lightning-formatted-number value={oppGroup.outstanding} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                            <span class="opp-group-header__balance-label">outstanding</span>
+                                                                        </div>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                            <template for:each={oppGroup.invoices} for:item="invoice">
+                                                                <tr key={invoice.key} class="slds-hint-parent">
                                                                     <td>
                                                                         <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
-                                                                            <div class="slds-p-left_large">
-                                                                                <lightning-input
-                                                                                    type="checkbox"
-                                                                                    variant="label-hidden"
-                                                                                    label={opportunity.opportunityName}
-                                                                                    data-key={opportunity.key}
-                                                                                    checked={opportunity.isSelected}
-                                                                                    onchange={handleChildSelection}>
-                                                                                </lightning-input>
-                                                                            </div>
+                                                                            <lightning-input
+                                                                                type="checkbox"
+                                                                                variant="label-hidden"
+                                                                                label={invoice.invoiceNumber}
+                                                                                data-key={invoice.key}
+                                                                                checked={invoice.isSelected}
+                                                                                onchange={handleChildSelection}>
+                                                                            </lightning-input>
+                                                                            <lightning-button-icon
+                                                                                icon-name={invoice.expandIcon}
+                                                                                variant="bare"
+                                                                                alternative-text={invoice.expandAltText}
+                                                                                title={invoice.expandAltText}
+                                                                                data-key={invoice.key}
+                                                                                onclick={handleToggleRow}>
+                                                                            </lightning-button-icon>
                                                                         </div>
                                                                     </td>
-                                                                    <td data-label="Sales Person / Opportunity">
-                                                                        <div class="slds-p-left_x-large">
-                                                                            <button
-                                                                                class="slds-button slds-button_reset slds-text-link"
-                                                                                type="button"
-                                                                                data-id={opportunity.opportunityId}
-                                                                                onclick={handleOpenOpportunity}>
-                                                                                {opportunity.opportunityName}
-                                                                            </button>
-                                                                        </div>
+                                                                    <th scope="row">
+                                                                        <button
+                                                                            class="slds-button slds-button_reset slds-text-link"
+                                                                            type="button"
+                                                                            data-id={invoice.invoiceId}
+                                                                            onclick={handleOpenInvoice}>
+                                                                            {invoice.invoiceNumber}
+                                                                        </button>
+                                                                    </th>
+                                                                    <td>{invoice.invoiceType}</td>
+                                                                    <td>
+                                                                        <lightning-formatted-date-time value={invoice.invoiceDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
                                                                     </td>
-                                                                    <td data-label="Account Name">
-                                                                        <template if:true={opportunity.showAccountName}>
-                                                                            {opportunity.accountName}
+                                                                    <td>
+                                                                        <lightning-formatted-date-time value={invoice.dueDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                                    </td>
+                                                                    <td>
+                                                                        <lightning-formatted-number value={invoice.daysOutstanding}></lightning-formatted-number>
+                                                                    </td>
+                                                                    <td>
+                                                                        <lightning-formatted-number value={invoice.totalAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                    </td>
+                                                                    <td>
+                                                                        <lightning-formatted-number value={invoice.amountPaid} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                    </td>
+                                                                    <td>
+                                                                        <lightning-formatted-number value={invoice.balanceDue} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                    </td>
+                                                                    <td>{invoice.status}</td>
+                                                                </tr>
+                                                                <tr if:true={invoice.isExpanded} key={invoice.paymentRowKey} class="slds-theme_shade">
+                                                                    <td colspan="10">
+                                                                        <template if:false={invoice.hasPayments}>
+                                                                            <p class="slds-p-around_small">No payments recorded.</p>
                                                                         </template>
-                                                                    </td>
-                                                                    <td data-label="Opportunities"></td>
-                                                                    <td data-label="Invoice Amount">
-                                                                        <lightning-formatted-number
-                                                                            value={opportunity.amount}
-                                                                            format-style="currency"
-                                                                            currency-code="USD"
-                                                                            maximum-fraction-digits="2">
-                                                                        </lightning-formatted-number>
-                                                                    </td>
-                                                                    <td data-label="Commission Amount">
-                                                                        <lightning-formatted-number
-                                                                            value={opportunity.commissionAmount}
-                                                                            format-style="currency"
-                                                                            currency-code="USD"
-                                                                            maximum-fraction-digits="2">
-                                                                        </lightning-formatted-number>
-                                                                    </td>
-                                                                    <td data-label="Commission Paid">
-                                                                        <lightning-formatted-number
-                                                                            value={opportunity.commissionPaid}
-                                                                            format-style="currency"
-                                                                            currency-code="USD"
-                                                                            maximum-fraction-digits="2">
-                                                                        </lightning-formatted-number>
-                                                                    </td>
-                                                                    <td data-label="Outstanding Commission">
-                                                                        <lightning-formatted-number
-                                                                            value={opportunity.outstandingCommission}
-                                                                            format-style="currency"
-                                                                            currency-code="USD"
-                                                                            maximum-fraction-digits="2">
-                                                                        </lightning-formatted-number>
-                                                                    </td>
-                                                                    <td data-label="Ledger">
-                                                                        <div class="ledger-action" data-ledger-id={opportunity.ledgerId}>
-                                                                            <lightning-button
-                                                                                label="View Ledger"
-                                                                                variant="neutral"
-                                                                                onclick={handleViewLedger}
-                                                                                disabled={opportunity.isLedgerActionDisabled}>
-                                                                            </lightning-button>
-                                                                        </div>
+                                                                        <template if:true={invoice.hasPayments}>
+                                                                            <table class="slds-table slds-table_cell-buffer slds-m-around_x-small">
+                                                                                <thead>
+                                                                                    <tr>
+                                                                                        <th scope="col">Payment Date</th>
+                                                                                        <th scope="col">Amount</th>
+                                                                                        <th scope="col">Method</th>
+                                                                                        <th scope="col">Reference</th>
+                                                                                    </tr>
+                                                                                </thead>
+                                                                                <tbody>
+                                                                                    <template for:each={invoice.payments} for:item="payment">
+                                                                                        <tr key={payment.paymentId}>
+                                                                                            <td>
+                                                                                                <lightning-formatted-date-time value={payment.paymentDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                                                            </td>
+                                                                                            <td>
+                                                                                                <lightning-formatted-number value={payment.amountReceived} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                                            </td>
+                                                                                            <td>{payment.paymentMethod}</td>
+                                                                                            <td>{payment.referenceNumber}</td>
+                                                                                        </tr>
+                                                                                    </template>
+                                                                                </tbody>
+                                                                            </table>
+                                                                        </template>
                                                                     </td>
                                                                 </tr>
                                                             </template>
-                                                        </template>
+                                                        </tbody>
                                                     </template>
-                                                </tbody>
-                                            </table>
-                                        </div>
-                                    </template>
-                                </div>
-                            </lightning-accordion-section>
+                                                </table>
+                                            </div>
+                                        </template>
+                                    </div>
+                                </template>
+                            </article>
                         </template>
-                    </lightning-accordion>
+                    </template>
+
+                    <template if:true={isAllReceivablesView}>
+                        <template if:true={allReceivablesEmpty}>
+                            <p class="bucket-empty">No invoices match the current filters.</p>
+                        </template>
+                        <template if:false={allReceivablesEmpty}>
+                            <div class="slds-scrollable_x bucket-table-host">
+                                <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout grouped-diary-table" aria-label="All receivables">
+                                    <thead>
+                                        <tr class="slds-line-height_reset">
+                                            <th scope="col" style="width:4.5rem;"><span class="slds-assistive-text">Selection and expansion</span></th>
+                                            <th scope="col"><strong>Invoice</strong></th>
+                                            <th scope="col"><strong>Salesperson</strong></th>
+                                            <th scope="col"><strong>Type</strong></th>
+                                            <th scope="col"><strong>Invoice Date</strong></th>
+                                            <th scope="col"><strong>Due</strong></th>
+                                            <th scope="col"><strong>Days</strong></th>
+                                            <th scope="col"><strong>Amount</strong></th>
+                                            <th scope="col"><strong>Paid</strong></th>
+                                            <th scope="col"><strong>Balance</strong></th>
+                                            <th scope="col"><strong>Status</strong></th>
+                                        </tr>
+                                    </thead>
+                                    <template for:each={allReceivablesOpportunityGroups} for:item="oppGroup">
+                                        <tbody key={oppGroup.key}>
+                                            <tr class="opp-group-header-row">
+                                                <td colspan="11">
+                                                    <div class="opp-group-header">
+                                                        <div class="opp-group-header__copy">
+                                                            <button
+                                                                class="slds-button slds-button_reset opp-group-header__name"
+                                                                type="button"
+                                                                data-id={oppGroup.opportunityId}
+                                                                onclick={handleOpenOpportunity}>
+                                                                {oppGroup.opportunityName}
+                                                            </button>
+                                                            <p class="opp-group-header__meta">{oppGroup.metaText}</p>
+                                                        </div>
+                                                        <div class="opp-group-header__balance">
+                                                            <lightning-formatted-number value={oppGroup.outstanding} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                            <span class="opp-group-header__balance-label">outstanding</span>
+                                                        </div>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                            <template for:each={oppGroup.invoices} for:item="invoice">
+                                                <tr key={invoice.key} class="slds-hint-parent">
+                                                    <td>
+                                                        <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
+                                                            <lightning-input
+                                                                type="checkbox"
+                                                                variant="label-hidden"
+                                                                label={invoice.invoiceNumber}
+                                                                data-key={invoice.key}
+                                                                checked={invoice.isSelected}
+                                                                onchange={handleChildSelection}>
+                                                            </lightning-input>
+                                                            <lightning-button-icon
+                                                                icon-name={invoice.expandIcon}
+                                                                variant="bare"
+                                                                alternative-text={invoice.expandAltText}
+                                                                title={invoice.expandAltText}
+                                                                data-key={invoice.key}
+                                                                onclick={handleToggleRow}>
+                                                            </lightning-button-icon>
+                                                        </div>
+                                                    </td>
+                                                    <th scope="row">
+                                                        <button
+                                                            class="slds-button slds-button_reset slds-text-link"
+                                                            type="button"
+                                                            data-id={invoice.invoiceId}
+                                                            onclick={handleOpenInvoice}>
+                                                            {invoice.invoiceNumber}
+                                                        </button>
+                                                    </th>
+                                                    <td>{invoice.ownerName}</td>
+                                                    <td>{invoice.invoiceType}</td>
+                                                    <td>
+                                                        <lightning-formatted-date-time value={invoice.invoiceDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                    </td>
+                                                    <td>
+                                                        <lightning-formatted-date-time value={invoice.dueDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                    </td>
+                                                    <td>
+                                                        <lightning-formatted-number value={invoice.daysOutstanding}></lightning-formatted-number>
+                                                    </td>
+                                                    <td>
+                                                        <lightning-formatted-number value={invoice.totalAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                    </td>
+                                                    <td>
+                                                        <lightning-formatted-number value={invoice.amountPaid} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                    </td>
+                                                    <td>
+                                                        <lightning-formatted-number value={invoice.balanceDue} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                    </td>
+                                                    <td>{invoice.status}</td>
+                                                </tr>
+                                                <tr if:true={invoice.isExpanded} key={invoice.paymentRowKey} class="slds-theme_shade">
+                                                    <td colspan="11">
+                                                        <template if:false={invoice.hasPayments}>
+                                                            <p class="slds-p-around_small">No payments recorded.</p>
+                                                        </template>
+                                                        <template if:true={invoice.hasPayments}>
+                                                            <table class="slds-table slds-table_cell-buffer slds-m-around_x-small">
+                                                                <thead>
+                                                                    <tr>
+                                                                        <th scope="col">Payment Date</th>
+                                                                        <th scope="col">Amount</th>
+                                                                        <th scope="col">Method</th>
+                                                                        <th scope="col">Reference</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody>
+                                                                    <template for:each={invoice.payments} for:item="payment">
+                                                                        <tr key={payment.paymentId}>
+                                                                            <td>
+                                                                                <lightning-formatted-date-time value={payment.paymentDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                                            </td>
+                                                                            <td>
+                                                                                <lightning-formatted-number value={payment.amountReceived} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                            </td>
+                                                                            <td>{payment.paymentMethod}</td>
+                                                                            <td>{payment.referenceNumber}</td>
+                                                                        </tr>
+                                                                    </template>
+                                                                </tbody>
+                                                            </table>
+                                                        </template>
+                                                    </td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </template>
+                                </table>
+                            </div>
+                        </template>
+                    </template>
                 </div>
             </section>
         </template>
     </div>
+
+    <template if:true={isSetAmountModalOpen}>
+        <section role="dialog" tabindex="-1" aria-modal="true" class="slds-modal slds-fade-in-open">
+            <div class="slds-modal__container">
+                <header class="slds-modal__header">
+                    <h2 class="slds-text-heading_medium">Set Invoice Amount</h2>
+                </header>
+                <div class="slds-modal__content slds-p-around_medium">
+                    <p class="slds-m-bottom_small">{selectedInvoiceForAmount.invoiceNumber}</p>
+                    <lightning-input
+                        type="number"
+                        label="Invoice Amount"
+                        value={setAmountValue}
+                        step="0.01"
+                        required
+                        onchange={handleSetAmountChange}>
+                    </lightning-input>
+                </div>
+                <footer class="slds-modal__footer">
+                    <lightning-button label="Cancel" onclick={handleSetAmountClose}></lightning-button>
+                    <lightning-button class="slds-m-left_small" label="Save" variant="brand" onclick={handleSetAmountSave} disabled={isActionLoading}></lightning-button>
+                </footer>
+            </div>
+        </section>
+        <div class="slds-backdrop slds-backdrop_open"></div>
+    </template>
 
     <template if:true={isPostReceiptModalOpen}>
         <c-billing-control-center-post-receipt-modal
@@ -328,12 +504,5 @@
             onclose={handlePostReceiptClose}
             onrefresh={handlePostReceiptRefresh}>
         </c-billing-control-center-post-receipt-modal>
-    </template>
-
-    <template if:true={showLedgerModal}>
-        <c-billing-control-center-ledger-modal
-            ledger-id={selectedLedgerId}
-            onclose={handleCloseLedgerModal}>
-        </c-billing-control-center-ledger-modal>
     </template>
 </template>

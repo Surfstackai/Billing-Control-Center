@@ -2,7 +2,7 @@ import { LightningElement, api, wire } from 'lwc';
 import { ShowToastEvent } from 'lightning/platformShowToastEvent';
 import { getObjectInfo, getPicklistValues } from 'lightning/uiObjectInfoApi';
 
-import postReceipt from '@salesforce/apex/BillingControl_Invoicing.postReceipt';
+import postInvoiceReceipt from '@salesforce/apex/BillingControl_Receivables.postInvoiceReceipt';
 import INVOICE_PAYMENT_OBJECT from '@salesforce/schema/Invoice_Payment__c';
 import PAYMENT_METHOD_FIELD from '@salesforce/schema/Invoice_Payment__c.Payment_Method__c';
 
@@ -36,6 +36,8 @@ export default class BillingControlCenterPostReceiptModal extends LightningEleme
         this.localOpportunity = value
             ? {
                 id: value.id || value.opportunityId,
+                invoiceId: value.invoiceId,
+                invoiceNumber: value.invoiceNumber,
                 name: value.name || value.opportunityName,
                 accountName: value.accountName,
                 ownerName: value.ownerName,
@@ -84,7 +86,10 @@ export default class BillingControlCenterPostReceiptModal extends LightningEleme
 
     get validationMessage() {
         if (!this.localOpportunity) {
-            return 'No opportunity was provided for receipt posting.';
+            return 'No invoice was provided for receipt posting.';
+        }
+        if (!this.localOpportunity.invoiceId) {
+            return 'Select an invoice before posting the receipt.';
         }
         if (this.paymentAmount === null || this.paymentAmount === '' || Number.isNaN(Number(this.paymentAmount))) {
             return 'Enter a payment amount received.';
@@ -149,14 +154,13 @@ export default class BillingControlCenterPostReceiptModal extends LightningEleme
         this.isSaving = true;
 
         try {
-            await postReceipt({
-                input: {
-                    opportunityId: this.localOpportunity.id,
-                    amountReceived: this.paymentAmountNumber,
-                    paymentDate: this.paymentDate,
-                    paymentMethod: this.paymentMethod.trim(),
-                    referenceNumber: this.referenceNumber.trim()
-                }
+            await postInvoiceReceipt({
+                opportunityId: this.localOpportunity.id,
+                invoiceId: this.localOpportunity.invoiceId,
+                amountReceived: this.paymentAmountNumber,
+                paymentDate: this.paymentDate,
+                paymentMethod: this.paymentMethod.trim(),
+                referenceNumber: this.referenceNumber.trim()
             });
 
             this.dispatchEvent(new ShowToastEvent({

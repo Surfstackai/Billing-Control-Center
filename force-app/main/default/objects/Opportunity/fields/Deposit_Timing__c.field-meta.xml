@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomField xmlns="http://soap.sforce.com/2006/04/metadata">
+    <fullName>Deposit_Timing__c</fullName>
+    <label>Deposit Timing</label>
+    <required>false</required>
+    <trackFeedHistory>false</trackFeedHistory>
+    <trackHistory>false</trackHistory>
+    <trackTrending>false</trackTrending>
+    <type>Picklist</type>
+    <valueSet>
+        <restricted>true</restricted>
+        <valueSetDefinition>
+            <sorted>false</sorted>
+            <value>
+                <fullName>Before Equipment Order</fullName>
+                <default>false</default>
+                <label>Before Equipment Order</label>
+            </value>
+            <value>
+                <fullName>Before Completion</fullName>
+                <default>false</default>
+                <label>Before Completion</label>
+            </value>
+            <value>
+                <fullName>Not Required</fullName>
+                <default>true</default>
+                <label>Not Required</label>
+            </value>
+        </valueSetDefinition>
+    </valueSet>
+</CustomField>

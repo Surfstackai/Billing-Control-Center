@@ -4,20 +4,19 @@
 public with sharing class BillingControl_InvSync {
     private static final Integer INV_SYNC_MAX_WARNINGS = 25;
     private static final String SERVICE_APPOINTMENT_STATUS_COMPLETED = 'Completed';
-    private static final String PAID = 'Paid';
-    private static final String PARTIALLY_PAID = 'Partially Paid';
     private static final List<String> EXCLUDED_INVOICING_WORK_ORDER_STATUSES = new List<String>{
         'For Clearance',
         'For Appointment Booking',
         'Appointments Booked',
         'Canceled',
-        'Billing Completed',
         'Cannot Complete – Rescheduled'
     };
 
     private class InvSyncGroup {
         public Id opportunityId;
         public String invoiceNumber;
+        public String invoiceType;
+        public String digitKey;
         public Date invoiceDate;
         public List<ServiceAppointment> appointments;
     }
@@ -116,7 +115,8 @@ public with sharing class BillingControl_InvSync {
             BillingControl_Invoicing.queryJunctionsByWorkOrderId(new Set<Id>(workOrderIdByAppointmentId.values()));
 
         Map<Id, Id> opportunityIdByAppointmentId = new Map<Id, Id>();
-        Map<Id, String> invoiceNumberByAppointmentId = new Map<Id, String>();
+        Map<Id, List<BillingControl_InvoiceNumberParser.ParsedToken>> tokensByAppointmentId =
+            new Map<Id, List<BillingControl_InvoiceNumberParser.ParsedToken>>();
         List<ServiceAppointment> eligibleAppointments = new List<ServiceAppointment>();
         for (ServiceAppointment appointmentRecord : appointments) {
             if (appointmentRecord == null || appointmentRecord.Status != SERVICE_APPOINTMENT_STATUS_COMPLETED) {
@@ -148,8 +148,27 @@ public with sharing class BillingControl_InvSync {
                     continue;
                 }
             }
-            String invoiceNumber = coalesceInvoiceNumber(appointmentRecord, workOrderRecord);
-            if (!BillingControl_Invoicing.containsExcludedInvoicingMarker(invoiceNumber)) {
+            List<BillingControl_InvoiceNumberParser.ParsedToken> parsedTokens =
+                resolveInvSyncTokens(appointmentRecord, workOrderRecord);
+            if (parsedTokens.isEmpty()) {
+                String rawNumber = coalesceInvoiceNumber(appointmentRecord, workOrderRecord);
+                if (String.isNotBlank(rawNumber)) {
+                    addInvSyncWarning(
+                        result,
+                        'Skipped '
+                        + coalesceText(appointmentRecord.AppointmentNumber, String.valueOf(appointmentRecord.Id))
+                        + ' because "'
+                        + rawNumber
+                        + '" is not a recognized invoice number.'
+                    );
+                } else {
+                    addInvSyncWarning(
+                        result,
+                        'Skipped '
+                        + coalesceText(appointmentRecord.AppointmentNumber, String.valueOf(appointmentRecord.Id))
+                        + ' because no invoice number was found.'
+                    );
+                }
                 continue;
             }
             Id opportunityId = BillingControl_Attribution.resolveAttributedOpportunityId(
@@ -161,11 +180,11 @@ public with sharing class BillingControl_InvSync {
                     result,
                     'Skipped '
                     + coalesceText(appointmentRecord.AppointmentNumber, String.valueOf(appointmentRecord.Id))
-                    + ' because it is not attributed to a single Opportunity.'
+                    + ' because it is not attributed; record the invoice from BCC and choose the Opportunity.'
                 );
                 continue;
             }
-            invoiceNumberByAppointmentId.put(appointmentRecord.Id, invoiceNumber.trim());
+            tokensByAppointmentId.put(appointmentRecord.Id, parsedTokens);
             opportunityIdByAppointmentId.put(appointmentRecord.Id, opportunityId);
             eligibleAppointments.add(appointmentRecord);
         }
@@ -208,6 +227,7 @@ public with sharing class BillingControl_InvSync {
 
         Map<String, InvSyncGroup> groupByKey = new Map<String, InvSyncGroup>();
         List<String> groupKeys = new List<String>();
+        Map<Id, String> stampNumberByAppointmentId = new Map<Id, String>();
         for (ServiceAppointment appointmentRecord : scopedAppointments) {
             if (alreadyInvoicedAppointmentIds.contains(appointmentRecord.Id)) {
                 addInvSyncWarning(
@@ -219,65 +239,75 @@ public with sharing class BillingControl_InvSync {
                 continue;
             }
             Id opportunityId = opportunityIdByAppointmentId.get(appointmentRecord.Id);
-            String invoiceNumber = invoiceNumberByAppointmentId.get(appointmentRecord.Id);
-            String groupKey = String.valueOf(opportunityId) + '|' + invoiceNumber.toLowerCase();
-            InvSyncGroup syncGroup = groupByKey.get(groupKey);
-            if (syncGroup == null) {
-                syncGroup = new InvSyncGroup();
-                syncGroup.opportunityId = opportunityId;
-                syncGroup.invoiceNumber = invoiceNumber;
-                syncGroup.appointments = new List<ServiceAppointment>();
-                groupByKey.put(groupKey, syncGroup);
-                groupKeys.add(groupKey);
+            List<BillingControl_InvoiceNumberParser.ParsedToken> parsedTokens =
+                tokensByAppointmentId.get(appointmentRecord.Id);
+            List<String> stampParts = new List<String>();
+            for (BillingControl_InvoiceNumberParser.ParsedToken parsedToken : parsedTokens) {
+                String canonicalNumber = BillingControl_InvoiceNumberParser.canonicalNumber(parsedToken);
+                stampParts.add(canonicalNumber);
+                String digitKey = parsedToken.invoiceNumber;
+                String groupKey = String.valueOf(opportunityId) + '|' + digitKey;
+                InvSyncGroup syncGroup = groupByKey.get(groupKey);
+                if (syncGroup == null) {
+                    syncGroup = new InvSyncGroup();
+                    syncGroup.opportunityId = opportunityId;
+                    syncGroup.invoiceNumber = canonicalNumber;
+                    syncGroup.invoiceType = parsedToken.type;
+                    syncGroup.digitKey = digitKey;
+                    syncGroup.appointments = new List<ServiceAppointment>();
+                    groupByKey.put(groupKey, syncGroup);
+                    groupKeys.add(groupKey);
+                }
+                syncGroup.appointments.add(appointmentRecord);
+                Date appointmentDate = appointmentRecord.ActualEndTime != null
+                    ? appointmentRecord.ActualEndTime.date()
+                    : null;
+                if (appointmentDate != null && (syncGroup.invoiceDate == null || appointmentDate < syncGroup.invoiceDate)) {
+                    syncGroup.invoiceDate = appointmentDate;
+                }
             }
-            syncGroup.appointments.add(appointmentRecord);
-            Date appointmentDate = appointmentRecord.ActualEndTime != null
-                ? appointmentRecord.ActualEndTime.date()
-                : null;
-            if (appointmentDate != null && (syncGroup.invoiceDate == null || appointmentDate < syncGroup.invoiceDate)) {
-                syncGroup.invoiceDate = appointmentDate;
+            if (!stampParts.isEmpty()) {
+                stampNumberByAppointmentId.put(appointmentRecord.Id, String.join(stampParts, ', '));
             }
         }
         if (groupKeys.isEmpty()) {
             return result;
         }
 
-        Set<String> requestedInvoiceNumbers = new Set<String>();
+        Set<Id> scopedOpportunityIds = new Set<Id>();
         for (String groupKey : groupKeys) {
-            requestedInvoiceNumbers.add(groupByKey.get(groupKey).invoiceNumber);
+            scopedOpportunityIds.add(groupByKey.get(groupKey).opportunityId);
         }
         Set<String> existingInvoiceNumbers = new Set<String>();
+        Set<String> existingDigitKeys = new Set<String>();
         for (Invoice__c existingInvoice : [
             SELECT Invoice_Number__c
             FROM Invoice__c
-            WHERE Invoice_Number__c IN :requestedInvoiceNumbers
+            WHERE Opportunity__c IN :scopedOpportunityIds
+            AND Status__c != 'Void'
         ]) {
-            if (String.isNotBlank(existingInvoice.Invoice_Number__c)) {
-                existingInvoiceNumbers.add(existingInvoice.Invoice_Number__c.toLowerCase());
+            if (String.isBlank(existingInvoice.Invoice_Number__c)) {
+                continue;
             }
-        }
-
-        Map<Id, Decimal> historicalInvoiceTotalByOpportunityId = BillingControl_Invoicing.queryHistoricalInvoiceTotalByOpportunityId(opportunityIds);
-        Map<Id, Decimal> remainingAmountByOpportunityId = new Map<Id, Decimal>();
-        for (Id opportunityId : opportunityIds) {
-            Opportunity opportunityRecord = opportunityById.get(opportunityId);
-            Decimal opportunityAmount = opportunityRecord != null ? opportunityRecord.Amount : null;
-            Decimal historicalTotal = historicalInvoiceTotalByOpportunityId.containsKey(opportunityId)
-                ? historicalInvoiceTotalByOpportunityId.get(opportunityId)
-                : 0;
-            remainingAmountByOpportunityId.put(
-                opportunityId,
-                (opportunityAmount != null ? opportunityAmount : 0) - historicalTotal
-            );
+            existingInvoiceNumbers.add(existingInvoice.Invoice_Number__c.toLowerCase());
+            for (BillingControl_InvoiceNumberParser.ParsedToken parsedToken :
+                BillingControl_InvoiceNumberParser.parse(existingInvoice.Invoice_Number__c)
+            ) {
+                if (parsedToken != null && String.isNotBlank(parsedToken.invoiceNumber)) {
+                    existingDigitKeys.add(parsedToken.invoiceNumber);
+                }
+            }
         }
 
         List<Invoice__c> invoicesToInsert = new List<Invoice__c>();
         List<InvSyncGroup> groupsToInsert = new List<InvSyncGroup>();
-        Map<Id, Decimal> invoiceLineAmountByAppointmentId = new Map<Id, Decimal>();
         Set<String> invoiceNumbersInBatch = new Set<String>();
         for (String groupKey : groupKeys) {
             InvSyncGroup syncGroup = groupByKey.get(groupKey);
-            if (existingInvoiceNumbers.contains(syncGroup.invoiceNumber.toLowerCase())) {
+            if (
+                existingInvoiceNumbers.contains(syncGroup.invoiceNumber.toLowerCase())
+                || existingDigitKeys.contains(syncGroup.digitKey)
+            ) {
                 addInvSyncWarning(
                     result,
                     'Skipped invoice number '
@@ -286,7 +316,7 @@ public with sharing class BillingControl_InvSync {
                 );
                 continue;
             }
-            if (invoiceNumbersInBatch.contains(syncGroup.invoiceNumber.toLowerCase())) {
+            if (invoiceNumbersInBatch.contains(syncGroup.digitKey)) {
                 addInvSyncWarning(
                     result,
                     'Skipped duplicate invoice number '
@@ -305,41 +335,17 @@ public with sharing class BillingControl_InvSync {
                 continue;
             }
             Opportunity opportunityRecord = opportunityById.get(syncGroup.opportunityId);
-            Decimal opportunityAmount = opportunityRecord != null ? opportunityRecord.Amount : null;
-            if (opportunityAmount == null || opportunityAmount <= 0) {
-                addInvSyncWarning(
-                    result,
-                    'Skipped Opportunity '
-                    + String.valueOf(syncGroup.opportunityId)
-                    + ' because Amount must be greater than 0.'
-                );
-                continue;
-            }
-            Decimal remainingAmount = remainingAmountByOpportunityId.containsKey(syncGroup.opportunityId)
-                ? remainingAmountByOpportunityId.get(syncGroup.opportunityId)
-                : 0;
-            if (remainingAmount <= 0) {
-                addInvSyncWarning(
-                    result,
-                    'Skipped Opportunity '
-                    + String.valueOf(syncGroup.opportunityId)
-                    + ' because it is already fully invoiced.'
-                );
-                continue;
-            }
-
-            invoiceNumbersInBatch.add(syncGroup.invoiceNumber.toLowerCase());
-            remainingAmountByOpportunityId.put(syncGroup.opportunityId, 0);
-            invoiceLineAmountByAppointmentId.putAll(
-                BillingControl_Invoicing.allocateInvoiceTotalAcrossAppointments(remainingAmount, syncGroup.appointments)
-            );
+            invoiceNumbersInBatch.add(syncGroup.digitKey);
             Date invoiceDate = syncGroup.invoiceDate != null ? syncGroup.invoiceDate : Date.today();
-            Invoice__c invoiceRecord = BillingControl_InvoiceRecordFactory.buildSentInvoiceHeader(
+            Invoice__c invoiceRecord = BillingControl_InvoiceRecordFactory.buildTypedInvoiceHeader(
                 syncGroup.invoiceNumber,
                 syncGroup.opportunityId,
-                opportunityRecord.AccountId,
-                remainingAmount,
-                invoiceDate
+                opportunityRecord != null ? opportunityRecord.AccountId : null,
+                null,
+                invoiceDate,
+                null,
+                syncGroup.invoiceType,
+                'Pending External'
             );
             invoicesToInsert.add(invoiceRecord);
             groupsToInsert.add(syncGroup);
@@ -349,34 +355,36 @@ public with sharing class BillingControl_InvSync {
             return result;
         }
         insert invoicesToInsert;
+        Set<Id> createdInvoiceIds = new Map<Id, Invoice__c>(invoicesToInsert).keySet();
+        BillingControl_InvoiceMath.recalculate(createdInvoiceIds);
 
         List<Invoice_Line__c> invoiceLinesToInsert = new List<Invoice_Line__c>();
         List<ServiceAppointment> serviceAppointmentsToUpdate = new List<ServiceAppointment>();
+        Set<Id> stampedAppointmentIds = new Set<Id>();
         Set<Id> opportunityIdsToUpdate = new Set<Id>();
         for (Integer indexValue = 0; indexValue < groupsToInsert.size(); indexValue++) {
             InvSyncGroup syncGroup = groupsToInsert[indexValue];
             Invoice__c invoiceRecord = invoicesToInsert[indexValue];
             for (ServiceAppointment appointmentRecord : syncGroup.appointments) {
-                Decimal invoiceLineAmount = invoiceLineAmountByAppointmentId.get(appointmentRecord.Id);
                 invoiceLinesToInsert.add(
                     BillingControl_InvoiceRecordFactory.buildServiceAppointmentInvoiceLine(
                         invoiceRecord.Id,
                         appointmentRecord.Id,
                         syncGroup.opportunityId,
                         workOrderIdByAppointmentId.get(appointmentRecord.Id),
-                        invoiceLineAmount
+                        null
                     )
                 );
-                Boolean stampInvoiceNumber = String.isBlank(appointmentRecord.Invoice_Number__c);
-                Boolean stampOpportunity = appointmentRecord.Opportunity__c == null;
-                if (stampInvoiceNumber || stampOpportunity) {
-                    if (stampInvoiceNumber) {
-                        appointmentRecord.Invoice_Number__c = syncGroup.invoiceNumber;
-                    }
-                    if (stampOpportunity) {
-                        appointmentRecord.Opportunity__c = syncGroup.opportunityId;
-                    }
+                if (
+                    String.isBlank(appointmentRecord.Invoice_Number__c)
+                    && !stampedAppointmentIds.contains(appointmentRecord.Id)
+                ) {
+                    String stampValue = stampNumberByAppointmentId.get(appointmentRecord.Id);
+                    appointmentRecord.Invoice_Number__c = String.isNotBlank(stampValue)
+                        ? stampValue
+                        : syncGroup.invoiceNumber;
                     serviceAppointmentsToUpdate.add(appointmentRecord);
+                    stampedAppointmentIds.add(appointmentRecord.Id);
                 }
             }
             opportunityIdsToUpdate.add(syncGroup.opportunityId);
@@ -389,28 +397,8 @@ public with sharing class BillingControl_InvSync {
             update serviceAppointmentsToUpdate;
         }
 
-        String billedStatusForUpdate = BillingControl_Invoicing.getOutstandingReceivableStatusForUpdate();
-        List<Opportunity> opportunitiesToUpdate = new List<Opportunity>();
         for (Id opportunityId : opportunityIdsToUpdate) {
-            Opportunity opportunityRecord = opportunityById.get(opportunityId);
-            if (opportunityRecord == null) {
-                continue;
-            }
-            if (
-                opportunityRecord.Billing_Status__c == billedStatusForUpdate
-                || opportunityRecord.Billing_Status__c == PAID
-                || opportunityRecord.Billing_Status__c == PARTIALLY_PAID
-                || BillingControl_Invoicing.isOutstandingReceivableStatus(opportunityRecord.Billing_Status__c)
-            ) {
-                continue;
-            }
-            opportunitiesToUpdate.add(new Opportunity(
-                Id = opportunityId,
-                Billing_Status__c = billedStatusForUpdate
-            ));
-        }
-        if (!opportunitiesToUpdate.isEmpty()) {
-            update opportunitiesToUpdate;
+            BillingControl_CommissionLifecycle.ensureAccrued(opportunityById.get(opportunityId));
         }
 
         result.invoicesCreated = invoicesToInsert.size();
@@ -434,6 +422,23 @@ public with sharing class BillingControl_InvSync {
 
     private static String coalesceText(String preferredValue, String fallbackValue) {
         return String.isNotBlank(preferredValue) ? preferredValue : fallbackValue;
+    }
+
+    private static List<BillingControl_InvoiceNumberParser.ParsedToken> resolveInvSyncTokens(
+        ServiceAppointment appointmentRecord,
+        WorkOrder workOrderRecord
+    ) {
+        if (appointmentRecord != null && String.isNotBlank(appointmentRecord.Invoice_Number__c)) {
+            List<BillingControl_InvoiceNumberParser.ParsedToken> appointmentTokens =
+                BillingControl_InvoiceNumberParser.parse(appointmentRecord.Invoice_Number__c);
+            if (!appointmentTokens.isEmpty()) {
+                return appointmentTokens;
+            }
+        }
+        if (workOrderRecord != null && String.isNotBlank(workOrderRecord.Invoice_Number__c)) {
+            return BillingControl_InvoiceNumberParser.parse(workOrderRecord.Invoice_Number__c);
+        }
+        return new List<BillingControl_InvoiceNumberParser.ParsedToken>();
     }
 
     public static String coalesceInvoiceNumber(

@@ -5,6 +5,7 @@ export default class WorkOrderLedgerRelatedWork extends LightningElement {
     isLoading = false;
     errorMessage;
     detail;
+    showGuidedFlow = false;
     _recordId;
 
     @api
@@ -43,6 +44,24 @@ export default class WorkOrderLedgerRelatedWork extends LightningElement {
         return (this.detail?.timeline || []).length > 0;
     }
 
+    get assignOpportunityVariant() {
+        return this.detail?.attentionRequired ? 'brand' : 'neutral';
+    }
+
+    get guidedFlowInputVariables() {
+        const workOrderId = this.detail?.workOrderId;
+        if (!workOrderId) {
+            return [];
+        }
+        return [
+            {
+                name: 'recordId',
+                type: 'String',
+                value: workOrderId
+            }
+        ];
+    }
+
     get opportunityRows() {
         return (this.detail?.opportunities || []).map(row => ({
             ...row,
@@ -51,7 +70,44 @@ export default class WorkOrderLedgerRelatedWork extends LightningElement {
     }
 
     get appointmentRows() {
-        return (this.detail?.appointments || []).map(row => ({
+        return this.decorateAppointments(this.detail?.appointments || []);
+    }
+
+    get assignedAppointments() {
+        return this.decorateAppointments(
+            (this.detail?.appointments || []).filter(row => row.opportunityId)
+        );
+    }
+
+    get unassignedAppointments() {
+        return this.decorateAppointments(
+            (this.detail?.appointments || []).filter(row => !row.opportunityId)
+        );
+    }
+
+    get appointmentGroups() {
+        return [
+            {
+                key: 'assigned',
+                heading: 'Assigned to a job',
+                rows: this.assignedAppointments,
+                hasRows: this.assignedAppointments.length > 0,
+                showHint: false,
+                hint: ''
+            },
+            {
+                key: 'unassigned',
+                heading: 'Not assigned',
+                rows: this.unassignedAppointments,
+                hasRows: this.unassignedAppointments.length > 0,
+                showHint: this.unassignedAppointments.length > 0,
+                hint: 'These visits have no Opportunity on the appointment.'
+            }
+        ];
+    }
+
+    decorateAppointments(rows) {
+        return (rows || []).map(row => ({
             ...row,
             url: row.serviceAppointmentId
                 ? `/lightning/r/ServiceAppointment/${row.serviceAppointmentId}/view`
@@ -84,6 +140,27 @@ export default class WorkOrderLedgerRelatedWork extends LightningElement {
             this.errorMessage = error?.body?.message || error?.message || 'Unable to load related work.';
         } finally {
             this.isLoading = false;
+        }
+    }
+
+    handleOpenGuidedFlow() {
+        if (!this.detail?.workOrderId) {
+            return;
+        }
+        this.showGuidedFlow = true;
+    }
+
+    handleCloseGuidedFlow() {
+        this.showGuidedFlow = false;
+    }
+
+    async handleGuidedFlowStatus(event) {
+        const status = event.detail?.status;
+        if (status === 'FINISHED' || status === 'FINISHED_SCREEN' || status === 'ERROR') {
+            this.showGuidedFlow = false;
+            if (status !== 'ERROR' && this._recordId) {
+                await this.loadDetail(this._recordId);
+            }
         }
     }
 }

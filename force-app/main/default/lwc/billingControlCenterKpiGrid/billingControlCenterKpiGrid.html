@@ -1,7 +1,14 @@
 <template>
     <section class={gridClass} style={gridStyle}>
         <template for:each={normalizedTiles} for:item="tile">
-            <article key={tile.key} class="kpi-tile">
+            <button
+                key={tile.key}
+                type="button"
+                class={tile.tileClass}
+                data-key={tile.key}
+                data-developer-key={tile.developerKey}
+                aria-pressed={tile.ariaPressed}
+                onclick={handleTileClick}>
                 <div class="kpi-tile__header">
                     <span class="kpi-tile__title">{tile.title}</span>
                     <lightning-icon icon-name={tile.icon} size="small" alternative-text={tile.title}></lightning-icon>
@@ -22,24 +29,24 @@
                     </div>
                 </template>
                 <template if:false={tile.useSplit}>
-                <template if:true={tile.useLines}>
-                    <template for:each={tile.lines} for:item="line">
-                        <div key={line.key} class="kpi-tile__line">{line.text}</div>
+                    <template if:true={tile.useLines}>
+                        <template for:each={tile.lines} for:item="line">
+                            <div key={line.key} class="kpi-tile__line">{line.text}</div>
+                        </template>
                     </template>
-                </template>
-                <template if:false={tile.useLines}>
-                    <div class="kpi-tile__metric">{tile.metricText}</div>
-                    <template if:true={tile.countText}>
-                        <div class="kpi-tile__count">{tile.countText}</div>
+                    <template if:false={tile.useLines}>
+                        <div class="kpi-tile__metric">{tile.metricText}</div>
+                        <template if:true={tile.countText}>
+                            <div class="kpi-tile__count">{tile.countText}</div>
+                        </template>
                     </template>
-                </template>
                 </template>
                 <template if:true={tile.hint}>
                     <div class="kpi-description">
                         <p class="kpi-tile__hint">{tile.hint}</p>
                     </div>
                 </template>
-            </article>
+            </button>
         </template>
     </section>
 </template>

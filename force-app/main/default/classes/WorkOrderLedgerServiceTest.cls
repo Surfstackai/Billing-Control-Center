@@ -382,7 +382,13 @@ private class WorkOrderLedgerServiceTest {
             )
         };
         Datetime completedOn = System.now().addDays(-1);
-        ServiceAppointment appointmentRecord = insertAppointment(
+        ServiceAppointment firstAppointment = insertAppointment(
+            workOrderRecord.Id,
+            'Completed',
+            completedOn.addHours(-2),
+            completedOn.addHours(-1)
+        );
+        ServiceAppointment secondAppointment = insertAppointment(
             workOrderRecord.Id,
             'Completed',
             completedOn.addHours(-1),
@@ -390,7 +396,7 @@ private class WorkOrderLedgerServiceTest {
         );
 
         WorkOrderLedgerService.handleServiceAppointments(
-            new List<ServiceAppointment>{ appointmentRecord },
+            new List<ServiceAppointment>{ firstAppointment, secondAppointment },
             null
         );
 
@@ -402,7 +408,17 @@ private class WorkOrderLedgerServiceTest {
         System.assertEquals(2, ledgerRecord.Opportunity_Count__c);
         System.assertEquals(true, ledgerRecord.Attention_Required__c);
         System.assertEquals(WorkOrderLedgerService.STATUS_NEEDS_REVIEW, ledgerRecord.Reconciliation_Status__c);
-        System.assertEquals(true, ledgerRecord.Attention_Reason__c.contains('not attributed'));
+        System.assertEquals(
+            true,
+            ledgerRecord.Attention_Reason__c.contains(firstAppointment.AppointmentNumber),
+            ledgerRecord.Attention_Reason__c
+        );
+        System.assertEquals(
+            true,
+            ledgerRecord.Attention_Reason__c.contains(secondAppointment.AppointmentNumber),
+            ledgerRecord.Attention_Reason__c
+        );
+        System.assertEquals(true, ledgerRecord.Attention_Reason__c.contains('correct Opportunity'));
     }
 
     @IsTest

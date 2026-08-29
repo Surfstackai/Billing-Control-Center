@@ -1,5 +1,6 @@
 /**
- * Interactive Complete Billing command. Fail-fast validation stays in this class.
+ * Interactive Complete Billing command. Groups selected appointments by attributed
+ * Opportunity and calls BillingControl_InvoiceService for each invoice.
  */
 public with sharing class BillingControl_CompleteBilling {
     private static final String SERVICE_APPOINTMENT_STATUS_COMPLETED = 'Completed';
@@ -28,20 +29,30 @@ public with sharing class BillingControl_CompleteBilling {
                 Status
             FROM ServiceAppointment
             WHERE Id IN :serviceAppointmentIds
-            AND Status = :SERVICE_APPOINTMENT_STATUS_COMPLETED
-            AND Invoice_Number__c = NULL
             FOR UPDATE
         ];
 
         Set<Id> requestedAppointmentIds = new Set<Id>(serviceAppointmentIds);
         Set<Id> lockedAppointmentIds = new Map<Id, ServiceAppointment>(lockedAppointments).keySet();
-        if (lockedAppointmentIds.size() != requestedAppointmentIds.size()) {
-            List<String> ineligibleSelections = new List<String>();
-            for (Id requestedAppointmentId : requestedAppointmentIds) {
-                if (!lockedAppointmentIds.contains(requestedAppointmentId)) {
-                    ineligibleSelections.add(String.valueOf(requestedAppointmentId));
-                }
+        Set<Id> billedAppointmentIds = BillingControl_BillingTruth.billedAppointmentIds(lockedAppointmentIds);
+        List<String> ineligibleSelections = new List<String>();
+        List<ServiceAppointment> appointmentsToBill = new List<ServiceAppointment>();
+        for (Id requestedAppointmentId : requestedAppointmentIds) {
+            if (!lockedAppointmentIds.contains(requestedAppointmentId)) {
+                ineligibleSelections.add(String.valueOf(requestedAppointmentId));
             }
+        }
+        for (ServiceAppointment appointmentRecord : lockedAppointments) {
+            if (
+                appointmentRecord.Status != SERVICE_APPOINTMENT_STATUS_COMPLETED
+                || billedAppointmentIds.contains(appointmentRecord.Id)
+            ) {
+                ineligibleSelections.add(String.valueOf(appointmentRecord.Id));
+                continue;
+            }
+            appointmentsToBill.add(appointmentRecord);
+        }
+        if (!ineligibleSelections.isEmpty()) {
             throw BillingControl_Invoicing.buildHandledException(
                 'Complete Billing requires selected Service Appointments to be completed and uninvoiced. Ineligible selections: '
                 + String.join(ineligibleSelections, ', ')
@@ -49,61 +60,28 @@ public with sharing class BillingControl_CompleteBilling {
             );
         }
 
-        List<ServiceAppointment> appointmentsToBill = new List<ServiceAppointment>(lockedAppointments);
         Map<Id, Id> workOrderIdByAppointmentId = BillingControl_Attribution.resolveWorkOrderIdsForAppointments(appointmentsToBill);
         Map<Id, Id> effectiveOpportunityByAppointmentId = resolveAttributedOpportunitiesForBilling(
             appointmentsToBill,
             workOrderIdByAppointmentId
         );
         Map<Id, List<ServiceAppointment>> appointmentsByOpportunityId = new Map<Id, List<ServiceAppointment>>();
-        for (ServiceAppointment appointment : appointmentsToBill) {
-            Id opportunityId = effectiveOpportunityByAppointmentId.get(appointment.Id);
+        for (ServiceAppointment appointmentRecord : appointmentsToBill) {
+            Id opportunityId = effectiveOpportunityByAppointmentId.get(appointmentRecord.Id);
             if (!appointmentsByOpportunityId.containsKey(opportunityId)) {
                 appointmentsByOpportunityId.put(opportunityId, new List<ServiceAppointment>());
             }
-            appointmentsByOpportunityId.get(opportunityId).add(appointment);
+            appointmentsByOpportunityId.get(opportunityId).add(appointmentRecord);
         }
 
         Set<Id> resolvedOpportunityIds = new Set<Id>(appointmentsByOpportunityId.keySet());
         Map<Id, Opportunity> opportunityById = new Map<Id, Opportunity>([
-            SELECT Id, Name, Billing_Status__c, AccountId, Amount
+            SELECT Id, Name, Amount
             FROM Opportunity
             WHERE Id IN :resolvedOpportunityIds
-            FOR UPDATE
         ]);
-
-        Map<Id, Decimal> historicalInvoiceTotalByOpportunityId = BillingControl_Invoicing.queryHistoricalInvoiceTotalByOpportunityId(
-            resolvedOpportunityIds
-        );
-        Map<Id, Decimal> invoiceTotalByOpportunityId = new Map<Id, Decimal>();
-        Map<Id, Decimal> invoiceLineAmountByAppointmentId = new Map<Id, Decimal>();
-        for (Id opportunityId : appointmentsByOpportunityId.keySet()) {
-            Opportunity opportunityRecord = opportunityById.get(opportunityId);
-            Decimal opportunityAmount = opportunityRecord != null ? opportunityRecord.Amount : null;
-            if (opportunityAmount == null || opportunityAmount <= 0) {
-                throw BillingControl_Invoicing.buildHandledException(
-                    'Complete Billing requires Opportunity.Amount greater than 0 for Opportunity '
-                    + String.valueOf(opportunityId)
-                    + '.'
-                );
-            }
-
-            Decimal historicalInvoiceTotal = historicalInvoiceTotalByOpportunityId.containsKey(opportunityId)
-                ? historicalInvoiceTotalByOpportunityId.get(opportunityId)
-                : 0;
-            Decimal invoiceTotal = opportunityAmount - historicalInvoiceTotal;
-            if (invoiceTotal <= 0) {
-                throw BillingControl_Invoicing.buildHandledException(
-                    'Complete Billing cannot create additional invoice value for Opportunity '
-                    + String.valueOf(opportunityId)
-                    + ' because its current Opportunity.Amount has already been fully invoiced.'
-                );
-            }
-            invoiceTotalByOpportunityId.put(opportunityId, invoiceTotal);
-            invoiceLineAmountByAppointmentId.putAll(
-                BillingControl_Invoicing.allocateInvoiceTotalAcrossAppointments(invoiceTotal, appointmentsByOpportunityId.get(opportunityId))
-            );
-        }
+        Map<Id, BillingControl_OpportunityFinancials.Snapshot> financialsByOpportunityId =
+            BillingControl_OpportunityFinancials.load(resolvedOpportunityIds);
 
         Integer invoiceSequence = 1;
         Map<Id, String> invoiceNumberResolvedByOpportunityId = new Map<Id, String>();
@@ -115,127 +93,63 @@ public with sharing class BillingControl_CompleteBilling {
                 invoiceSequence
             );
             invoiceSequence++;
-
             if (invoiceNumber.length() > 80) {
                 throw BillingControl_Invoicing.buildHandledException('Invoice number must be 80 characters or fewer.');
             }
-            if (invoiceNumbersForUniqueness.contains(invoiceNumber)) {
+            String uniquenessKey = invoiceNumber.toLowerCase();
+            if (invoiceNumbersForUniqueness.contains(uniquenessKey)) {
                 throw BillingControl_Invoicing.buildHandledException('Each invoice number in this batch must be unique.');
             }
-            invoiceNumbersForUniqueness.add(invoiceNumber);
+            invoiceNumbersForUniqueness.add(uniquenessKey);
             invoiceNumberResolvedByOpportunityId.put(opportunityId, invoiceNumber);
         }
 
-        if (!invoiceNumbersForUniqueness.isEmpty()) {
-            Integer existingInvoiceCount = [
-                SELECT COUNT()
-                FROM Invoice__c
-                WHERE Invoice_Number__c IN :invoiceNumbersForUniqueness
-            ];
-            if (existingInvoiceCount > 0) {
+        for (Id opportunityId : appointmentsByOpportunityId.keySet()) {
+            Opportunity opportunityRecord = opportunityById.get(opportunityId);
+            Decimal opportunityAmount = opportunityRecord != null ? opportunityRecord.Amount : null;
+            if (opportunityAmount == null || opportunityAmount <= 0) {
                 throw BillingControl_Invoicing.buildHandledException(
-                    'One or more invoice numbers are already used on another invoice. Enter a different number.'
+                    'Complete Billing requires Opportunity.Amount greater than 0 for Opportunity '
+                    + String.valueOf(opportunityId)
+                    + '.'
                 );
             }
-        }
+            BillingControl_OpportunityFinancials.Snapshot snapshot = financialsByOpportunityId.get(opportunityId);
+            Decimal invoicedTotal = snapshot == null ? 0 : snapshot.invoicedTotal;
+            Decimal invoiceTotal = opportunityAmount - invoicedTotal;
+            if (invoiceTotal <= 0) {
+                throw BillingControl_Invoicing.buildHandledException(
+                    'Complete Billing cannot create additional invoice value for Opportunity '
+                    + String.valueOf(opportunityId)
+                    + ' because its current Opportunity.Amount has already been fully invoiced.'
+                );
+            }
 
-        List<Invoice__c> invoicesToInsert = new List<Invoice__c>();
-        Map<Id, Invoice__c> invoiceByOpportunityId = new Map<Id, Invoice__c>();
-        for (Id opportunityId : appointmentsByOpportunityId.keySet()) {
-            String invoiceNumber = invoiceNumberResolvedByOpportunityId.get(opportunityId);
-            Decimal invoiceTotal = invoiceTotalByOpportunityId.get(opportunityId);
             List<ServiceAppointment> groupedAppointments = appointmentsByOpportunityId.get(opportunityId);
-
-            Opportunity headerOpportunity = opportunityById.get(opportunityId);
-            Invoice__c invoiceRecord = BillingControl_InvoiceRecordFactory.buildSentInvoiceHeader(
-                invoiceNumber,
-                opportunityId,
-                headerOpportunity != null ? headerOpportunity.AccountId : null,
-                invoiceTotal,
-                Date.today()
-            );
-            invoicesToInsert.add(invoiceRecord);
-            invoiceByOpportunityId.put(opportunityId, invoiceRecord);
+            BillingControl_InvoiceService.InvoiceRequest invoiceRequest = new BillingControl_InvoiceService.InvoiceRequest();
+            invoiceRequest.opportunityId = opportunityId;
+            invoiceRequest.invoiceType = 'Balance';
+            invoiceRequest.invoiceAmount = invoiceTotal;
+            invoiceRequest.invoiceNumber = invoiceNumberResolvedByOpportunityId.get(opportunityId);
+            invoiceRequest.serviceAppointmentIds = new List<Id>(new Map<Id, ServiceAppointment>(groupedAppointments).keySet());
+            invoiceRequest.acceptFullRemaining = true;
+            invoiceRequest.acceptVariance = false;
+            invoiceRequest.amountPendingExternal = false;
+            invoiceRequest.updateOperationalAttribution = false;
+            invoiceRequest.amountSource = 'Derived';
+            BillingControl_InvoiceService.InvoiceResult createdInvoice =
+                BillingControl_InvoiceService.createInvoice(invoiceRequest);
 
             BillingControl_Invoicing.InvoiceGroupResultWrapper invoiceGroup = new BillingControl_Invoicing.InvoiceGroupResultWrapper();
             invoiceGroup.opportunityId = opportunityId;
-            invoiceGroup.opportunityName = headerOpportunity != null ? headerOpportunity.Name : null;
-            invoiceGroup.invoiceNumber = invoiceNumber;
+            invoiceGroup.opportunityName = opportunityRecord.Name;
+            invoiceGroup.invoiceNumber = createdInvoice.invoiceNumber;
             invoiceGroup.serviceAppointmentCount = groupedAppointments.size();
             result.invoiceGroups.add(invoiceGroup);
-        }
-
-        if (!invoicesToInsert.isEmpty()) {
-            insert invoicesToInsert;
-        }
-
-        List<Invoice_Line__c> invoiceLinesToInsert = new List<Invoice_Line__c>();
-        List<ServiceAppointment> serviceAppointmentsToUpdate = new List<ServiceAppointment>();
-        for (Id opportunityId : appointmentsByOpportunityId.keySet()) {
-            Invoice__c invoiceRecord = invoiceByOpportunityId.get(opportunityId);
-            if (invoiceRecord == null || invoiceRecord.Id == null) {
-                continue;
-            }
-
-            for (ServiceAppointment appointment : appointmentsByOpportunityId.get(opportunityId)) {
-                Decimal invoiceLineAmount = invoiceLineAmountByAppointmentId.get(appointment.Id);
-                invoiceLinesToInsert.add(
-                    BillingControl_InvoiceRecordFactory.buildServiceAppointmentInvoiceLine(
-                        invoiceRecord.Id,
-                        appointment.Id,
-                        opportunityId,
-                        workOrderIdByAppointmentId.get(appointment.Id),
-                        invoiceLineAmount
-                    )
-                );
-
-                appointment.Invoice_Number__c = invoiceRecord.Invoice_Number__c;
-                if (appointment.Opportunity__c == null) {
-                    appointment.Opportunity__c = effectiveOpportunityByAppointmentId.get(appointment.Id);
-                }
-                serviceAppointmentsToUpdate.add(appointment);
-            }
-        }
-
-        if (!invoiceLinesToInsert.isEmpty()) {
-            insert invoiceLinesToInsert;
-        }
-
-        if (!serviceAppointmentsToUpdate.isEmpty()) {
-            update serviceAppointmentsToUpdate;
-        }
-
-        Set<Id> opportunityIdsToUpdate = new Set<Id>();
-        for (ServiceAppointment appointmentRecord : serviceAppointmentsToUpdate) {
-            Id effectiveOpportunityId = effectiveOpportunityByAppointmentId.get(appointmentRecord.Id);
-            if (effectiveOpportunityId != null) {
-                opportunityIdsToUpdate.add(effectiveOpportunityId);
-            }
-        }
-
-        String billedStatusForUpdate = BillingControl_Invoicing.getOutstandingReceivableStatusForUpdate();
-        if (!opportunityIdsToUpdate.isEmpty()) {
-            List<Opportunity> opportunitiesToUpdate = new List<Opportunity>();
-            for (Opportunity opportunityRecord : [
-                SELECT Id, Billing_Status__c
-                FROM Opportunity
-                WHERE Id IN :opportunityIdsToUpdate
-            ]) {
-                if (opportunityRecord.Billing_Status__c == billedStatusForUpdate) {
-                    continue;
-                }
-                opportunitiesToUpdate.add(new Opportunity(
-                    Id = opportunityRecord.Id,
-                    Billing_Status__c = billedStatusForUpdate
-                ));
-            }
-            if (!opportunitiesToUpdate.isEmpty()) {
-                update opportunitiesToUpdate;
-            }
+            result.serviceAppointmentsUpdated += groupedAppointments.size();
         }
 
         result.invoicesCreated = result.invoiceGroups.size();
-        result.serviceAppointmentsUpdated = serviceAppointmentsToUpdate.size();
         return result;
     }
 
@@ -308,5 +222,4 @@ public with sharing class BillingControl_CompleteBilling {
         String sequenceValue = String.valueOf(sequence).leftPad(2, '0');
         return 'INV-' + Datetime.now().formatGMT('yyyyMMdd') + '-' + opportunityKey + '-' + sequenceValue;
     }
-
 }

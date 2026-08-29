@@ -57,6 +57,7 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public String accountName;
         @AuraEnabled public Id opportunityId;
         @AuraEnabled public String opportunityName;
+        @AuraEnabled public String quoteNumber;
         @AuraEnabled public Decimal opportunityAmount;
         @AuraEnabled public Decimal visitAmount;
         /** Value of the un-invoiced appointments behind this row, used for bucket KPI revenue. */
@@ -108,5 +109,12 @@ public with sharing class BillingControl_Orders {
         @AuraEnabled public String changedByName;
         @AuraEnabled public String sourceObject;
         @AuraEnabled public String description;
+    }
+
+    public static String joinQuoteNumbers(List<String> quoteNumbers) {
+        if (quoteNumbers == null || quoteNumbers.isEmpty()) {
+            return null;
+        }
+        return String.join(quoteNumbers, ', ');
     }
 }

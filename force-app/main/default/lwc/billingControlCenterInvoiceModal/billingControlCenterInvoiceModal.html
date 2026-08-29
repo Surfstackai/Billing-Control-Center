@@ -1,0 +1,179 @@
+<template>
+    <section role="dialog" tabindex="-1" aria-modal="true" aria-labelledby="invoice-modal-heading" class="slds-modal slds-fade-in-open">
+        <div class="slds-modal__container invoice-modal">
+            <header class="slds-modal__header modal-header">
+                <h2 id="invoice-modal-heading" class="slds-text-heading_medium">Record Invoice</h2>
+                <div class="modal-divider"></div>
+                <p class="slds-m-top_medium slds-text-body_regular modal-copy">
+                    Choose the commercial job first. Service appointments are optional evidence. Create stays available with no visits when you are recording a deposit before work.
+                </p>
+            </header>
+
+            <div class="slds-modal__content slds-p-around_large">
+                <template if:true={errorMessage}>
+                    <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_error slds-m-bottom_medium" role="alert">
+                        <span class="slds-assistive-text">error</span>
+                        <div>{errorMessage}</div>
+                    </div>
+                </template>
+
+                <div class="selection-summary slds-m-bottom_medium">
+                    <div class="summary-chip">
+                        <span class="summary-chip__label">Evidence appointments</span>
+                        <strong>{selectedCount}</strong>
+                    </div>
+                </div>
+
+                <template if:true={requiresOpportunityChoice}>
+                    <p class="slds-text-body_regular slds-m-bottom_small">Which commercial job does this invoice belong to?</p>
+                </template>
+
+                <template if:true={showCandidateCombobox}>
+                    <lightning-combobox
+                        name="opportunityId"
+                        label="Opportunity"
+                        value={selectedOpportunityId}
+                        options={opportunityOptions}
+                        onchange={handleOpportunityChange}
+                        required
+                        disabled={isSaving}>
+                    </lightning-combobox>
+                </template>
+
+                <template if:true={showOpportunityLookup}>
+                    <lightning-record-picker
+                        label="Opportunity"
+                        placeholder="Search Opportunity"
+                        object-api-name="Opportunity"
+                        value={selectedOpportunityId}
+                        onchange={handleOpportunityLookup}
+                        disabled={isSaving}>
+                    </lightning-record-picker>
+                </template>
+
+                <lightning-combobox
+                    name="invoiceType"
+                    label="Invoice type"
+                    value={invoiceType}
+                    options={invoiceTypeOptions}
+                    onchange={handleInvoiceTypeChange}
+                    required
+                    disabled={isSaving}
+                    class="slds-m-top_small">
+                </lightning-combobox>
+
+                <div class="invoice-fields slds-m-top_small slds-m-bottom_small">
+                    <lightning-input
+                        type="number"
+                        label="Invoice amount"
+                        value={invoiceAmount}
+                        formatter="currency"
+                        step="0.01"
+                        onchange={handleAmountChange}
+                        required
+                        disabled={isSaving}>
+                    </lightning-input>
+                    <lightning-input
+                        type="text"
+                        label="Invoice number"
+                        value={invoiceNumber}
+                        maxlength="80"
+                        onchange={handleInvoiceNumberChange}
+                        disabled={isSaving}
+                        placeholder="Leave blank to auto-generate">
+                    </lightning-input>
+                </div>
+
+                <template if:true={hasEvidenceAppointments}>
+                    <div class="slds-text-title_bold slds-m-bottom_small">Evidence</div>
+                    <template if:true={hasUnassignedAppointments}>
+                        <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-theme_warning slds-m-bottom_small" role="status">
+                            These visits are not assigned to an Opportunity. Assigning them is optional for Create. Open the Work Order Ledger to assign them, or optionally set this job on the unassigned visits.
+                        </div>
+                    </template>
+                    <template if:true={hasAssignedAppointments}>
+                        <div class="slds-text-title slds-m-bottom_xx-small">Assigned to a job</div>
+                        <div class="selected-opportunities-box slds-m-bottom_medium">
+                            <template for:each={assignedAppointments} for:item="appointment">
+                                <div key={appointment.serviceAppointmentId} class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-p-horizontal_small slds-p-vertical_small slds-text-body_small">
+                                    <span>{appointment.serviceAppointmentNumber} · {appointment.workOrderNumber} · {appointment.opportunityName}</span>
+                                    <template if:true={appointment.hasLedger}>
+                                        <div data-ledger-id={appointment.ledgerId}>
+                                            <lightning-button
+                                                label="View Ledger"
+                                                variant="base"
+                                                onclick={handleViewLedger}
+                                                disabled={isSaving}>
+                                            </lightning-button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    <template if:true={hasUnassignedAppointments}>
+                        <div class="slds-text-title slds-m-bottom_xx-small">Not assigned</div>
+                        <div class="selected-opportunities-box slds-m-bottom_small">
+                            <template for:each={unassignedAppointments} for:item="appointment">
+                                <div key={appointment.serviceAppointmentId} class="slds-grid slds-grid_align-spread slds-grid_vertical-align-center slds-p-horizontal_small slds-p-vertical_small slds-text-body_small">
+                                    <span>{appointment.serviceAppointmentNumber} · {appointment.workOrderNumber}</span>
+                                    <template if:true={appointment.hasLedger}>
+                                        <div data-ledger-id={appointment.ledgerId}>
+                                            <lightning-button
+                                                label="View Ledger"
+                                                variant="base"
+                                                onclick={handleViewLedger}
+                                                disabled={isSaving}>
+                                            </lightning-button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
+                        </div>
+                        <div class="grouped-ack-box slds-m-bottom_medium">
+                            <lightning-input
+                                type="checkbox"
+                                label="Also set the selected Service Appointments' Opportunity to this job."
+                                checked={updateOperationalAttribution}
+                                onchange={handleAttributionChange}
+                                disabled={isSaving}>
+                            </lightning-input>
+                        </div>
+                    </template>
+                </template>
+
+                <template if:true={hasSkippedForeignAppointments}>
+                    <div class="slds-text-title slds-m-bottom_xx-small">On a different job</div>
+                    <p class="slds-text-body_small slds-m-bottom_medium modal-copy">
+                        {skippedForeignCount} selected visit(s) belong to a different Opportunity and will not be attached to this invoice.
+                    </p>
+                </template>
+
+                <div class="grouped-ack-box slds-m-bottom_small">
+                    <lightning-input
+                        type="checkbox"
+                        label="This invoices the full remaining quoted amount."
+                        checked={acceptFullRemaining}
+                        onchange={handleAcceptFullRemainingChange}
+                        disabled={isSaving}>
+                    </lightning-input>
+                </div>
+                <div class="grouped-ack-box slds-m-bottom_small">
+                    <lightning-input
+                        type="checkbox"
+                        label="Allow this invoice to exceed the Opportunity amount."
+                        checked={acceptVariance}
+                        onchange={handleAcceptVarianceChange}
+                        disabled={isSaving}>
+                    </lightning-input>
+                </div>
+            </div>
+
+            <footer class="slds-modal__footer">
+                <lightning-button label="Cancel" onclick={handleCancel} disabled={isSaving}></lightning-button>
+                <lightning-button class="slds-m-left_small" label="Create Invoice" variant="brand" onclick={handleCreateInvoice} disabled={isCreateDisabled}></lightning-button>
+            </footer>
+        </div>
+    </section>
+    <div class="slds-backdrop slds-backdrop_open"></div>
+</template>

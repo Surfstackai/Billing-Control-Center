@@ -14,6 +14,19 @@
     color: #54698d;
 }
 
+.ledger-flow-actions {
+    display: flex;
+    align-items: end;
+}
+
+.ledger-flow {
+    margin: 0.75rem 0 1rem;
+    padding: 0.75rem;
+    border: 1px solid #dddbda;
+    border-radius: 0.25rem;
+    background: #fafaf9;
+}
+
 .timeline-table {
     table-layout: fixed;
     width: 100%;
@@ -50,4 +63,8 @@
 .timeline-value {
     white-space: normal;
     overflow-wrap: anywhere;
+}
+
+.ledger-group-hint {
+    color: #8a6d3b;
 }

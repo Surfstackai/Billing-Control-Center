@@ -1026,6 +1026,7 @@ public with sharing class BillingControl_WorkOrderLedger {
                 'Work_Order__c',
                 'Opportunity__c',
                 'Opportunity__r.Name',
+                'Opportunity__r.Quote_Number__c',
                 'Opportunity__r.Amount',
                 'Opportunity__r.OwnerId',
                 'Opportunity__r.Owner.Name'
@@ -1040,6 +1041,7 @@ public with sharing class BillingControl_WorkOrderLedger {
                 'Work_Order__c',
                 'Opportunity__c',
                 'Opportunity__r.Name',
+                'Opportunity__r.Quote_Number__c',
                 'Opportunity__r.Amount',
                 'Opportunity__r.StageName',
                 'Opportunity__r.Billing_Status__c',
@@ -1282,6 +1284,7 @@ public with sharing class BillingControl_WorkOrderLedger {
         List<BillingControl_Orders.WorkOrderRowWrapper> relatedOpportunities =
             new List<BillingControl_Orders.WorkOrderRowWrapper>();
         List<String> opportunityNames = new List<String>();
+        List<String> quoteNumbers = new List<String>();
         List<String> opportunityOwnerNames = new List<String>();
         Set<Id> seenOwnerIds = new Set<Id>();
         for (Opportunity_WorkOrder__c junctionRecord : junctions) {
@@ -1295,6 +1298,9 @@ public with sharing class BillingControl_WorkOrderLedger {
             opportunityRow.opportunityName = junctionRecord.Opportunity__r == null
                 ? null
                 : junctionRecord.Opportunity__r.Name;
+            opportunityRow.quoteNumber = junctionRecord.Opportunity__r == null
+                ? null
+                : junctionRecord.Opportunity__r.Quote_Number__c;
             if (junctionRecord.Opportunity__r != null) {
                 opportunityRow.ownerId = junctionRecord.Opportunity__r.OwnerId;
                 opportunityRow.ownerName = junctionRecord.Opportunity__r.Owner == null
@@ -1305,6 +1311,9 @@ public with sharing class BillingControl_WorkOrderLedger {
             if (String.isNotBlank(opportunityRow.opportunityName)) {
                 opportunityNames.add(opportunityRow.opportunityName);
             }
+            if (String.isNotBlank(opportunityRow.quoteNumber)) {
+                quoteNumbers.add(opportunityRow.quoteNumber);
+            }
             if (opportunityRow.ownerId != null && seenOwnerIds.add(opportunityRow.ownerId)
                 && String.isNotBlank(opportunityRow.ownerName)) {
                 opportunityOwnerNames.add(opportunityRow.ownerName);
@@ -1314,9 +1323,11 @@ public with sharing class BillingControl_WorkOrderLedger {
             }
         }
         row.relatedOpportunities = relatedOpportunities;
+        row.quoteNumber = BillingControl_Orders.joinQuoteNumbers(quoteNumbers);
         if (relatedOpportunities.size() == 1) {
             row.opportunityId = relatedOpportunities[0].opportunityId;
             row.opportunityName = relatedOpportunities[0].opportunityName;
+            row.quoteNumber = relatedOpportunities[0].quoteNumber;
             row.ownerId = relatedOpportunities[0].ownerId;
             row.ownerName = relatedOpportunities[0].ownerName;
         } else if (!relatedOpportunities.isEmpty()) {
