@@ -6,6 +6,7 @@ public class SiteContactHelperClassTest {
         
         Account acc = new Account();
         acc.Name = 'Test Account';
+        acc.Tier__c = 'Tier 1';
         acc.BillingStreet = '47 West 13th Streeta';
         acc.BillingCity ='New York';
         acc.BillingCountry = 'United States';

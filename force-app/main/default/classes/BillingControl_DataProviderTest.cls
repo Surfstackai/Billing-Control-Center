@@ -1117,14 +1117,15 @@ private class BillingControl_DataProviderTest {
         Set<Id> readyAppointmentIds = evidenceUnbilledAppointmentIds(invoicingData.groups);
 
         System.assertEquals(
-            false,
-            readyAppointmentIds.contains(billedAppointmentOne.Id) || readyAppointmentIds.contains(billedAppointmentTwo.Id),
-            'Work orders with INV on every completed service appointment are billed.'
+            true,
+            readyAppointmentIds.contains(billedAppointmentOne.Id)
+                && readyAppointmentIds.contains(billedAppointmentTwo.Id),
+            'INV text on Service Appointments is not billed until an Invoice line exists.'
         );
         System.assertEquals(
-            false,
+            true,
             readyAppointmentIds.contains(workOrderInvAppointment.Id),
-            'A work order Invoice Number containing INV bills the whole work order.'
+            'A Work Order Invoice Number is not billed until an Invoice line exists.'
         );
     }
 
