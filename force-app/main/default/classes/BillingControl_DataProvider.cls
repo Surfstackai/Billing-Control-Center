@@ -1064,11 +1064,10 @@ public with sharing class BillingControl_DataProvider {
         result.metrics.completedLaterCount = 0;
         result.metrics.completedLaterAmount = 0;
         result.groups = new List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper>{
-            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('DEPOSITS_DUE', 'Deposits Due'),
-            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('BALANCES_READY', 'Balances Ready'),
-            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('UNDER_INVOICED', 'Under-Invoiced'),
-            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('NEEDS_REVIEW', 'Needs Review'),
-            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('BLOCKED', 'Blocked')
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('DEPOSITS_DUE', 'Deposit Due'),
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('BALANCES_READY', 'Ready to Bill'),
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('UNDER_INVOICED', 'Balance Remaining'),
+            new BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper('NEEDS_REVIEW', 'Needs Review')
         };
     }
 

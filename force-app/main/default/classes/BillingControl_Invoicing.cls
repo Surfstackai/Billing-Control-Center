@@ -215,7 +215,6 @@ public with sharing class BillingControl_Invoicing {
         metrics.underInvoicedCount = runtime.metrics.underInvoicedCount;
         metrics.underInvoicedAmount = runtime.metrics.underInvoicedAmount;
         metrics.needsReviewCount = runtime.metrics.needsReviewCount;
-        metrics.blockedCount = runtime.metrics.blockedCount;
         Decimal unbilled = 0;
         if (runtime.opportunities != null) {
             for (BillingControl_BillingReadiness.OpportunityRow row : runtime.opportunities) {
@@ -1812,7 +1811,6 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public Integer underInvoicedCount;
         @AuraEnabled public Decimal underInvoicedAmount;
         @AuraEnabled public Integer needsReviewCount;
-        @AuraEnabled public Integer blockedCount;
 
         public BillingControlMetricsWrapper() {
             completedMoreThan2Days = 0;
@@ -1832,7 +1830,6 @@ public with sharing class BillingControl_Invoicing {
             underInvoicedCount = 0;
             underInvoicedAmount = 0;
             needsReviewCount = 0;
-            blockedCount = 0;
         }
     }
 

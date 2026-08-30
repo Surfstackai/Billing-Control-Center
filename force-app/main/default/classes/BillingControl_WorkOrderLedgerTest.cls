@@ -680,6 +680,7 @@ private class BillingControl_WorkOrderLedgerTest {
         System.assertEquals(true, sawNamedChangedBy);
         System.assertEquals(true, sawNullChangedBy);
         System.assertEquals(true, String.isNotBlank(detail.reconciliationStatus));
+        System.assertNotEquals(null, detail.eligibleOpportunities);
     }
 
     @IsTest
@@ -1812,6 +1813,227 @@ private class BillingControl_WorkOrderLedgerTest {
             countOperationalOccurrences(noJunctions.sections, workOrderRecord.Id),
             'Removing every Opportunity link does not remove the Work Order from its date bucket.'
         );
+    }
+
+    @IsTest
+    static void assignServiceAppointmentOpportunitiesStampsBlankEligibleVisits() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Assign SA Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Assign SA Type', 1);
+        Opportunity firstOpportunity = insertClosedWonOpportunity(accountRecord.Id, workTypeRecord.Id, 'Assign Opp One', 400);
+        Opportunity secondOpportunity = insertClosedWonOpportunity(accountRecord.Id, workTypeRecord.Id, 'Assign Opp Two', 500);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Assign SA WO');
+        WorkOrder otherWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Assign Other WO');
+        WorkOrderLineItem lineItem = new WorkOrderLineItem(WorkOrderId = workOrderRecord.Id);
+        insert lineItem;
+        insert new List<Opportunity_WorkOrder__c>{
+            new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = firstOpportunity.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = secondOpportunity.Id)
+        };
+        insert new List<ServiceAppointment>{
+            buildAppointment(workOrderRecord.Id, 'Completed', System.now().addDays(-2), System.now().addDays(-2).addHours(1), 'Assign SA One'),
+            buildAppointment(workOrderRecord.Id, 'None', null, null, 'Assign SA Two'),
+            buildAppointment(lineItem.Id, 'None', null, null, 'Assign WOLI SA'),
+            buildAppointment(otherWorkOrder.Id, 'None', null, null, 'Assign Other SA')
+        };
+        WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id, otherWorkOrder.Id });
+        Work_Order_Ledger__c ledgerRecord = [
+            SELECT Id
+            FROM Work_Order_Ledger__c
+            WHERE Work_Order__c = :workOrderRecord.Id
+        ];
+        BillingControl_WorkOrderLedger.LedgerDetailWrapper detail =
+            BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail(ledgerRecord.Id);
+        System.assertEquals(2, detail.eligibleOpportunities.size());
+
+        Map<String, ServiceAppointment> appointmentBySubject = new Map<String, ServiceAppointment>();
+        for (ServiceAppointment appointmentRecord : [
+            SELECT Id, Subject, Opportunity__c
+            FROM ServiceAppointment
+            WHERE ParentRecordId IN :new Set<Id>{ workOrderRecord.Id, lineItem.Id, otherWorkOrder.Id }
+        ]) {
+            appointmentBySubject.put(appointmentRecord.Subject, appointmentRecord);
+        }
+        Integer invoiceCountBefore = [SELECT COUNT() FROM Invoice__c];
+        Integer junctionCountBefore = [
+            SELECT COUNT()
+            FROM Opportunity_WorkOrder__c
+            WHERE Work_Order__c = :workOrderRecord.Id
+        ];
+
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment firstAssignment =
+            new BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment();
+        firstAssignment.serviceAppointmentId = appointmentBySubject.get('Assign SA One').Id;
+        firstAssignment.opportunityId = firstOpportunity.Id;
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment woliAssignment =
+            new BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment();
+        woliAssignment.serviceAppointmentId = appointmentBySubject.get('Assign WOLI SA').Id;
+        woliAssignment.opportunityId = secondOpportunity.Id;
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignResult result =
+            BillingControl_WorkOrderLedger.assignServiceAppointmentOpportunities(
+                workOrderRecord.Id,
+                new List<BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment>{
+                    firstAssignment,
+                    woliAssignment
+                }
+            );
+        Test.stopTest();
+
+        System.assertEquals(2, result.savedIds.size());
+        System.assertEquals(0, result.conflicts.size());
+        System.assertEquals(0, result.errors.size());
+        Map<Id, ServiceAppointment> refreshed = new Map<Id, ServiceAppointment>([
+            SELECT Id, Opportunity__c
+            FROM ServiceAppointment
+            WHERE Id IN :new Set<Id>{
+                appointmentBySubject.get('Assign SA One').Id,
+                appointmentBySubject.get('Assign SA Two').Id,
+                appointmentBySubject.get('Assign WOLI SA').Id
+            }
+        ]);
+        System.assertEquals(firstOpportunity.Id, refreshed.get(appointmentBySubject.get('Assign SA One').Id).Opportunity__c);
+        System.assertEquals(null, refreshed.get(appointmentBySubject.get('Assign SA Two').Id).Opportunity__c);
+        System.assertEquals(secondOpportunity.Id, refreshed.get(appointmentBySubject.get('Assign WOLI SA').Id).Opportunity__c);
+        System.assertEquals(invoiceCountBefore, [SELECT COUNT() FROM Invoice__c]);
+        System.assertEquals(
+            junctionCountBefore,
+            [SELECT COUNT() FROM Opportunity_WorkOrder__c WHERE Work_Order__c = :workOrderRecord.Id]
+        );
+    }
+
+    @IsTest
+    static void assignServiceAppointmentOpportunitiesReportsConflictsAndRejectsInvalidRows() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Assign Conflict Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Assign Conflict Type', 1);
+        Opportunity firstOpportunity = insertClosedWonOpportunity(accountRecord.Id, workTypeRecord.Id, 'Conflict Opp One', 100);
+        Opportunity secondOpportunity = insertClosedWonOpportunity(accountRecord.Id, workTypeRecord.Id, 'Conflict Opp Two', 200);
+        Opportunity foreignOpportunity = insertClosedWonOpportunity(accountRecord.Id, workTypeRecord.Id, 'Conflict Opp Foreign', 300);
+        WorkOrder workOrderRecord = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Conflict WO');
+        WorkOrder otherWorkOrder = insertWorkOrder(accountRecord.Id, workTypeRecord.Id, 'Conflict Other WO');
+        insert new List<Opportunity_WorkOrder__c>{
+            new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = firstOpportunity.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = secondOpportunity.Id),
+            new Opportunity_WorkOrder__c(Work_Order__c = otherWorkOrder.Id, Opportunity__c = foreignOpportunity.Id)
+        };
+        insert new List<ServiceAppointment>{
+            buildAppointment(workOrderRecord.Id, 'Completed', System.now().addDays(-1), System.now(), 'Conflict SA One'),
+            buildAppointment(workOrderRecord.Id, 'Completed', System.now().addDays(-1), System.now(), 'Conflict SA Two'),
+            buildAppointment(otherWorkOrder.Id, 'None', null, null, 'Conflict Other SA')
+        };
+        ServiceAppointment alreadyAssigned = [
+            SELECT Id
+            FROM ServiceAppointment
+            WHERE Subject = 'Conflict SA One'
+        ];
+        alreadyAssigned.Opportunity__c = firstOpportunity.Id;
+        update alreadyAssigned;
+        Map<String, Id> appointmentIdBySubject = new Map<String, Id>();
+        for (ServiceAppointment appointmentRecord : [
+            SELECT Id, Subject
+            FROM ServiceAppointment
+            WHERE Subject IN ('Conflict SA One', 'Conflict SA Two', 'Conflict Other SA')
+        ]) {
+            appointmentIdBySubject.put(appointmentRecord.Subject, appointmentRecord.Id);
+        }
+
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment conflictAssignment =
+            new BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment();
+        conflictAssignment.serviceAppointmentId = appointmentIdBySubject.get('Conflict SA One');
+        conflictAssignment.opportunityId = secondOpportunity.Id;
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment validAssignment =
+            new BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment();
+        validAssignment.serviceAppointmentId = appointmentIdBySubject.get('Conflict SA Two');
+        validAssignment.opportunityId = secondOpportunity.Id;
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment otherWorkOrderAssignment =
+            new BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment();
+        otherWorkOrderAssignment.serviceAppointmentId = appointmentIdBySubject.get('Conflict Other SA');
+        otherWorkOrderAssignment.opportunityId = firstOpportunity.Id;
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment ineligibleAssignment =
+            new BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment();
+        ineligibleAssignment.serviceAppointmentId = appointmentIdBySubject.get('Conflict SA Two');
+        ineligibleAssignment.opportunityId = foreignOpportunity.Id;
+
+        Test.startTest();
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignResult rejectedResult =
+            BillingControl_WorkOrderLedger.assignServiceAppointmentOpportunities(
+                workOrderRecord.Id,
+                new List<BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment>{
+                    otherWorkOrderAssignment,
+                    ineligibleAssignment
+                }
+            );
+        BillingControl_WorkOrderLedger.AppointmentOpportunityAssignResult mixedResult =
+            BillingControl_WorkOrderLedger.assignServiceAppointmentOpportunities(
+                workOrderRecord.Id,
+                new List<BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment>{
+                    conflictAssignment,
+                    validAssignment
+                }
+            );
+        BillingControl_WorkOrderLedger.forceDenyServiceAppointmentOpportunityUpdate = true;
+        Boolean sawPermissionError = false;
+        try {
+            BillingControl_WorkOrderLedger.assignServiceAppointmentOpportunities(
+                workOrderRecord.Id,
+                new List<BillingControl_WorkOrderLedger.AppointmentOpportunityAssignment>{ validAssignment }
+            );
+        } catch (AuraHandledException caught) {
+            sawPermissionError = caught.getMessage().contains('permission');
+        }
+        BillingControl_WorkOrderLedger.forceDenyServiceAppointmentOpportunityUpdate = false;
+        Test.stopTest();
+
+        System.assertEquals(1, mixedResult.savedIds.size());
+        System.assertEquals(appointmentIdBySubject.get('Conflict SA Two'), mixedResult.savedIds[0]);
+        System.assertEquals(1, mixedResult.conflicts.size());
+        System.assertEquals(appointmentIdBySubject.get('Conflict SA One'), mixedResult.conflicts[0].serviceAppointmentId);
+        System.assertEquals(firstOpportunity.Id, mixedResult.conflicts[0].opportunityId);
+        System.assertEquals(0, mixedResult.errors.size());
+        System.assertEquals(
+            firstOpportunity.Id,
+            [
+                SELECT Opportunity__c
+                FROM ServiceAppointment
+                WHERE Id = :appointmentIdBySubject.get('Conflict SA One')
+            ]
+            .Opportunity__c
+        );
+        System.assertEquals(
+            secondOpportunity.Id,
+            [
+                SELECT Opportunity__c
+                FROM ServiceAppointment
+                WHERE Id = :appointmentIdBySubject.get('Conflict SA Two')
+            ]
+            .Opportunity__c
+        );
+        System.assertEquals(2, rejectedResult.errors.size());
+        System.assertEquals(0, rejectedResult.savedIds.size());
+        System.assertEquals(true, sawPermissionError);
+    }
+
+    private static Opportunity insertClosedWonOpportunity(
+        Id accountId,
+        Id workTypeId,
+        String nameValue,
+        Decimal amountValue
+    ) {
+        Opportunity opportunityRecord = new Opportunity(
+            Name = nameValue,
+            AccountId = accountId,
+            StageName = 'Closed Won',
+            CloseDate = Date.today().addDays(14),
+            Amount = amountValue,
+            Work_Type__c = workTypeId,
+            Do_not_create_Work_Order__c = true
+        );
+        insert opportunityRecord;
+        return opportunityRecord;
     }
 
     private static final Integer LEDGER_QUERY_LIMIT_FOR_ASSERT = 10000;

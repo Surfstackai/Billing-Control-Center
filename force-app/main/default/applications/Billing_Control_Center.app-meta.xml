@@ -62,6 +62,38 @@
         <type>Flexipage</type>
         <profile>ProPump Sales</profile>
     </profileActionOverrides>
+    <profileActionOverrides>
+        <actionName>View</actionName>
+        <content>Invoice_Record_Page</content>
+        <formFactor>Large</formFactor>
+        <pageOrSobjectType>Invoice__c</pageOrSobjectType>
+        <type>Flexipage</type>
+        <profile>Admin</profile>
+    </profileActionOverrides>
+    <profileActionOverrides>
+        <actionName>View</actionName>
+        <content>Invoice_Record_Page</content>
+        <formFactor>Large</formFactor>
+        <pageOrSobjectType>Invoice__c</pageOrSobjectType>
+        <type>Flexipage</type>
+        <profile>System Administrator Plus</profile>
+    </profileActionOverrides>
+    <profileActionOverrides>
+        <actionName>View</actionName>
+        <content>Invoice_Record_Page</content>
+        <formFactor>Large</formFactor>
+        <pageOrSobjectType>Invoice__c</pageOrSobjectType>
+        <type>Flexipage</type>
+        <profile>Executive Admin</profile>
+    </profileActionOverrides>
+    <profileActionOverrides>
+        <actionName>View</actionName>
+        <content>Invoice_Record_Page</content>
+        <formFactor>Large</formFactor>
+        <pageOrSobjectType>Invoice__c</pageOrSobjectType>
+        <type>Flexipage</type>
+        <profile>ProPump Sales</profile>
+    </profileActionOverrides>
     <tabs>Billing_Control_Center</tabs>
     <tabs>standard-Account</tabs>
     <tabs>standard-Opportunity</tabs>

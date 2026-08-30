@@ -410,15 +410,14 @@ private class WorkOrderLedgerServiceTest {
         System.assertEquals(WorkOrderLedgerService.STATUS_NEEDS_REVIEW, ledgerRecord.Reconciliation_Status__c);
         System.assertEquals(
             true,
-            ledgerRecord.Attention_Reason__c.contains(firstAppointment.AppointmentNumber),
+            ledgerRecord.Attention_Reason__c.contains('2 service appointments need Opportunity assignment'),
             ledgerRecord.Attention_Reason__c
         );
         System.assertEquals(
-            true,
-            ledgerRecord.Attention_Reason__c.contains(secondAppointment.AppointmentNumber),
+            false,
+            ledgerRecord.Attention_Reason__c.contains(firstAppointment.AppointmentNumber),
             ledgerRecord.Attention_Reason__c
         );
-        System.assertEquals(true, ledgerRecord.Attention_Reason__c.contains('correct Opportunity'));
     }
 
     @IsTest

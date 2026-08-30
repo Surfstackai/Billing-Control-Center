@@ -24,6 +24,8 @@ public inherited sharing class BillingControl_CommissionLifecycle {
         @AuraEnabled public String accountName;
         @AuraEnabled public Decimal jobAmount;
         @AuraEnabled public Decimal invoicedTotal;
+        @AuraEnabled public Decimal customerPaidTotal;
+        @AuraEnabled public Boolean customerPaidInFull;
         @AuraEnabled public Decimal commissionRate;
         @AuraEnabled public Decimal commissionAmount;
         @AuraEnabled public String status;
@@ -230,23 +232,28 @@ public inherited sharing class BillingControl_CommissionLifecycle {
         for (Commission__c commissionRecord : commissionRecords) {
             CommissionRow row = toRow(commissionRecord, financialsByOpportunityId.get(commissionRecord.Opportunity__c));
             String statusValue = String.isBlank(commissionRecord.Status__c) ? STATUS_ACCRUED : commissionRecord.Status__c;
-            if (statusValue == STATUS_PAYABLE && isInRange(commissionRecord.Payable_Date__c, rangeStart, rangeEnd)) {
-                addRow(sectionByKey.get(SECTION_PAYABLE), row);
-                tabRuntime.metrics.payableCount++;
-                tabRuntime.metrics.payable += coalesce(row.commissionAmount);
-            } else if (statusValue == STATUS_PAID && isInRange(commissionRecord.Paid_Date__c, rangeStart, rangeEnd)) {
+            if (statusValue == STATUS_PAID && isInRange(commissionRecord.Paid_Date__c, rangeStart, rangeEnd)) {
                 addRow(sectionByKey.get(SECTION_PAID), row);
                 tabRuntime.metrics.paidThisPeriodCount++;
                 tabRuntime.metrics.paidThisPeriod += coalesce(row.paidAmount);
             } else if (
-                (statusValue == STATUS_ACCRUED || statusValue == STATUS_CANCELLED || String.isBlank(commissionRecord.Status__c))
+                row.customerPaidInFull == true
                 && statusValue != STATUS_PAID
-                && statusValue != STATUS_PAYABLE
-                && isInRange(commissionRecord.Opportunity__r != null ? commissionRecord.Opportunity__r.CloseDate : null, rangeStart, rangeEnd)
+                && statusValue != STATUS_CANCELLED
             ) {
-                addRow(sectionByKey.get(SECTION_ACCRUED), row);
-                tabRuntime.metrics.accruedCount++;
-                tabRuntime.metrics.accrued += coalesce(row.commissionAmount);
+                Date accruedDate = commissionRecord.Payable_Date__c != null
+                    ? commissionRecord.Payable_Date__c
+                    : (commissionRecord.Opportunity__r != null ? commissionRecord.Opportunity__r.CloseDate : null);
+                if (isInRange(accruedDate, rangeStart, rangeEnd)) {
+                    addRow(sectionByKey.get(SECTION_ACCRUED), row);
+                    tabRuntime.metrics.accruedCount++;
+                    tabRuntime.metrics.accrued += coalesce(row.commissionAmount);
+                }
+                if (statusValue == STATUS_PAYABLE && isInRange(commissionRecord.Payable_Date__c, rangeStart, rangeEnd)) {
+                    addRow(sectionByKey.get(SECTION_PAYABLE), row);
+                    tabRuntime.metrics.payableCount++;
+                    tabRuntime.metrics.payable += coalesce(row.commissionAmount);
+                }
             }
         }
 
@@ -277,6 +284,8 @@ public inherited sharing class BillingControl_CommissionLifecycle {
             : null;
         row.jobAmount = commissionRecord.Opportunity__r != null ? commissionRecord.Opportunity__r.Amount : null;
         row.invoicedTotal = snapshot != null ? snapshot.invoicedTotal : 0;
+        row.customerPaidTotal = snapshot != null ? snapshot.paidTotal : 0;
+        row.customerPaidInFull = snapshot != null && snapshot.paidInFull == true;
         row.commissionRate = commissionRecord.Commission_Rate__c;
         row.commissionAmount = computedCommissionAmount(row.invoicedTotal, commissionRecord.Commission_Rate__c);
         row.status = commissionRecord.Status__c;
@@ -285,7 +294,7 @@ public inherited sharing class BillingControl_CommissionLifecycle {
         row.paidDate = commissionRecord.Paid_Date__c;
         row.paidAmount = commissionRecord.Paid_Amount__c;
         row.amountBasis = commissionRecord.Amount_Basis__c;
-        row.canPay = commissionRecord.Status__c == STATUS_PAYABLE;
+        row.canPay = row.customerPaidInFull == true && commissionRecord.Status__c == STATUS_PAYABLE;
         return row;
     }
 

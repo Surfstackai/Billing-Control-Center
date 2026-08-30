@@ -18,3 +18,81 @@
     color: var(--bcc-muted);
     font-size: 0.875rem;
 }
+
+.section-legend {
+    margin: 0.25rem 0 0.75rem;
+    color: var(--bcc-muted);
+    font-size: 0.8rem;
+    max-width: 46rem;
+}
+
+.salesperson-card {
+    margin: 0 0 0.65rem;
+    border: 1px solid var(--bcc-border);
+    border-radius: 0.35rem;
+    background: var(--bcc-panel, #fff);
+}
+
+.salesperson-card_expanded {
+    box-shadow: var(--bcc-shadow, 0 4px 14px rgba(15, 40, 70, 0.08));
+}
+
+.salesperson-card__toggle {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem 1.25rem;
+    width: 100%;
+    margin: 0;
+    padding: 0.65rem 0.85rem;
+    border: 0;
+    background: transparent;
+    text-align: left;
+    cursor: pointer;
+    color: inherit;
+    font: inherit;
+}
+
+.salesperson-card__toggle:focus-visible {
+    outline: 2px solid var(--lwc-brandAccessible, #0176d3);
+    outline-offset: 2px;
+}
+
+.salesperson-card__identity {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    min-width: 0;
+}
+
+.salesperson-card__name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+}
+
+.salesperson-card__metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1rem;
+    font-variant-numeric: tabular-nums;
+    font-weight: 650;
+    font-size: 0.92rem;
+}
+
+.salesperson-card__count {
+    color: var(--bcc-muted);
+    font-weight: 600;
+}
+
+.salesperson-card__body {
+    padding: 0 0.75rem 0.75rem;
+    border-top: 1px solid var(--bcc-border);
+}
+
+.customer-status {
+    color: var(--bcc-muted);
+    font-size: 0.7rem;
+    line-height: 1.3;
+}

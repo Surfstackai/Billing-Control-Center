@@ -17,6 +17,9 @@ public with sharing class BillingControl_WorkOrderLedger {
     @TestVisible
     private static Integer queryLimitOverride;
 
+    @TestVisible
+    private static Boolean forceDenyServiceAppointmentOpportunityUpdate;
+
     private static final List<String> BUCKET_QUERY_ORDER = new List<String>{
         BUCKET_READY_TO_SCHEDULE,
         BUCKET_SCHEDULED_APPOINTMENTS,
@@ -69,8 +72,33 @@ public with sharing class BillingControl_WorkOrderLedger {
         @AuraEnabled public String partsStatus;
         @AuraEnabled public String workOrderInvoiceNumber;
         @AuraEnabled public List<LedgerOpportunityWrapper> opportunities;
+        @AuraEnabled public List<OpportunitySelectorController.OpportunityOption> eligibleOpportunities;
         @AuraEnabled public List<LedgerAppointmentWrapper> appointments;
         @AuraEnabled public List<BillingControl_Orders.TimelineEntryWrapper> timeline;
+    }
+
+    public class AppointmentOpportunityAssignment {
+        @AuraEnabled public Id serviceAppointmentId;
+        @AuraEnabled public Id opportunityId;
+    }
+
+    public class AppointmentOpportunityConflict {
+        @AuraEnabled public Id serviceAppointmentId;
+        @AuraEnabled public String appointmentNumber;
+        @AuraEnabled public Id opportunityId;
+        @AuraEnabled public String opportunityName;
+    }
+
+    public class AppointmentOpportunityRowError {
+        @AuraEnabled public Id serviceAppointmentId;
+        @AuraEnabled public String appointmentNumber;
+        @AuraEnabled public String message;
+    }
+
+    public class AppointmentOpportunityAssignResult {
+        @AuraEnabled public List<Id> savedIds = new List<Id>();
+        @AuraEnabled public List<AppointmentOpportunityConflict> conflicts = new List<AppointmentOpportunityConflict>();
+        @AuraEnabled public List<AppointmentOpportunityRowError> errors = new List<AppointmentOpportunityRowError>();
     }
 
     public class LedgerOpportunityWrapper {
@@ -191,6 +219,7 @@ public with sharing class BillingControl_WorkOrderLedger {
         DateTimeRange detailRange = toDateTimeRange(dateWindow);
         LedgerDetailWrapper detail = new LedgerDetailWrapper();
         detail.opportunities = new List<LedgerOpportunityWrapper>();
+        detail.eligibleOpportunities = new List<OpportunitySelectorController.OpportunityOption>();
         detail.appointments = new List<LedgerAppointmentWrapper>();
         detail.timeline = new List<BillingControl_Orders.TimelineEntryWrapper>();
         if (ledgerId == null) {
@@ -249,6 +278,11 @@ public with sharing class BillingControl_WorkOrderLedger {
             : ledgerRecord.Work_Order__r.Invoice_Number__c;
 
         if (ledgerRecord.Work_Order__c != null) {
+            List<OpportunitySelectorController.OpportunityOption> eligibleRows =
+                OpportunitySelectorController.getOpenOpportunities(ledgerRecord.Work_Order__c);
+            detail.eligibleOpportunities = eligibleRows == null
+                ? new List<OpportunitySelectorController.OpportunityOption>()
+                : eligibleRows;
             Set<Id> workOrderIds = new Set<Id>{ ledgerRecord.Work_Order__c };
             List<Opportunity_WorkOrder__c> junctions = queryJunctionsByWorkOrderId(workOrderIds).get(ledgerRecord.Work_Order__c);
             if (junctions == null) {
@@ -334,6 +368,155 @@ public with sharing class BillingControl_WorkOrderLedger {
             detail.timeline.add(wrapper);
         }
         return detail;
+    }
+
+    @AuraEnabled
+    public static AppointmentOpportunityAssignResult assignServiceAppointmentOpportunities(
+        Id workOrderId,
+        List<AppointmentOpportunityAssignment> assignments
+    ) {
+        AppointmentOpportunityAssignResult result = new AppointmentOpportunityAssignResult();
+        if (workOrderId == null) {
+            throw BillingControl_Invoicing.buildHandledException('A Work Order is required to assign Opportunities.');
+        }
+        assertCanUpdateServiceAppointmentOpportunity();
+        if (assignments == null || assignments.isEmpty()) {
+            return result;
+        }
+
+        Map<Id, Id> requestedOpportunityByAppointmentId = new Map<Id, Id>();
+        for (AppointmentOpportunityAssignment assignmentRecord : assignments) {
+            if (assignmentRecord == null
+                || assignmentRecord.serviceAppointmentId == null
+                || assignmentRecord.opportunityId == null) {
+                continue;
+            }
+            requestedOpportunityByAppointmentId.put(
+                assignmentRecord.serviceAppointmentId,
+                assignmentRecord.opportunityId
+            );
+        }
+        if (requestedOpportunityByAppointmentId.isEmpty()) {
+            return result;
+        }
+
+        Set<Id> eligibleOpportunityIds = new Set<Id>();
+        List<OpportunitySelectorController.OpportunityOption> eligibleRows =
+            OpportunitySelectorController.getOpenOpportunities(workOrderId);
+        if (eligibleRows != null) {
+            for (OpportunitySelectorController.OpportunityOption optionRecord : eligibleRows) {
+                if (optionRecord != null && optionRecord.opportunityId != null) {
+                    eligibleOpportunityIds.add(optionRecord.opportunityId);
+                }
+            }
+        }
+
+        List<ServiceAppointment> appointmentRows = [
+            SELECT Id, AppointmentNumber, ParentRecordId, Opportunity__c, Opportunity__r.Name
+            FROM ServiceAppointment
+            WHERE Id IN :requestedOpportunityByAppointmentId.keySet()
+        ];
+        Map<Id, Id> workOrderIdByAppointmentId =
+            BillingControl_Attribution.resolveWorkOrderIdsForAppointments(appointmentRows);
+        Map<Id, ServiceAppointment> appointmentById = new Map<Id, ServiceAppointment>(appointmentRows);
+
+        List<ServiceAppointment> appointmentsToUpdate = new List<ServiceAppointment>();
+        for (Id serviceAppointmentId : requestedOpportunityByAppointmentId.keySet()) {
+            Id requestedOpportunityId = requestedOpportunityByAppointmentId.get(serviceAppointmentId);
+            ServiceAppointment appointmentRecord = appointmentById.get(serviceAppointmentId);
+            if (appointmentRecord == null) {
+                result.errors.add(
+                    assignmentRowError(serviceAppointmentId, null, 'Service Appointment was not found.')
+                );
+                continue;
+            }
+            if (workOrderIdByAppointmentId.get(serviceAppointmentId) != workOrderId) {
+                result.errors.add(
+                    assignmentRowError(
+                        serviceAppointmentId,
+                        appointmentRecord.AppointmentNumber,
+                        'This visit does not belong to this Work Order.'
+                    )
+                );
+                continue;
+            }
+            if (!eligibleOpportunityIds.contains(requestedOpportunityId)) {
+                result.errors.add(
+                    assignmentRowError(
+                        serviceAppointmentId,
+                        appointmentRecord.AppointmentNumber,
+                        'That Opportunity is not eligible for this Work Order.'
+                    )
+                );
+                continue;
+            }
+            if (appointmentRecord.Opportunity__c != null) {
+                AppointmentOpportunityConflict conflictRow = new AppointmentOpportunityConflict();
+                conflictRow.serviceAppointmentId = appointmentRecord.Id;
+                conflictRow.appointmentNumber = appointmentRecord.AppointmentNumber;
+                conflictRow.opportunityId = appointmentRecord.Opportunity__c;
+                conflictRow.opportunityName = appointmentRecord.Opportunity__r == null
+                    ? null
+                    : appointmentRecord.Opportunity__r.Name;
+                result.conflicts.add(conflictRow);
+                continue;
+            }
+            appointmentsToUpdate.add(
+                new ServiceAppointment(
+                    Id = appointmentRecord.Id,
+                    Opportunity__c = requestedOpportunityId
+                )
+            );
+        }
+
+        if (appointmentsToUpdate.isEmpty()) {
+            return result;
+        }
+
+        SObjectAccessDecision accessDecision = Security.stripInaccessible(
+            AccessType.UPDATABLE,
+            appointmentsToUpdate
+        );
+        List<ServiceAppointment> strippedAppointments = accessDecision.getRecords();
+        if (strippedAppointments.isEmpty()) {
+            throw BillingControl_Invoicing.buildHandledException(
+                'You do not have permission to update Service Appointment Opportunity.'
+            );
+        }
+        for (ServiceAppointment strippedRecord : strippedAppointments) {
+            if (strippedRecord.Opportunity__c == null) {
+                throw BillingControl_Invoicing.buildHandledException(
+                    'You do not have permission to update Service Appointment Opportunity.'
+                );
+            }
+        }
+        update strippedAppointments;
+        for (ServiceAppointment savedRecord : strippedAppointments) {
+            result.savedIds.add(savedRecord.Id);
+        }
+        return result;
+    }
+
+    private static void assertCanUpdateServiceAppointmentOpportunity() {
+        if (forceDenyServiceAppointmentOpportunityUpdate == true
+            || !ServiceAppointment.SObjectType.getDescribe().isUpdateable()
+            || !ServiceAppointment.Opportunity__c.getDescribe().isUpdateable()) {
+            throw BillingControl_Invoicing.buildHandledException(
+                'You do not have permission to update Service Appointment Opportunity.'
+            );
+        }
+    }
+
+    private static AppointmentOpportunityRowError assignmentRowError(
+        Id serviceAppointmentId,
+        String appointmentNumber,
+        String message
+    ) {
+        AppointmentOpportunityRowError errorRow = new AppointmentOpportunityRowError();
+        errorRow.serviceAppointmentId = serviceAppointmentId;
+        errorRow.appointmentNumber = appointmentNumber;
+        errorRow.message = message;
+        return errorRow;
     }
 
     @AuraEnabled(cacheable=true)

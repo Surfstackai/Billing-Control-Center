@@ -58,6 +58,130 @@ private class BillingControl_ReceivablesWorklistTest {
     }
 
     @IsTest
+    static void overdueInvoiceAppearsOncePerSectionAndInOverlappingSections() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Fixture fixture = createFixture('Overlap Opp', 2500);
+        Opportunity opportunityRecord = [
+            SELECT Id, Description
+            FROM Opportunity
+            WHERE Id = :fixture.opportunityId
+        ];
+        opportunityRecord.Description = 'Governing pit work';
+        update opportunityRecord;
+
+        Invoice__c overdueInvoice = buildInvoice(
+            fixture,
+            'INV-OVERLAP',
+            2500,
+            'Partially Paid',
+            'Deposit',
+            Date.today().addDays(-40)
+        );
+        overdueInvoice.Due_Date__c = Date.today().addDays(-5);
+        overdueInvoice.Amount_Paid__c = 500;
+        overdueInvoice.Balance_Due__c = 2000;
+        insert overdueInvoice;
+
+        Fixture otherFixture = createFixture('Attributed Opp', 100);
+        Opportunity otherOpportunity = [
+            SELECT Id, Description
+            FROM Opportunity
+            WHERE Id = :otherFixture.opportunityId
+        ];
+        otherOpportunity.Description = 'Line-attributed work';
+        update otherOpportunity;
+        insert BillingControl_InvoiceRecordFactory.buildDescriptiveInvoiceLine(
+            overdueInvoice.Id,
+            otherFixture.opportunityId,
+            fixture.workOrderId,
+            'Attributed line',
+            100
+        );
+
+        Test.startTest();
+        BillingControl_ReceivablesWorklist.TabRuntime tabRuntime =
+            BillingControl_ReceivablesWorklist.getTabRuntime(1L, 'This Month', null, null, null);
+        Test.stopTest();
+
+        BillingControl_ReceivablesWorklist.SectionWrapper outstanding =
+            section(tabRuntime, BillingControl_ReceivablesWorklist.SECTION_OUTSTANDING_AR);
+        BillingControl_ReceivablesWorklist.SectionWrapper overdue =
+            section(tabRuntime, BillingControl_ReceivablesWorklist.SECTION_OVERDUE);
+        BillingControl_ReceivablesWorklist.SectionWrapper partial =
+            section(tabRuntime, BillingControl_ReceivablesWorklist.SECTION_PARTIALLY_PAID);
+        BillingControl_ReceivablesWorklist.SectionWrapper deposits =
+            section(tabRuntime, BillingControl_ReceivablesWorklist.SECTION_DEPOSITS_OUTSTANDING);
+
+        System.assertEquals(1, distinctInvoiceCount(outstanding.rows));
+        System.assertEquals(1, distinctInvoiceCount(overdue.rows));
+        System.assertEquals(outstanding.rows[0].invoiceId, overdue.rows[0].invoiceId);
+        System.assertEquals(outstanding.rows[0].invoiceId, partial.rows[0].invoiceId);
+        System.assertEquals(outstanding.rows[0].invoiceId, deposits.rows[0].invoiceId);
+        System.assertEquals('Governing pit work', outstanding.rows[0].opportunityDescription);
+        System.assertEquals(2, outstanding.rows[0].attributedOpportunityNarratives.size());
+        System.assertEquals(1, tabRuntime.metrics.allReceivablesCount);
+        System.assertEquals(1, tabRuntime.invoices.size());
+    }
+
+    @IsTest
+    static void invoiceWithoutOpportunityIsUnassignedInWorklist() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Account accountRecord = new Account(Name = 'Unassigned Invoice Account');
+        insert accountRecord;
+        Invoice__c unassignedInvoice = new Invoice__c(
+            Invoice_Number__c = 'INV-UNASSIGNED',
+            Account__c = accountRecord.Id,
+            Status__c = 'Sent',
+            Invoice_Date__c = Date.today(),
+            Due_Date__c = Date.today().addDays(20),
+            Subtotal__c = 300,
+            Tax_Amount__c = 0,
+            Total_Amount__c = 300,
+            Amount_Paid__c = 0,
+            Balance_Due__c = 300,
+            Invoice_Type__c = 'Balance',
+            Amount_Source__c = 'Entered'
+        );
+        insert unassignedInvoice;
+
+        Test.startTest();
+        BillingControl_ReceivablesWorklist.TabRuntime tabRuntime =
+            BillingControl_ReceivablesWorklist.getTabRuntime(1L, 'This Month', null, null, null);
+        Test.stopTest();
+
+        BillingControl_ReceivablesWorklist.SectionWrapper outstanding =
+            section(tabRuntime, BillingControl_ReceivablesWorklist.SECTION_OUTSTANDING_AR);
+        Boolean foundUnassigned = false;
+        for (BillingControl_ReceivablesWorklist.InvoiceRow row : outstanding.rows) {
+            if (row.invoiceId == unassignedInvoice.Id) {
+                foundUnassigned = true;
+                System.assertEquals(null, row.opportunityId);
+                System.assertEquals(null, row.ownerId);
+            }
+        }
+        System.assertEquals(true, foundUnassigned, 'Invoices without Opportunity still belong in the worklist.');
+    }
+
+    @IsTest
+    static void paidInvoiceLeavesReceivablesForAccruedCommissions() {
+        WorkOrderLedgerAutomationControl.disableForTests();
+        Fixture fixture = createFixture('Paid Canonical Opp', 900);
+        Invoice__c paidInvoice = buildInvoice(fixture, 'INV-PAID-CANON', 900, 'Paid', 'Balance', Date.today());
+        paidInvoice.Amount_Paid__c = 900;
+        paidInvoice.Balance_Due__c = 0;
+        insert paidInvoice;
+
+        Test.startTest();
+        BillingControl_ReceivablesWorklist.TabRuntime tabRuntime =
+            BillingControl_ReceivablesWorklist.getTabRuntime(1L, 'This Month', null, null, null);
+        Test.stopTest();
+
+        for (BillingControl_ReceivablesWorklist.InvoiceRow row : tabRuntime.invoices) {
+            System.assertNotEquals(paidInvoice.Id, row.invoiceId, 'Paid-in-full invoices belong on Accrued commissions, not Receivables.');
+        }
+    }
+
+    @IsTest
     static void depositPaidInFullDoesNotPayTheJob() {
         WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Deposit Plus Balance Opp', 5000);
@@ -229,6 +353,14 @@ private class BillingControl_ReceivablesWorklistTest {
         System.assertEquals(null, commissionRecord.Paid_Amount__c);
         System.assertEquals(0, commissionRecord.Commission_Paid__c == null ? 0 : commissionRecord.Commission_Paid__c);
         System.assertEquals('Invoiced Total', commissionRecord.Amount_Basis__c);
+    }
+
+    private static Integer distinctInvoiceCount(List<BillingControl_ReceivablesWorklist.InvoiceRow> rows) {
+        Set<Id> invoiceIds = new Set<Id>();
+        for (BillingControl_ReceivablesWorklist.InvoiceRow row : rows) {
+            invoiceIds.add(row.invoiceId);
+        }
+        return invoiceIds.size();
     }
 
     private static BillingControl_ReceivablesWorklist.SectionWrapper section(

@@ -7,9 +7,9 @@ import setManualRate from '@salesforce/apex/BillingControl_CommissionLifecycle.s
 import { resolveDateRange } from 'c/billingControlCenterDateFilter';
 
 const KPI_CONFIG = [
-    { key: 'accrued', developerKey: 'ACCRUED', countKey: 'accruedCount', amountKey: 'accrued', title: 'Accrued', icon: 'utility:clock', hint: 'Jobs invoiced, not yet paid in full. Date filter uses Opportunity close date.' },
-    { key: 'payable', developerKey: 'PAYABLE', countKey: 'payableCount', amountKey: 'payable', title: 'Payable', icon: 'utility:pay_by_check', hint: 'Job paid in full. Date filter uses payable date. Amount is rate × invoiced total.' },
-    { key: 'paidThisPeriod', developerKey: 'PAID', countKey: 'paidThisPeriodCount', amountKey: 'paidThisPeriod', title: 'Paid this period', icon: 'utility:success', hint: 'Salesperson payouts. Date filter uses paid date.' }
+    { key: 'accrued', developerKey: 'ACCRUED', countKey: 'accruedCount', amountKey: 'accrued', title: 'Accrued', icon: 'utility:clock', hint: 'Customer paid in full. Commission is due to the salesperson by month end.' },
+    { key: 'payable', developerKey: 'PAYABLE', countKey: 'payableCount', amountKey: 'payable', title: 'Payable', icon: 'utility:pay_by_check', hint: 'Ready for Pay Commission. Same jobs as Accrued once the customer has paid in full.' },
+    { key: 'paidThisPeriod', developerKey: 'PAID', countKey: 'paidThisPeriodCount', amountKey: 'paidThisPeriod', title: 'Paid this period', icon: 'utility:success', hint: 'Salesperson was paid with Pay Commission.' }
 ];
 
 const DEFAULT_DATE_FILTER = resolveDateRange('This Month');
@@ -23,6 +23,7 @@ export default class BillingControlCenterCommissions extends NavigationMixin(Lig
     sections = [];
     selectedCommissionIds = [];
     selectedKpiKey = 'accrued';
+    expandedSalespersonKeys = [];
     rateDraft;
     paidDateValue = new Date().toISOString().slice(0, 10);
     localDateFilter = { ...DEFAULT_DATE_FILTER };
@@ -70,15 +71,61 @@ export default class BillingControlCenterCommissions extends NavigationMixin(Lig
     }
 
     get visibleSections() {
-        return (this.sections || []).map(section => ({
-                ...section,
-                titleWithCount: `${section.categoryLabel} (${section.recordCount || 0})`,
-                isEmpty: !section.rows || section.rows.length === 0,
-                rows: (section.rows || []).map(row => ({
-                    ...row,
-                    isSelected: this.selectedCommissionIds.includes(row.commissionId)
-                }))
-            }));
+        const selectedKey = KPI_CONFIG.find(definition => definition.key === this.selectedKpiKey)?.developerKey;
+        const expandedKeys = new Set(this.expandedSalespersonKeys);
+        return (this.sections || [])
+            .filter(section => !selectedKey || section.categoryKey === selectedKey)
+            .map(section => {
+                const groups = this.groupRowsBySalesperson(section);
+                return {
+                    ...section,
+                    titleWithCount: `${section.categoryLabel} (${section.recordCount || 0})`,
+                    isEmpty: !section.rows || section.rows.length === 0,
+                    salespersonGroups: groups.map(group => {
+                        const isExpanded = expandedKeys.has(group.key);
+                        return {
+                            ...group,
+                            isExpanded,
+                            ariaExpanded: isExpanded ? 'true' : 'false',
+                            expandIcon: isExpanded ? 'utility:chevrondown' : 'utility:chevronright',
+                            expandAltText: isExpanded
+                                ? `Collapse ${group.salespersonName}`
+                                : `Expand ${group.salespersonName}`,
+                            cardClass: isExpanded
+                                ? 'salesperson-card salesperson-card_expanded'
+                                : 'salesperson-card',
+                            rows: group.rows.map(row => ({
+                                ...row,
+                                isSelected: this.selectedCommissionIds.includes(row.commissionId),
+                                customerStatusLabel: row.customerPaidInFull
+                                    ? 'Customer paid in full'
+                                    : 'Customer still owes'
+                            }))
+                        };
+                    })
+                };
+            });
+    }
+
+    groupRowsBySalesperson(section) {
+        const byOwner = new Map();
+        (section.rows || []).forEach(row => {
+            const ownerKey = row.salespersonId || row.salespersonName || 'unassigned';
+            if (!byOwner.has(ownerKey)) {
+                byOwner.set(ownerKey, {
+                    key: `${section.categoryKey}-${ownerKey}`,
+                    salespersonName: row.salespersonName || 'Unassigned',
+                    rows: [],
+                    commissionTotal: 0,
+                    jobCount: 0
+                });
+            }
+            const group = byOwner.get(ownerKey);
+            group.rows.push(row);
+            group.jobCount += 1;
+            group.commissionTotal += Number(row.commissionAmount || 0);
+        });
+        return Array.from(byOwner.values());
     }
 
     get isPayDisabled() {
@@ -88,11 +135,8 @@ export default class BillingControlCenterCommissions extends NavigationMixin(Lig
     get selectedPayableIds() {
         const payableIds = new Set();
         (this.sections || []).forEach(section => {
-            if (section.categoryKey !== 'PAYABLE') {
-                return;
-            }
             (section.rows || []).forEach(row => {
-                if (this.selectedCommissionIds.includes(row.commissionId)) {
+                if (row.canPay && this.selectedCommissionIds.includes(row.commissionId)) {
                     payableIds.add(row.commissionId);
                 }
             });
@@ -139,6 +183,20 @@ export default class BillingControlCenterCommissions extends NavigationMixin(Lig
 
     handleKpiTileClick(event) {
         this.selectedKpiKey = event.detail?.key || this.selectedKpiKey;
+    }
+
+    handleToggleSalesperson(event) {
+        const rowKey = event.currentTarget.dataset.key;
+        if (!rowKey) {
+            return;
+        }
+        const nextExpanded = new Set(this.expandedSalespersonKeys);
+        if (nextExpanded.has(rowKey)) {
+            nextExpanded.delete(rowKey);
+        } else {
+            nextExpanded.add(rowKey);
+        }
+        this.expandedSalespersonKeys = Array.from(nextExpanded);
     }
 
     handleRowSelect(event) {

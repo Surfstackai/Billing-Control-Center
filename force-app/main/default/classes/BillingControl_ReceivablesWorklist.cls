@@ -21,6 +21,12 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
         @AuraEnabled public String referenceNumber;
     }
 
+    public class OpportunityNarrative {
+        @AuraEnabled public Id opportunityId;
+        @AuraEnabled public String opportunityName;
+        @AuraEnabled public String description;
+    }
+
     public class InvoiceRow {
         @AuraEnabled public Id invoiceId;
         @AuraEnabled public String invoiceNumber;
@@ -46,6 +52,8 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
         @AuraEnabled public Boolean canPostReceipt;
         @AuraEnabled public Boolean needsAmount;
         @AuraEnabled public Boolean overdue;
+        @AuraEnabled public String opportunityDescription;
+        @AuraEnabled public List<OpportunityNarrative> attributedOpportunityNarratives;
         @AuraEnabled public List<PaymentRow> payments;
     }
 
@@ -68,6 +76,8 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
         @AuraEnabled public Integer needsAmountCount;
         @AuraEnabled public Decimal depositsOutstanding;
         @AuraEnabled public Integer depositsOutstandingCount;
+        @AuraEnabled public Decimal allReceivables;
+        @AuraEnabled public Integer allReceivablesCount;
 
         public MetricsWrapper() {
             outstandingAr = 0;
@@ -79,11 +89,14 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
             needsAmountCount = 0;
             depositsOutstanding = 0;
             depositsOutstandingCount = 0;
+            allReceivables = 0;
+            allReceivablesCount = 0;
         }
     }
 
     public class TabRuntime {
         @AuraEnabled public MetricsWrapper metrics;
+        @AuraEnabled public List<InvoiceRow> invoices;
         @AuraEnabled public List<SectionWrapper> invoiceSections;
         @AuraEnabled public List<String> warnings;
     }
@@ -103,6 +116,7 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
         TabRuntime tabRuntime = new TabRuntime();
         tabRuntime.warnings = new List<String>();
         List<InvoiceRow> invoiceRows = loadInvoiceRows(ownerId);
+        tabRuntime.invoices = invoiceRows;
         tabRuntime.invoiceSections = buildInvoiceSections(invoiceRows);
         tabRuntime.metrics = buildInvoiceMetrics(invoiceRows);
         if (invoiceRows.isEmpty()) {
@@ -146,13 +160,13 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
         String soql =
             'SELECT Id, Invoice_Number__c, Invoice_Type__c, Invoice_Date__c, Due_Date__c,'
             + ' Total_Amount__c, Amount_Paid__c, Balance_Due__c, Status__c,'
+            + ' Account__c, Account__r.Name,'
             + ' Opportunity__c, Opportunity__r.Name, Opportunity__r.Quote_Number__c,'
-            + ' Opportunity__r.Billing_Status__c,'
+            + ' Opportunity__r.Description, Opportunity__r.Billing_Status__c,'
             + ' Opportunity__r.AccountId, Opportunity__r.Account.Name,'
             + ' Opportunity__r.OwnerId, Opportunity__r.Owner.Name'
             + ' FROM Invoice__c'
-            + ' WHERE Opportunity__c != NULL'
-            + ' AND Status__c != \'' + String.escapeSingleQuotes(STATUS_VOID) + '\'';
+            + ' WHERE Status__c != \'' + String.escapeSingleQuotes(STATUS_VOID) + '\'';
         if (ownerId != null) {
             soql += ' AND Opportunity__r.OwnerId = :ownerId';
         }
@@ -170,6 +184,7 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
         Map<Id, BillingControl_OpportunityFinancials.Snapshot> financialsByOpportunityId =
             BillingControl_OpportunityFinancials.load(opportunityIds);
         Map<Id, List<PaymentRow>> paymentsByInvoiceId = loadPayments(invoiceIds);
+        Map<Id, List<OpportunityNarrative>> narrativesByInvoiceId = loadAttributedNarratives(invoiceIds);
 
         List<InvoiceRow> rows = new List<InvoiceRow>();
         Date todayValue = Date.today();
@@ -187,10 +202,17 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
             row.opportunityId = invoiceRecord.Opportunity__c;
             row.opportunityName = invoiceRecord.Opportunity__r != null ? invoiceRecord.Opportunity__r.Name : null;
             row.quoteNumber = invoiceRecord.Opportunity__r != null ? invoiceRecord.Opportunity__r.Quote_Number__c : null;
-            row.accountId = invoiceRecord.Opportunity__r != null ? invoiceRecord.Opportunity__r.AccountId : null;
-            row.accountName = invoiceRecord.Opportunity__r != null && invoiceRecord.Opportunity__r.Account != null
-                ? invoiceRecord.Opportunity__r.Account.Name
+            row.opportunityDescription = invoiceRecord.Opportunity__r != null
+                ? invoiceRecord.Opportunity__r.Description
                 : null;
+            row.accountId = invoiceRecord.Account__c != null
+                ? invoiceRecord.Account__c
+                : (invoiceRecord.Opportunity__r != null ? invoiceRecord.Opportunity__r.AccountId : null);
+            row.accountName = invoiceRecord.Account__r != null
+                ? invoiceRecord.Account__r.Name
+                : (invoiceRecord.Opportunity__r != null && invoiceRecord.Opportunity__r.Account != null
+                    ? invoiceRecord.Opportunity__r.Account.Name
+                    : null);
             row.ownerId = invoiceRecord.Opportunity__r != null ? invoiceRecord.Opportunity__r.OwnerId : null;
             row.ownerName = invoiceRecord.Opportunity__r != null && invoiceRecord.Opportunity__r.Owner != null
                 ? invoiceRecord.Opportunity__r.Owner.Name
@@ -216,6 +238,13 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
             row.payments = paymentsByInvoiceId.containsKey(invoiceRecord.Id)
                 ? paymentsByInvoiceId.get(invoiceRecord.Id)
                 : new List<PaymentRow>();
+            row.attributedOpportunityNarratives = mergeNarratives(
+                invoiceRecord,
+                narrativesByInvoiceId.get(invoiceRecord.Id)
+            );
+            if (!row.needsAmount && remaining <= 0) {
+                continue;
+            }
             rows.add(row);
         }
         return rows;
@@ -244,6 +273,70 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
             paymentsByInvoiceId.get(paymentRecord.Invoice__c).add(paymentRow);
         }
         return paymentsByInvoiceId;
+    }
+
+    private static Map<Id, List<OpportunityNarrative>> loadAttributedNarratives(Set<Id> invoiceIds) {
+        Map<Id, List<OpportunityNarrative>> narrativesByInvoiceId = new Map<Id, List<OpportunityNarrative>>();
+        if (invoiceIds == null || invoiceIds.isEmpty()) {
+            return narrativesByInvoiceId;
+        }
+        for (Invoice_Line__c lineRecord : [
+            SELECT Invoice__c, Opportunity__c, Opportunity__r.Name, Opportunity__r.Description
+            FROM Invoice_Line__c
+            WHERE Invoice__c IN :invoiceIds
+            AND Opportunity__c != NULL
+        ]) {
+            if (!narrativesByInvoiceId.containsKey(lineRecord.Invoice__c)) {
+                narrativesByInvoiceId.put(lineRecord.Invoice__c, new List<OpportunityNarrative>());
+            }
+            List<OpportunityNarrative> narratives = narrativesByInvoiceId.get(lineRecord.Invoice__c);
+            Boolean alreadyPresent = false;
+            for (OpportunityNarrative existing : narratives) {
+                if (existing.opportunityId == lineRecord.Opportunity__c) {
+                    alreadyPresent = true;
+                    break;
+                }
+            }
+            if (alreadyPresent) {
+                continue;
+            }
+            OpportunityNarrative narrative = new OpportunityNarrative();
+            narrative.opportunityId = lineRecord.Opportunity__c;
+            narrative.opportunityName = lineRecord.Opportunity__r != null ? lineRecord.Opportunity__r.Name : null;
+            narrative.description = lineRecord.Opportunity__r != null ? lineRecord.Opportunity__r.Description : null;
+            narratives.add(narrative);
+        }
+        return narrativesByInvoiceId;
+    }
+
+    private static List<OpportunityNarrative> mergeNarratives(
+        Invoice__c invoiceRecord,
+        List<OpportunityNarrative> lineNarratives
+    ) {
+        List<OpportunityNarrative> merged = new List<OpportunityNarrative>();
+        Set<Id> seenOpportunityIds = new Set<Id>();
+        if (invoiceRecord.Opportunity__c != null) {
+            OpportunityNarrative headerNarrative = new OpportunityNarrative();
+            headerNarrative.opportunityId = invoiceRecord.Opportunity__c;
+            headerNarrative.opportunityName = invoiceRecord.Opportunity__r != null
+                ? invoiceRecord.Opportunity__r.Name
+                : null;
+            headerNarrative.description = invoiceRecord.Opportunity__r != null
+                ? invoiceRecord.Opportunity__r.Description
+                : null;
+            merged.add(headerNarrative);
+            seenOpportunityIds.add(invoiceRecord.Opportunity__c);
+        }
+        if (lineNarratives != null) {
+            for (OpportunityNarrative lineNarrative : lineNarratives) {
+                if (lineNarrative.opportunityId == null || seenOpportunityIds.contains(lineNarrative.opportunityId)) {
+                    continue;
+                }
+                merged.add(lineNarrative);
+                seenOpportunityIds.add(lineNarrative.opportunityId);
+            }
+        }
+        return merged;
     }
 
     private static List<SectionWrapper> buildInvoiceSections(List<InvoiceRow> invoiceRows) {
@@ -285,8 +378,10 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
 
     private static MetricsWrapper buildInvoiceMetrics(List<InvoiceRow> invoiceRows) {
         MetricsWrapper metrics = new MetricsWrapper();
+        metrics.allReceivablesCount = invoiceRows == null ? 0 : invoiceRows.size();
         for (InvoiceRow row : invoiceRows) {
             Decimal remaining = remainingBalance(row);
+            metrics.allReceivables += remaining;
             if (!row.needsAmount && remaining > 0) {
                 metrics.outstandingArCount++;
                 metrics.outstandingAr += remaining;
@@ -322,6 +417,14 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
     }
 
     private static void addRow(SectionWrapper section, InvoiceRow row, Decimal amount) {
+        if (row == null || row.invoiceId == null) {
+            return;
+        }
+        for (InvoiceRow existingRow : section.rows) {
+            if (existingRow.invoiceId == row.invoiceId) {
+                return;
+            }
+        }
         section.rows.add(row);
         section.invoiceCount++;
         section.totalAmount += amount == null ? 0 : amount;

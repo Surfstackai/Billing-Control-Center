@@ -15,17 +15,28 @@ public inherited sharing class BillingControl_BillingReadiness {
     };
 
     public static final String REASON_DEPOSIT_DUE = 'Deposit Due';
-    public static final String REASON_BALANCE_READY = 'Balance Ready';
-    public static final String REASON_UNDER_INVOICED = 'Under-Invoiced';
-    public static final String REASON_REVIEW = 'Review: Possible Extra Work';
-    public static final String REASON_BLOCKED_ATTRIBUTION = 'Blocked: Attribution';
-    public static final String REASON_BLOCKED_NO_AMOUNT = 'Blocked: No Amount';
+    public static final String REASON_BALANCE_READY = 'Ready to Bill';
+    public static final String REASON_UNDER_INVOICED = 'Balance Remaining';
+    public static final String REASON_MISSING_QUOTE_AMOUNT = 'Missing quote amount';
+    public static final String REASON_VISIT_UNASSIGNED = 'Visit not assigned to an Opportunity';
+    public static final String REASON_INVOICE_REFERENCE = 'Invoice reference needs review';
+    public static final String REASON_FLAGGED_BY_ACCOUNTING = 'Flagged by Accounting';
 
     public static final String SECTION_DEPOSITS_DUE = 'DEPOSITS_DUE';
     public static final String SECTION_BALANCES_READY = 'BALANCES_READY';
     public static final String SECTION_UNDER_INVOICED = 'UNDER_INVOICED';
     public static final String SECTION_NEEDS_REVIEW = 'NEEDS_REVIEW';
-    public static final String SECTION_BLOCKED = 'BLOCKED';
+
+    public static final String EVENT_BILLING_REVIEW_FLAG = 'BILLING_REVIEW_FLAG';
+    public static final String FLAG_FOR_REVIEW_DESCRIPTION_PREFIX = 'Flagged for billing review:';
+
+    private static final String EVENT_ACCOUNTING_NOTE = 'ACCOUNTING_NOTE';
+    private static final Set<String> NEEDS_REVIEW_REASONS = new Set<String>{
+        REASON_MISSING_QUOTE_AMOUNT,
+        REASON_VISIT_UNASSIGNED,
+        REASON_INVOICE_REFERENCE,
+        REASON_FLAGGED_BY_ACCOUNTING
+    };
 
     public class InvoiceChip {
         @AuraEnabled public String invoiceNumber;
@@ -106,7 +117,6 @@ public inherited sharing class BillingControl_BillingReadiness {
         @AuraEnabled public Integer underInvoicedCount;
         @AuraEnabled public Decimal underInvoicedAmount;
         @AuraEnabled public Integer needsReviewCount;
-        @AuraEnabled public Integer blockedCount;
         @AuraEnabled public Integer readyToBill;
 
         public MetricsWrapper() {
@@ -117,7 +127,6 @@ public inherited sharing class BillingControl_BillingReadiness {
             underInvoicedCount = 0;
             underInvoicedAmount = 0;
             needsReviewCount = 0;
-            blockedCount = 0;
             readyToBill = 0;
         }
     }
@@ -315,16 +324,20 @@ public inherited sharing class BillingControl_BillingReadiness {
         WorkOrderLedgerService.LedgerEvent eventRecord = new WorkOrderLedgerService.LedgerEvent();
         eventRecord.WorkOrderId = appointmentRecord.ParentRecordId;
         eventRecord.SourceRecordId = appointmentRecord.Id;
-        eventRecord.EventType = 'ACCOUNTING_NOTE';
+        eventRecord.EventType = EVENT_BILLING_REVIEW_FLAG;
         eventRecord.EventDatetime = System.now();
         eventRecord.ChangedById = UserInfo.getUserId();
         eventRecord.ServiceAppointmentId = appointmentRecord.Id;
         eventRecord.OpportunityId = appointmentRecord.Opportunity__c;
         eventRecord.SourceObject = 'ServiceAppointment';
-        eventRecord.Description = 'Flagged for billing review: ' + appointmentRecord.AppointmentNumber;
+        eventRecord.Description = FLAG_FOR_REVIEW_DESCRIPTION_PREFIX + ' ' + appointmentRecord.AppointmentNumber;
         eventRecord.SystemGenerated = false;
         String eventKey =
-            'ACCOUNTING_NOTE|' + String.valueOf(appointmentRecord.Id) + '|' + String.valueOf(System.now().getTime());
+            EVENT_BILLING_REVIEW_FLAG
+            + '|'
+            + String.valueOf(appointmentRecord.Id)
+            + '|'
+            + String.valueOf(System.now().getTime());
         eventRecord.EventKey = eventKey.length() > 80 ? eventKey.substring(0, 80) : eventKey;
         WorkOrderLedgerService.persistEvents(new List<WorkOrderLedgerService.LedgerEvent>{ eventRecord });
     }
@@ -385,7 +398,8 @@ public inherited sharing class BillingControl_BillingReadiness {
         Integer attributedCompleted = 0;
         Integer attributedUnbilled = 0;
         Boolean hasUnattributedOnMultiOppWorkOrder = false;
-        Boolean reviewFlag = false;
+        Boolean hasInvoiceReferenceReview = false;
+        Boolean hasAccountingFlag = false;
         Map<Id, WorkOrderEvidence> evidenceByWorkOrderId = new Map<Id, WorkOrderEvidence>();
 
         for (ServiceAppointment appointmentRecord : appointments) {
@@ -415,12 +429,15 @@ public inherited sharing class BillingControl_BillingReadiness {
                     attributedUnbilled++;
                 }
             }
-            Boolean appointmentReview = isReviewToken(appointmentRecord.Invoice_Number__c)
-                || String.isNotBlank(appointmentRecord.Description)
-                || String.isNotBlank(appointmentRecord.ServiceNote)
-                || String.isNotBlank((String) appointmentRecord.get('Internal_Service_Note__c'));
-            if (appointmentReview) {
-                reviewFlag = true;
+            Boolean invoiceTokenReview = isReviewToken(appointmentRecord.Invoice_Number__c);
+            Boolean flaggedForReview =
+                flaggedForReviewAppointmentIds != null
+                && flaggedForReviewAppointmentIds.contains(appointmentRecord.Id);
+            if (invoiceTokenReview) {
+                hasInvoiceReferenceReview = true;
+            }
+            if (flaggedForReview) {
+                hasAccountingFlag = true;
             }
 
             if (workOrderId == null) {
@@ -458,8 +475,9 @@ public inherited sharing class BillingControl_BillingReadiness {
             appointmentEvidence.technicianName = appointmentRecord.Owner == null ? null : appointmentRecord.Owner.Name;
             appointmentEvidence.description = appointmentRecord.Description;
             appointmentEvidence.serviceNote = appointmentRecord.ServiceNote;
-            appointmentEvidence.internalServiceNote =
-                (String) appointmentRecord.get('Internal_Service_Note__c');
+            appointmentEvidence.internalServiceNote = hasField(ServiceAppointment.SObjectType, 'Internal_Service_Note__c')
+                ? (String) appointmentRecord.get('Internal_Service_Note__c')
+                : null;
             appointmentEvidence.invoiceNumberHint = appointmentRecord.Invoice_Number__c;
             appointmentEvidence.woInvStatusHint = appointmentRecord.WO_Inv_Status__c;
             appointmentEvidence.billed = billed;
@@ -470,10 +488,8 @@ public inherited sharing class BillingControl_BillingReadiness {
                 ? null
                 : appointmentRecord.Opportunity__r.Name;
             appointmentEvidence.operationalUnassigned = appointmentRecord.Opportunity__c == null;
-            appointmentEvidence.reviewFlag = appointmentReview;
-            appointmentEvidence.flaggedForReview =
-                flaggedForReviewAppointmentIds != null
-                && flaggedForReviewAppointmentIds.contains(appointmentRecord.Id);
+            appointmentEvidence.reviewFlag = invoiceTokenReview || flaggedForReview;
+            appointmentEvidence.flaggedForReview = flaggedForReview;
             evidenceByWorkOrderId.get(workOrderId).appointments.add(appointmentEvidence);
         }
 
@@ -485,20 +501,23 @@ public inherited sharing class BillingControl_BillingReadiness {
             reasons.add(REASON_DEPOSIT_DUE);
         }
         Boolean invoicedBelowQuoted = amountQuoted != null && amountQuoted > 0 && invoicedTotal < amountQuoted;
-        if (attributedUnbilled > 0 && invoicedBelowQuoted) {
+        if (attributedUnbilled > 0) {
             reasons.add(REASON_BALANCE_READY);
         }
         if (attributedCompleted > 0 && attributedUnbilled == 0 && invoicedBelowQuoted) {
             reasons.add(REASON_UNDER_INVOICED);
         }
-        if (reviewFlag) {
-            reasons.add(REASON_REVIEW);
-        }
         if (hasUnattributedOnMultiOppWorkOrder) {
-            reasons.add(REASON_BLOCKED_ATTRIBUTION);
+            reasons.add(REASON_VISIT_UNASSIGNED);
         }
         if (amountQuoted == null || amountQuoted <= 0) {
-            reasons.add(REASON_BLOCKED_NO_AMOUNT);
+            reasons.add(REASON_MISSING_QUOTE_AMOUNT);
+        }
+        if (hasInvoiceReferenceReview) {
+            reasons.add(REASON_INVOICE_REFERENCE);
+        }
+        if (hasAccountingFlag) {
+            reasons.add(REASON_FLAGGED_BY_ACCOUNTING);
         }
 
         OpportunityRow row = new OpportunityRow();
@@ -519,18 +538,17 @@ public inherited sharing class BillingControl_BillingReadiness {
         row.invoices = toChips(invoices);
         row.completedEvidenceCount = completedCount;
         row.billedEvidenceCount = billedCount;
-        row.showReviewBanner = reasons.contains(REASON_REVIEW);
+        row.showReviewBanner = hasNeedsReviewReason(reasons);
         row.workOrders = evidenceByWorkOrderId.values();
         return row;
     }
 
     private static List<SectionWrapper> buildSections(List<OpportunityRow> rows) {
         List<SectionWrapper> sections = new List<SectionWrapper>{
-            newSection(SECTION_DEPOSITS_DUE, 'Deposits Due', REASON_DEPOSIT_DUE, rows),
-            newSection(SECTION_BALANCES_READY, 'Balances Ready', REASON_BALANCE_READY, rows),
-            newSection(SECTION_UNDER_INVOICED, 'Under-Invoiced', REASON_UNDER_INVOICED, rows),
-            newSection(SECTION_NEEDS_REVIEW, 'Needs Review', REASON_REVIEW, rows),
-            newSection(SECTION_BLOCKED, 'Blocked', null, rows)
+            newSection(SECTION_DEPOSITS_DUE, 'Deposit Due', REASON_DEPOSIT_DUE, rows),
+            newSection(SECTION_BALANCES_READY, 'Ready to Bill', REASON_BALANCE_READY, rows),
+            newSection(SECTION_UNDER_INVOICED, 'Balance Remaining', REASON_UNDER_INVOICED, rows),
+            newSectionMatchingAny(SECTION_NEEDS_REVIEW, 'Needs Review', NEEDS_REVIEW_REASONS, rows)
         };
         return sections;
     }
@@ -545,28 +563,71 @@ public inherited sharing class BillingControl_BillingReadiness {
         String reason,
         List<OpportunityRow> allRows
     ) {
+        return newSectionMatchingAny(
+            categoryKey,
+            categoryLabel,
+            reason == null ? new Set<String>() : new Set<String>{ reason },
+            allRows
+        );
+    }
+
+    private static SectionWrapper newSectionMatchingAny(
+        String categoryKey,
+        String categoryLabel,
+        Set<String> reasons,
+        List<OpportunityRow> allRows
+    ) {
         SectionWrapper section = new SectionWrapper();
         section.categoryKey = categoryKey;
         section.categoryLabel = categoryLabel;
         section.rows = new List<OpportunityRow>();
         Decimal totalAmount = 0;
         for (OpportunityRow row : allRows) {
-            if (reason == null) {
-                if (
-                    row.readinessReasons.contains(REASON_BLOCKED_ATTRIBUTION)
-                    || row.readinessReasons.contains(REASON_BLOCKED_NO_AMOUNT)
-                ) {
-                    section.rows.add(row);
-                    totalAmount += row.amountQuoted == null ? 0 : row.amountQuoted;
-                }
-            } else if (row.readinessReasons.contains(reason)) {
-                section.rows.add(row);
-                totalAmount += amountForReason(row, reason);
+            if (!rowMatchesAnyReason(row, reasons)) {
+                continue;
             }
+            section.rows.add(row);
+            totalAmount += amountForReason(row, firstMatchingReason(row, reasons));
         }
         section.opportunityCount = section.rows.size();
         section.totalAmount = totalAmount;
         return section;
+    }
+
+    private static Boolean rowMatchesAnyReason(OpportunityRow row, Set<String> reasons) {
+        if (row == null || row.readinessReasons == null || reasons == null || reasons.isEmpty()) {
+            return false;
+        }
+        for (String reason : row.readinessReasons) {
+            if (reasons.contains(reason)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static String firstMatchingReason(OpportunityRow row, Set<String> reasons) {
+        if (row == null || row.readinessReasons == null) {
+            return null;
+        }
+        for (String reason : row.readinessReasons) {
+            if (reasons.contains(reason)) {
+                return reason;
+            }
+        }
+        return null;
+    }
+
+    private static Boolean hasNeedsReviewReason(List<String> reasons) {
+        if (reasons == null || reasons.isEmpty()) {
+            return false;
+        }
+        for (String reason : reasons) {
+            if (NEEDS_REVIEW_REASONS.contains(reason)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static Decimal amountForReason(OpportunityRow row, String reason) {
@@ -594,8 +655,6 @@ public inherited sharing class BillingControl_BillingReadiness {
                 metrics.underInvoicedAmount = section.totalAmount;
             } else if (section.categoryKey == SECTION_NEEDS_REVIEW) {
                 metrics.needsReviewCount = section.opportunityCount;
-            } else if (section.categoryKey == SECTION_BLOCKED) {
-                metrics.blockedCount = section.opportunityCount;
             }
         }
         return metrics;
@@ -733,16 +792,29 @@ public inherited sharing class BillingControl_BillingReadiness {
             return flaggedIds;
         }
         for (Work_Order_Ledger_Entry__c entryRecord : [
-            SELECT Service_Appointment__c
+            SELECT Service_Appointment__c, Event_Type__c, Description__c
             FROM Work_Order_Ledger_Entry__c
-            WHERE Event_Type__c = 'ACCOUNTING_NOTE'
-            AND Service_Appointment__c IN :appointmentIds
+            WHERE Service_Appointment__c IN :appointmentIds
+            AND Event_Type__c IN (:EVENT_BILLING_REVIEW_FLAG, :EVENT_ACCOUNTING_NOTE)
         ]) {
-            if (entryRecord.Service_Appointment__c != null) {
-                flaggedIds.add(entryRecord.Service_Appointment__c);
+            if (!isBillingReviewFlagEntry(entryRecord)) {
+                continue;
             }
+            flaggedIds.add(entryRecord.Service_Appointment__c);
         }
         return flaggedIds;
+    }
+
+    private static Boolean isBillingReviewFlagEntry(Work_Order_Ledger_Entry__c entryRecord) {
+        if (entryRecord == null || entryRecord.Service_Appointment__c == null) {
+            return false;
+        }
+        if (entryRecord.Event_Type__c == EVENT_BILLING_REVIEW_FLAG) {
+            return true;
+        }
+        return entryRecord.Event_Type__c == EVENT_ACCOUNTING_NOTE
+            && entryRecord.Description__c != null
+            && entryRecord.Description__c.startsWith(FLAG_FOR_REVIEW_DESCRIPTION_PREFIX);
     }
 
     private static Set<Id> opportunitiesWithDepositInvoice(Map<Id, List<Invoice__c>> invoicesByOpportunityId) {

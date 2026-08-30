@@ -9,20 +9,28 @@
                 </div>
             </template>
             <div class="hero__controls">
-                <lightning-button-group class="view-toggle">
-                    <lightning-button
-                        label="By Salesperson"
-                        variant={salespersonViewVariant}
-                        data-view="salesperson"
-                        onclick={handleViewChange}>
-                    </lightning-button>
-                    <lightning-button
-                        label="All Receivables"
-                        variant={allReceivablesViewVariant}
-                        data-view="all"
-                        onclick={handleViewChange}>
-                    </lightning-button>
-                </lightning-button-group>
+                <div class="view-by">
+                    <p class="view-by__title">View by</p>
+                    <div class="view-by__switch" role="group" aria-label="View by">
+                        <button
+                            type="button"
+                            class={salespersonViewButtonClass}
+                            data-view="salesperson"
+                            aria-pressed={isSalespersonView}
+                            onclick={handleViewChange}>
+                            Salesperson
+                        </button>
+                        <button
+                            type="button"
+                            class={invoiceViewButtonClass}
+                            data-view="invoice"
+                            aria-pressed={isInvoiceView}
+                            onclick={handleViewChange}>
+                            Invoice
+                        </button>
+                        <span class={viewSwitchKnobClass} aria-hidden="true"></span>
+                    </div>
+                </div>
                 <c-billing-control-center-date-filter
                     compact
                     label="Due date"
@@ -148,150 +156,209 @@
                                             </lightning-icon>
                                         </span>
                                         <span class="salesperson-card__metrics">
-                                            <span>
+                                            <span class="salesperson-card__metric">
                                                 <lightning-formatted-number value={group.outstandingAr} format-style="currency" currency-code="USD" maximum-fraction-digits="0"></lightning-formatted-number>
-                                                Outstanding
+                                                <span class="salesperson-card__metric-label">Outstanding</span>
                                             </span>
-                                            <span>
+                                            <span class="salesperson-card__metric">
                                                 <lightning-formatted-number value={group.overdue} format-style="currency" currency-code="USD" maximum-fraction-digits="0"></lightning-formatted-number>
-                                                Overdue
+                                                <span class="salesperson-card__metric-label">Overdue</span>
                                             </span>
-                                            <span>
+                                            <span class="salesperson-card__metric">
                                                 <lightning-formatted-number value={group.invoiceCount}></lightning-formatted-number>
-                                                invoices
+                                                <span class="salesperson-card__metric-label">invoices</span>
                                             </span>
                                         </span>
                                         <span class="salesperson-card__secondary">
-                                            <span>
+                                            <span class="salesperson-card__metric">
                                                 <lightning-formatted-number value={group.partiallyPaid} format-style="currency" currency-code="USD" maximum-fraction-digits="0"></lightning-formatted-number>
-                                                Partially Paid ({group.partiallyPaidCount})
-                                            </span>
-                                            <span>Needs Amount ({group.needsAmountCount})</span>
-                                            <span>
-                                                <lightning-formatted-number value={group.depositsOutstanding} format-style="currency" currency-code="USD" maximum-fraction-digits="0"></lightning-formatted-number>
-                                                Deposits ({group.depositsOutstandingCount})
+                                                <span class="salesperson-card__metric-label">Partially paid ({group.partiallyPaidCount})</span>
                                             </span>
                                         </span>
                                     </button>
                                 </div>
                                 <template if:true={group.isExpanded}>
                                     <div class="salesperson-card__body">
-                                        <div class="status-chips" role="tablist" aria-label="Filter this salesperson">
-                                            <template for:each={group.statusChips} for:item="chip">
-                                                <button
-                                                    key={chip.key}
-                                                    class={chip.className}
-                                                    type="button"
-                                                    role="tab"
-                                                    aria-selected={chip.ariaSelected}
-                                                    data-status={chip.status}
-                                                    data-key={group.key}
-                                                    onclick={handleGroupStatusClick}>
-                                                    {chip.label}
-                                                </button>
-                                            </template>
-                                        </div>
                                         <template if:true={group.isEmpty}>
                                             <p class="bucket-empty">No invoices in this status for this salesperson.</p>
                                         </template>
                                         <template if:false={group.isEmpty}>
                                             <div class="slds-scrollable_x bucket-table-host">
-                                                <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout grouped-diary-table" aria-label={group.tableLabel}>
+                                                <table class="slds-table slds-table_bordered slds-table_fixed-layout grouped-diary-table receivables-table" aria-label={group.tableLabel}>
+                                                    <colgroup>
+                                                        <col style={receivableColumnStyles.select} />
+                                                        <col style={receivableColumnStyles.invoice} />
+                                                        <col style={receivableColumnStyles.account} />
+                                                        <col style={receivableColumnStyles.type} />
+                                                        <col style={receivableColumnStyles.invoiceDate} />
+                                                        <col style={receivableColumnStyles.dueDate} />
+                                                        <col style={receivableColumnStyles.days} />
+                                                        <col style={receivableColumnStyles.amount} />
+                                                        <col style={receivableColumnStyles.paid} />
+                                                        <col style={receivableColumnStyles.balance} />
+                                                        <col style={receivableColumnStyles.status} />
+                                                    </colgroup>
                                                     <thead>
                                                         <tr class="slds-line-height_reset">
-                                                            <th scope="col" style="width:4.5rem;"><span class="slds-assistive-text">Selection and expansion</span></th>
-                                                            <th scope="col"><strong>Invoice</strong></th>
-                                                            <th scope="col"><strong>Type</strong></th>
-                                                            <th scope="col"><strong>Invoice Date</strong></th>
-                                                            <th scope="col"><strong>Due</strong></th>
-                                                            <th scope="col"><strong>Days</strong></th>
-                                                            <th scope="col"><strong>Amount</strong></th>
-                                                            <th scope="col"><strong>Paid</strong></th>
-                                                            <th scope="col"><strong>Balance</strong></th>
-                                                            <th scope="col"><strong>Status</strong></th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.select}>
+                                                                <span class="slds-assistive-text">Selection and expansion</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="select" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.invoice}>
+                                                                <span class="grouped-diary-table__header-label">Invoice</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="invoice" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.account}>
+                                                                <span class="grouped-diary-table__header-label">Account</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="account" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.type}>
+                                                                <span class="grouped-diary-table__header-label">Type</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="type" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.invoiceDate}>
+                                                                <span class="grouped-diary-table__header-label">Invoice Date</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="invoiceDate" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.dueDate}>
+                                                                <span class="grouped-diary-table__header-label">Due Date</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="dueDate" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header receivables-table__num" style={receivableColumnStyles.days}>
+                                                                <span class="grouped-diary-table__header-label">Days</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="days" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header receivables-table__num" style={receivableColumnStyles.amount}>
+                                                                <span class="grouped-diary-table__header-label">Amount</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="amount" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header receivables-table__num" style={receivableColumnStyles.paid}>
+                                                                <span class="grouped-diary-table__header-label">Paid</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="paid" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header receivables-table__num" style={receivableColumnStyles.balance}>
+                                                                <span class="grouped-diary-table__header-label">Balance</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="balance" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.status}>
+                                                                <span class="grouped-diary-table__header-label">Status</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="status" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
                                                         </tr>
                                                     </thead>
-                                                    <template for:each={group.opportunityGroups} for:item="oppGroup">
-                                                        <tbody key={oppGroup.key}>
-                                                            <tr class="opp-group-header-row">
-                                                                <td colspan="10">
-                                                                    <div class="opp-group-header">
-                                                                        <div class="opp-group-header__copy">
+                                                    <tbody>
+                                                        <template for:each={group.invoices} for:item="invoice">
+                                                            <tr key={invoice.key} class="slds-hint-parent">
+                                                                <td>
+                                                                    <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
+                                                                        <lightning-input
+                                                                            type="checkbox"
+                                                                            variant="label-hidden"
+                                                                            label={invoice.invoiceNumber}
+                                                                            data-key={invoice.key}
+                                                                            checked={invoice.isSelected}
+                                                                            onchange={handleChildSelection}>
+                                                                        </lightning-input>
+                                                                        <lightning-button-icon
+                                                                            icon-name={invoice.expandIcon}
+                                                                            variant="bare"
+                                                                            alternative-text={invoice.expandAltText}
+                                                                            title={invoice.expandAltText}
+                                                                            data-key={invoice.key}
+                                                                            onclick={handleToggleRow}>
+                                                                        </lightning-button-icon>
+                                                                    </div>
+                                                                </td>
+                                                                <th scope="row">
+                                                                    <button
+                                                                        class="slds-button slds-button_reset slds-text-link"
+                                                                        type="button"
+                                                                        data-id={invoice.invoiceId}
+                                                                        onclick={handleOpenInvoice}>
+                                                                        {invoice.invoiceNumber}
+                                                                    </button>
+                                                                </th>
+                                                                <td class="receivables-table__account">
+                                                                    <div class="invoice-identity">
+                                                                        <template if:true={invoice.accountId}>
                                                                             <button
-                                                                                class="slds-button slds-button_reset opp-group-header__name"
+                                                                                class="slds-button slds-button_reset slds-text-link invoice-identity__account"
                                                                                 type="button"
-                                                                                data-id={oppGroup.opportunityId}
-                                                                                onclick={handleOpenOpportunity}>
-                                                                                {oppGroup.opportunityName}
+                                                                                data-id={invoice.accountId}
+                                                                                onclick={handleOpenAccount}>
+                                                                                {invoice.accountName}
                                                                             </button>
-                                                                            <p class="opp-group-header__meta">{oppGroup.metaText}</p>
-                                                                        </div>
-                                                                        <div class="opp-group-header__balance">
-                                                                            <lightning-formatted-number value={oppGroup.outstanding} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                                                            <span class="opp-group-header__balance-label">outstanding</span>
+                                                                        </template>
+                                                                        <template if:false={invoice.accountId}>
+                                                                            <span class="invoice-identity__account">{invoice.accountName}</span>
+                                                                        </template>
+                                                                        <div class="invoice-identity__detail">
+                                                                            <template if:true={invoice.opportunityId}>
+                                                                                <button
+                                                                                    class="slds-button slds-button_reset slds-text-link invoice-identity__opportunity"
+                                                                                    type="button"
+                                                                                    data-id={invoice.opportunityId}
+                                                                                    onclick={handleOpenOpportunity}>
+                                                                                    {invoice.opportunityName}
+                                                                                </button>
+                                                                            </template>
+                                                                            <template if:false={invoice.opportunityId}>
+                                                                                <span class="invoice-identity__opportunity">{invoice.opportunityName}</span>
+                                                                            </template>
+                                                                            <template if:true={invoice.quoteDisplay}>
+                                                                                <span class="invoice-identity__quote">{invoice.quoteDisplay}</span>
+                                                                            </template>
                                                                         </div>
                                                                     </div>
                                                                 </td>
+                                                                <td class="receivables-table__type">{invoice.invoiceType}</td>
+                                                                <td class="receivables-table__date">
+                                                                    <lightning-formatted-date-time value={invoice.invoiceDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                                </td>
+                                                                <td class="receivables-table__date">
+                                                                    <lightning-formatted-date-time value={invoice.dueDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                                </td>
+                                                                <td class="receivables-table__num">
+                                                                    <lightning-formatted-number value={invoice.daysOutstanding}></lightning-formatted-number>
+                                                                </td>
+                                                                <td class="receivables-table__num">
+                                                                    <lightning-formatted-number value={invoice.totalAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                </td>
+                                                                <td class="receivables-table__num">
+                                                                    <lightning-formatted-number value={invoice.amountPaid} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                </td>
+                                                                <td class="receivables-table__num">
+                                                                    <lightning-formatted-number value={invoice.balanceDue} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                                </td>
+                                                                <td>{invoice.status}</td>
                                                             </tr>
-                                                            <template for:each={oppGroup.invoices} for:item="invoice">
-                                                                <tr key={invoice.key} class="slds-hint-parent">
-                                                                    <td>
-                                                                        <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
-                                                                            <lightning-input
-                                                                                type="checkbox"
-                                                                                variant="label-hidden"
-                                                                                label={invoice.invoiceNumber}
-                                                                                data-key={invoice.key}
-                                                                                checked={invoice.isSelected}
-                                                                                onchange={handleChildSelection}>
-                                                                            </lightning-input>
-                                                                            <lightning-button-icon
-                                                                                icon-name={invoice.expandIcon}
-                                                                                variant="bare"
-                                                                                alternative-text={invoice.expandAltText}
-                                                                                title={invoice.expandAltText}
-                                                                                data-key={invoice.key}
-                                                                                onclick={handleToggleRow}>
-                                                                            </lightning-button-icon>
-                                                                        </div>
-                                                                    </td>
-                                                                    <th scope="row">
-                                                                        <button
-                                                                            class="slds-button slds-button_reset slds-text-link"
-                                                                            type="button"
-                                                                            data-id={invoice.invoiceId}
-                                                                            onclick={handleOpenInvoice}>
-                                                                            {invoice.invoiceNumber}
-                                                                        </button>
-                                                                    </th>
-                                                                    <td>{invoice.invoiceType}</td>
-                                                                    <td>
-                                                                        <lightning-formatted-date-time value={invoice.invoiceDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
-                                                                    </td>
-                                                                    <td>
-                                                                        <lightning-formatted-date-time value={invoice.dueDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
-                                                                    </td>
-                                                                    <td>
-                                                                        <lightning-formatted-number value={invoice.daysOutstanding}></lightning-formatted-number>
-                                                                    </td>
-                                                                    <td>
-                                                                        <lightning-formatted-number value={invoice.totalAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                                                    </td>
-                                                                    <td>
-                                                                        <lightning-formatted-number value={invoice.amountPaid} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                                                    </td>
-                                                                    <td>
-                                                                        <lightning-formatted-number value={invoice.balanceDue} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                                                    </td>
-                                                                    <td>{invoice.status}</td>
-                                                                </tr>
-                                                                <tr if:true={invoice.isExpanded} key={invoice.paymentRowKey} class="slds-theme_shade">
-                                                                    <td colspan="10">
+                                                            <tr if:true={invoice.isExpanded} key={invoice.paymentRowKey} class="slds-theme_shade">
+                                                                <td colspan="11">
+                                                                    <div class="invoice-expand">
+                                                                        <template if:true={invoice.hasAdditionalNarratives}>
+                                                                            <template for:each={invoice.narrativeBlocks} for:item="block">
+                                                                                <div key={block.key} class="invoice-expand__block">
+                                                                                    <p class="invoice-expand__label">{block.opportunityName}</p>
+                                                                                    <template if:true={block.showEmpty}>
+                                                                                        <p class="invoice-expand__empty">No opportunity description available.</p>
+                                                                                    </template>
+                                                                                    <template if:false={block.showEmpty}>
+                                                                                        <p class="invoice-expand__copy">{block.description}</p>
+                                                                                    </template>
+                                                                                </div>
+                                                                            </template>
+                                                                        </template>
+                                                                        <template if:true={invoice.showGoverningDescription}>
+                                                                            <p class="invoice-expand__copy">{invoice.governingDescription}</p>
+                                                                        </template>
+                                                                        <template if:true={invoice.showGoverningEmpty}>
+                                                                            <p class="invoice-expand__empty">No opportunity description available.</p>
+                                                                        </template>
                                                                         <template if:false={invoice.hasPayments}>
-                                                                            <p class="slds-p-around_small">No payments recorded.</p>
+                                                                            <p class="invoice-expand__empty">No payments recorded.</p>
                                                                         </template>
                                                                         <template if:true={invoice.hasPayments}>
-                                                                            <table class="slds-table slds-table_cell-buffer slds-m-around_x-small">
+                                                                            <table class="slds-table slds-table_cell-buffer invoice-expand__payments">
                                                                                 <thead>
                                                                                     <tr>
                                                                                         <th scope="col">Payment Date</th>
@@ -316,11 +383,11 @@
                                                                                 </tbody>
                                                                             </table>
                                                                         </template>
-                                                                    </td>
-                                                                </tr>
-                                                            </template>
-                                                        </tbody>
-                                                    </template>
+                                                                    </div>
+                                                                </td>
+                                                            </tr>
+                                                        </template>
+                                                    </tbody>
                                                 </table>
                                             </div>
                                         </template>
@@ -330,110 +397,193 @@
                         </template>
                     </template>
 
-                    <template if:true={isAllReceivablesView}>
-                        <template if:true={allReceivablesEmpty}>
+                    <template if:true={isInvoiceView}>
+                        <template if:true={invoiceViewEmpty}>
                             <p class="bucket-empty">No invoices match the current filters.</p>
                         </template>
-                        <template if:false={allReceivablesEmpty}>
+                        <template if:false={invoiceViewEmpty}>
                             <div class="slds-scrollable_x bucket-table-host">
-                                <table class="slds-table slds-table_bordered slds-table_cell-buffer slds-table_fixed-layout grouped-diary-table" aria-label="All receivables">
-                                    <thead>
-                                        <tr class="slds-line-height_reset">
-                                            <th scope="col" style="width:4.5rem;"><span class="slds-assistive-text">Selection and expansion</span></th>
-                                            <th scope="col"><strong>Invoice</strong></th>
-                                            <th scope="col"><strong>Salesperson</strong></th>
-                                            <th scope="col"><strong>Type</strong></th>
-                                            <th scope="col"><strong>Invoice Date</strong></th>
-                                            <th scope="col"><strong>Due</strong></th>
-                                            <th scope="col"><strong>Days</strong></th>
-                                            <th scope="col"><strong>Amount</strong></th>
-                                            <th scope="col"><strong>Paid</strong></th>
-                                            <th scope="col"><strong>Balance</strong></th>
-                                            <th scope="col"><strong>Status</strong></th>
-                                        </tr>
-                                    </thead>
-                                    <template for:each={allReceivablesOpportunityGroups} for:item="oppGroup">
-                                        <tbody key={oppGroup.key}>
-                                            <tr class="opp-group-header-row">
-                                                <td colspan="11">
-                                                    <div class="opp-group-header">
-                                                        <div class="opp-group-header__copy">
+                                                <table class="slds-table slds-table_bordered slds-table_fixed-layout grouped-diary-table receivables-table receivables-table_invoice" aria-label="Receivables by invoice">
+                                                    <colgroup>
+                                                        <col style={receivableColumnStyles.select} />
+                                                        <col style={receivableColumnStyles.invoice} />
+                                                        <col style={receivableColumnStyles.salesperson} />
+                                                        <col style={receivableColumnStyles.account} />
+                                                        <col style={receivableColumnStyles.type} />
+                                                        <col style={receivableColumnStyles.invoiceDate} />
+                                                        <col style={receivableColumnStyles.dueDate} />
+                                                        <col style={receivableColumnStyles.days} />
+                                                        <col style={receivableColumnStyles.amount} />
+                                                        <col style={receivableColumnStyles.paid} />
+                                                        <col style={receivableColumnStyles.balance} />
+                                                        <col style={receivableColumnStyles.status} />
+                                                    </colgroup>
+                                                    <thead>
+                                                        <tr class="slds-line-height_reset">
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.select}>
+                                                                <span class="slds-assistive-text">Selection and expansion</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="select" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.invoice}>
+                                                                <span class="grouped-diary-table__header-label">Invoice</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="invoice" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.salesperson}>
+                                                                <span class="grouped-diary-table__header-label">Salesperson</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="salesperson" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.account}>
+                                                                <span class="grouped-diary-table__header-label">Account</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="account" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.type}>
+                                                                <span class="grouped-diary-table__header-label">Type</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="type" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.invoiceDate}>
+                                                                <span class="grouped-diary-table__header-label">Invoice Date</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="invoiceDate" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.dueDate}>
+                                                                <span class="grouped-diary-table__header-label">Due Date</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="dueDate" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header receivables-table__num" style={receivableColumnStyles.days}>
+                                                                <span class="grouped-diary-table__header-label">Days</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="days" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header receivables-table__num" style={receivableColumnStyles.amount}>
+                                                                <span class="grouped-diary-table__header-label">Amount</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="amount" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header receivables-table__num" style={receivableColumnStyles.paid}>
+                                                                <span class="grouped-diary-table__header-label">Paid</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="paid" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header receivables-table__num" style={receivableColumnStyles.balance}>
+                                                                <span class="grouped-diary-table__header-label">Balance</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="balance" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                            <th scope="col" class="grouped-diary-table__header bcc-resizable-header" style={receivableColumnStyles.status}>
+                                                                <span class="grouped-diary-table__header-label">Status</span>
+                                                                <span class="bcc-column-resize-handle" data-column-key="status" onmousedown={handleColumnResizeStart} title="Resize column"></span>
+                                                            </th>
+                                                        </tr>
+                                                    </thead>
+                                    <tbody>
+                                        <template for:each={filteredStatusInvoices} for:item="invoice">
+                                            <tr key={invoice.key} class="slds-hint-parent">
+                                                <td>
+                                                    <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
+                                                        <lightning-input
+                                                            type="checkbox"
+                                                            variant="label-hidden"
+                                                            label={invoice.invoiceNumber}
+                                                            data-key={invoice.key}
+                                                            checked={invoice.isSelected}
+                                                            onchange={handleChildSelection}>
+                                                        </lightning-input>
+                                                        <lightning-button-icon
+                                                            icon-name={invoice.expandIcon}
+                                                            variant="bare"
+                                                            alternative-text={invoice.expandAltText}
+                                                            title={invoice.expandAltText}
+                                                            data-key={invoice.key}
+                                                            onclick={handleToggleRow}>
+                                                        </lightning-button-icon>
+                                                    </div>
+                                                </td>
+                                                <th scope="row">
+                                                    <button
+                                                        class="slds-button slds-button_reset slds-text-link"
+                                                        type="button"
+                                                        data-id={invoice.invoiceId}
+                                                        onclick={handleOpenInvoice}>
+                                                        {invoice.invoiceNumber}
+                                                    </button>
+                                                </th>
+                                                <td>{invoice.ownerDisplayName}</td>
+                                                <td class="receivables-table__account">
+                                                    <div class="invoice-identity">
+                                                        <template if:true={invoice.accountId}>
                                                             <button
-                                                                class="slds-button slds-button_reset opp-group-header__name"
+                                                                class="slds-button slds-button_reset slds-text-link invoice-identity__account"
                                                                 type="button"
-                                                                data-id={oppGroup.opportunityId}
-                                                                onclick={handleOpenOpportunity}>
-                                                                {oppGroup.opportunityName}
+                                                                data-id={invoice.accountId}
+                                                                onclick={handleOpenAccount}>
+                                                                {invoice.accountName}
                                                             </button>
-                                                            <p class="opp-group-header__meta">{oppGroup.metaText}</p>
-                                                        </div>
-                                                        <div class="opp-group-header__balance">
-                                                            <lightning-formatted-number value={oppGroup.outstanding} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                                            <span class="opp-group-header__balance-label">outstanding</span>
+                                                        </template>
+                                                        <template if:false={invoice.accountId}>
+                                                            <span class="invoice-identity__account">{invoice.accountName}</span>
+                                                        </template>
+                                                        <div class="invoice-identity__detail">
+                                                            <template if:true={invoice.opportunityId}>
+                                                                <button
+                                                                    class="slds-button slds-button_reset slds-text-link invoice-identity__opportunity"
+                                                                    type="button"
+                                                                    data-id={invoice.opportunityId}
+                                                                    onclick={handleOpenOpportunity}>
+                                                                    {invoice.opportunityName}
+                                                                </button>
+                                                            </template>
+                                                            <template if:false={invoice.opportunityId}>
+                                                                <span class="invoice-identity__opportunity">{invoice.opportunityName}</span>
+                                                            </template>
+                                                            <template if:true={invoice.quoteDisplay}>
+                                                                <span class="invoice-identity__quote">{invoice.quoteDisplay}</span>
+                                                            </template>
                                                         </div>
                                                     </div>
                                                 </td>
+                                                <td class="receivables-table__type">{invoice.invoiceType}</td>
+                                                <td class="receivables-table__date">
+                                                    <lightning-formatted-date-time value={invoice.invoiceDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                </td>
+                                                <td class="receivables-table__date">
+                                                    <lightning-formatted-date-time value={invoice.dueDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                </td>
+                                                <td class="receivables-table__num">
+                                                    <lightning-formatted-number value={invoice.daysOutstanding}></lightning-formatted-number>
+                                                </td>
+                                                <td class="receivables-table__num">
+                                                    <lightning-formatted-number value={invoice.totalAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                </td>
+                                                <td class="receivables-table__num">
+                                                    <lightning-formatted-number value={invoice.amountPaid} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                </td>
+                                                <td class="receivables-table__num">
+                                                    <lightning-formatted-number value={invoice.balanceDue} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                </td>
+                                                <td>{invoice.status}</td>
                                             </tr>
-                                            <template for:each={oppGroup.invoices} for:item="invoice">
-                                                <tr key={invoice.key} class="slds-hint-parent">
-                                                    <td>
-                                                        <div class="slds-grid slds-grid_vertical-align-center slds-align_absolute-center">
-                                                            <lightning-input
-                                                                type="checkbox"
-                                                                variant="label-hidden"
-                                                                label={invoice.invoiceNumber}
-                                                                data-key={invoice.key}
-                                                                checked={invoice.isSelected}
-                                                                onchange={handleChildSelection}>
-                                                            </lightning-input>
-                                                            <lightning-button-icon
-                                                                icon-name={invoice.expandIcon}
-                                                                variant="bare"
-                                                                alternative-text={invoice.expandAltText}
-                                                                title={invoice.expandAltText}
-                                                                data-key={invoice.key}
-                                                                onclick={handleToggleRow}>
-                                                            </lightning-button-icon>
-                                                        </div>
-                                                    </td>
-                                                    <th scope="row">
-                                                        <button
-                                                            class="slds-button slds-button_reset slds-text-link"
-                                                            type="button"
-                                                            data-id={invoice.invoiceId}
-                                                            onclick={handleOpenInvoice}>
-                                                            {invoice.invoiceNumber}
-                                                        </button>
-                                                    </th>
-                                                    <td>{invoice.ownerName}</td>
-                                                    <td>{invoice.invoiceType}</td>
-                                                    <td>
-                                                        <lightning-formatted-date-time value={invoice.invoiceDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
-                                                    </td>
-                                                    <td>
-                                                        <lightning-formatted-date-time value={invoice.dueDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
-                                                    </td>
-                                                    <td>
-                                                        <lightning-formatted-number value={invoice.daysOutstanding}></lightning-formatted-number>
-                                                    </td>
-                                                    <td>
-                                                        <lightning-formatted-number value={invoice.totalAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                                    </td>
-                                                    <td>
-                                                        <lightning-formatted-number value={invoice.amountPaid} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                                    </td>
-                                                    <td>
-                                                        <lightning-formatted-number value={invoice.balanceDue} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                                    </td>
-                                                    <td>{invoice.status}</td>
-                                                </tr>
-                                                <tr if:true={invoice.isExpanded} key={invoice.paymentRowKey} class="slds-theme_shade">
-                                                    <td colspan="11">
+                                            <tr if:true={invoice.isExpanded} key={invoice.paymentRowKey} class="slds-theme_shade">
+                                                <td colspan="12">
+                                                    <div class="invoice-expand">
+                                                        <template if:true={invoice.hasAdditionalNarratives}>
+                                                            <template for:each={invoice.narrativeBlocks} for:item="block">
+                                                                <div key={block.key} class="invoice-expand__block">
+                                                                    <p class="invoice-expand__label">{block.opportunityName}</p>
+                                                                    <template if:true={block.showEmpty}>
+                                                                        <p class="invoice-expand__empty">No opportunity description available.</p>
+                                                                    </template>
+                                                                    <template if:false={block.showEmpty}>
+                                                                        <p class="invoice-expand__copy">{block.description}</p>
+                                                                    </template>
+                                                                </div>
+                                                            </template>
+                                                        </template>
+                                                        <template if:true={invoice.showGoverningDescription}>
+                                                            <p class="invoice-expand__copy">{invoice.governingDescription}</p>
+                                                        </template>
+                                                        <template if:true={invoice.showGoverningEmpty}>
+                                                            <p class="invoice-expand__empty">No opportunity description available.</p>
+                                                        </template>
                                                         <template if:false={invoice.hasPayments}>
-                                                            <p class="slds-p-around_small">No payments recorded.</p>
+                                                            <p class="invoice-expand__empty">No payments recorded.</p>
                                                         </template>
                                                         <template if:true={invoice.hasPayments}>
-                                                            <table class="slds-table slds-table_cell-buffer slds-m-around_x-small">
+                                                            <table class="slds-table slds-table_cell-buffer invoice-expand__payments">
                                                                 <thead>
                                                                     <tr>
                                                                         <th scope="col">Payment Date</th>
@@ -458,11 +608,11 @@
                                                                 </tbody>
                                                             </table>
                                                         </template>
-                                                    </td>
-                                                </tr>
-                                            </template>
-                                        </tbody>
-                                    </template>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </template>
+                                    </tbody>
                                 </table>
                             </div>
                         </template>

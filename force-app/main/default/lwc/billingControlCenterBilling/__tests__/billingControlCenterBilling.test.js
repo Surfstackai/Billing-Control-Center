@@ -45,7 +45,7 @@ jest.mock(
     { virtual: true }
 );
 
-const BUCKETS = ['DEPOSITS_DUE', 'BALANCES_READY', 'UNDER_INVOICED', 'NEEDS_REVIEW', 'BLOCKED'];
+const BUCKETS = ['DEPOSITS_DUE', 'BALANCES_READY', 'UNDER_INVOICED', 'NEEDS_REVIEW'];
 let windowSeq = 0;
 
 function uniqueWindow() {
@@ -64,7 +64,7 @@ function opportunityRow(opportunityId, extras = {}) {
         amountQuoted: extras.amountQuoted ?? 1000,
         invoicedTotal: extras.invoicedTotal ?? 0,
         remaining: extras.remaining ?? 1000,
-        readinessReasons: extras.readinessReasons || ['Balance Ready'],
+        readinessReasons: extras.readinessReasons || ['Ready to Bill'],
         invoices: extras.invoices || [],
         workOrders: extras.workOrders || [
             {
@@ -95,7 +95,7 @@ function runtimePayload() {
         amountQuoted: 400,
         invoicedTotal: 200,
         remaining: 200,
-        readinessReasons: ['Under-Invoiced']
+        readinessReasons: ['Balance Remaining']
     });
 
     return {
@@ -108,37 +108,30 @@ function runtimePayload() {
             balancesReadyAmount: 100,
             underInvoicedCount: 1,
             underInvoicedAmount: 200,
-            needsReviewCount: 0,
-            blockedCount: 0
+            needsReviewCount: 0
         },
         groups: [
             {
                 categoryKey: 'DEPOSITS_DUE',
-                categoryLabel: 'Deposits Due',
+                categoryLabel: 'Deposit Due',
                 serviceAppointmentCount: 0,
                 opportunityRows: []
             },
             {
                 categoryKey: 'BALANCES_READY',
-                categoryLabel: 'Balances Ready',
+                categoryLabel: 'Ready to Bill',
                 serviceAppointmentCount: 1,
                 opportunityRows: [balance]
             },
             {
                 categoryKey: 'UNDER_INVOICED',
-                categoryLabel: 'Under-Invoiced',
+                categoryLabel: 'Balance Remaining',
                 serviceAppointmentCount: 1,
                 opportunityRows: [under]
             },
             {
                 categoryKey: 'NEEDS_REVIEW',
                 categoryLabel: 'Needs Review',
-                serviceAppointmentCount: 0,
-                opportunityRows: []
-            },
-            {
-                categoryKey: 'BLOCKED',
-                categoryLabel: 'Blocked',
                 serviceAppointmentCount: 0,
                 opportunityRows: []
             }
@@ -206,12 +199,34 @@ describe('c-billing-control-center-billing KPI lists', () => {
 
         const tiles = element.shadowRoot.querySelector('c-billing-control-center-kpi-grid').tiles;
         expect(tiles.map(tile => tile.developerKey)).toEqual(BUCKETS);
-        expect(tiles.map(tile => tile.metricText)).toEqual(['0', '1', '1', '0', '0']);
+        expect(tiles.map(tile => tile.metricText)).toEqual(['0', '1', '1', '0']);
 
         const sections = accordionSections(element);
         expect(sections.map(section => section.name)).toEqual(BUCKETS);
-        expect(sections[1].label).toContain('Balances Ready (1)');
-        expect(sections[2].label).toContain('Under-Invoiced (1)');
+        expect(sections[1].label).toContain('Ready to Bill (1 Opportunity)');
+        expect(sections[2].label).toContain('Balance Remaining (1 Opportunity)');
+    });
+
+    it('KPI tiles jump to the matching accordion section', async () => {
+        const element = build(uniqueWindow());
+        await flush();
+
+        const grid = element.shadowRoot.querySelector('c-billing-control-center-kpi-grid');
+        grid.dispatchEvent(
+            new CustomEvent('tileclick', { detail: { developerKey: 'BALANCES_READY' } })
+        );
+        await flush();
+        expect(element.shadowRoot.querySelector('lightning-accordion').activeSectionName).toEqual([
+            'BALANCES_READY'
+        ]);
+
+        grid.dispatchEvent(
+            new CustomEvent('tileclick', { detail: { developerKey: 'UNDER_INVOICED' } })
+        );
+        await flush();
+        expect(element.shadowRoot.querySelector('lightning-accordion').activeSectionName).toEqual([
+            'UNDER_INVOICED'
+        ]);
     });
 
     it('counts overlapping Opportunities once in the list summary', async () => {
@@ -223,7 +238,7 @@ describe('c-billing-control-center-billing KPI lists', () => {
         );
     });
 
-    it('selecting a Balances Ready row sets the invoice Opportunity without attaching every visit', async () => {
+    it('selecting a Ready to Bill row sets the invoice Opportunity without attaching every visit', async () => {
         const element = build(uniqueWindow());
         await flush();
 
@@ -327,6 +342,7 @@ describe('c-billing-control-center-billing KPI lists', () => {
         await flush();
 
         expect(flagAppointmentForReview).toHaveBeenCalledWith({ serviceAppointmentId: 'sa-balance' });
+        expect(getTabRuntime.mock.calls.length).toBeGreaterThanOrEqual(2);
         const flaggedButton = Array.from(element.shadowRoot.querySelectorAll('lightning-button')).find(
             node => node.label === 'Flagged for review'
         );

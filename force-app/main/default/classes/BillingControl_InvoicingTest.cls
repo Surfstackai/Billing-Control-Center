@@ -286,8 +286,8 @@ private class BillingControl_InvoicingTest {
 
         System.assertEquals(0, metrics.completedMoreThan2Days, 'Invoicing eligibility must not use an aged ActualEndTime bucket.');
         System.assertEquals(true, metrics.readyToBill >= 1, 'Unbilled attributed Opportunities qualify without Order diary rows.');
-        System.assertEquals(true, metrics.balancesReadyCount >= 1, 'Awaiting Billing Opportunity is Balances Ready.');
-        System.assertEquals(5, sections.size(), 'Billing lists are the five readiness sections.');
+        System.assertEquals(true, metrics.balancesReadyCount >= 1, 'Awaiting Billing Opportunity is Ready to Bill.');
+        System.assertEquals(4, sections.size(), 'Billing lists are the four readiness sections.');
         Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sectionByKey =
             new Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper>();
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
@@ -300,11 +300,11 @@ private class BillingControl_InvoicingTest {
         System.assertEquals(
             metrics.balancesReadyCount,
             sectionByKey.get('BALANCES_READY').serviceAppointmentCount,
-            'Balances Ready list must match the KPI count.'
+            'Ready to Bill list must match the KPI count.'
         );
 
         Set<Id> readyOpportunityIds = collectOpportunityIds(sectionByKey.get('BALANCES_READY'));
-        System.assertEquals(true, readyOpportunityIds.size() >= 1, 'Balances Ready has Opportunity rows, not Work Order rows.');
+        System.assertEquals(true, readyOpportunityIds.size() >= 1, 'Ready to Bill has Opportunity rows, not Work Order rows.');
     }
 
     @isTest
@@ -400,7 +400,7 @@ private class BillingControl_InvoicingTest {
                 break;
             }
         }
-        System.assertNotEquals(null, readySection, 'Balances Ready section should be returned.');
+        System.assertNotEquals(null, readySection, 'Ready to Bill section should be returned.');
         System.assertEquals(true, collectOpportunityIds(readySection).contains(dedupeOpportunity.Id));
     }
 

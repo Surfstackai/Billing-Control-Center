@@ -80,6 +80,14 @@ private class BillingControl_CommissionLifecycleTest {
         System.assertEquals(800, paidRecord.Paid_Amount__c);
         System.assertEquals(Date.today().addDays(-3), paidRecord.Paid_Date__c);
         System.assertEquals(1, tabRuntime.metrics.paidThisPeriodCount);
+        BillingControl_CommissionLifecycle.CommissionRow paidRow;
+        for (BillingControl_CommissionLifecycle.SectionWrapper section : tabRuntime.sections) {
+            if (section.categoryKey == 'PAID' && !section.rows.isEmpty()) {
+                paidRow = section.rows[0];
+            }
+        }
+        System.assertEquals(8000, paidRow.customerPaidTotal);
+        System.assertEquals(true, paidRow.customerPaidInFull);
     }
 
     @IsTest

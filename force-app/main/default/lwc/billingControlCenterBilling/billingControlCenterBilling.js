@@ -27,7 +27,7 @@ const KPI_CONFIG = [
     {
         key: 'depositsDue',
         developerKey: 'DEPOSITS_DUE',
-        title: 'Deposits Due',
+        title: 'Deposit Due',
         icon: 'utility:money',
         hint: 'Opportunities with a required deposit that has not been invoiced.',
         countKey: 'depositsDueCount',
@@ -36,18 +36,18 @@ const KPI_CONFIG = [
     {
         key: 'balancesReady',
         developerKey: 'BALANCES_READY',
-        title: 'Balances Ready',
+        title: 'Ready to Bill',
         icon: 'utility:check',
-        hint: 'Attributed completed visits that are still unbilled and remaining quote is open.',
+        hint: 'Completed attributed visits that do not yet have an invoice line.',
         countKey: 'balancesReadyCount',
         amountKey: 'balancesReadyAmount'
     },
     {
         key: 'underInvoiced',
         developerKey: 'UNDER_INVOICED',
-        title: 'Under-Invoiced',
+        title: 'Balance Remaining',
         icon: 'utility:warning',
-        hint: 'All attributed visits are billed, but invoiced total is below the quote.',
+        hint: 'All attributed completed visits are billed, but invoiced total is below the quote.',
         countKey: 'underInvoicedCount',
         amountKey: 'underInvoicedAmount'
     },
@@ -56,16 +56,8 @@ const KPI_CONFIG = [
         developerKey: 'NEEDS_REVIEW',
         title: 'Needs Review',
         icon: 'utility:info',
-        hint: 'Invoice-number text looks like extra work rather than an invoice token.',
+        hint: 'Accounting exceptions: missing quote amount, unassigned visits, invalid invoice text, or flagged by Accounting.',
         countKey: 'needsReviewCount'
-    },
-    {
-        key: 'blocked',
-        developerKey: 'BLOCKED',
-        title: 'Blocked',
-        icon: 'utility:error',
-        hint: 'Missing Opportunity amount or unattributed visits on a multi-Opportunity Work Order.',
-        countKey: 'blockedCount'
     }
 ];
 
@@ -478,32 +470,39 @@ function formatActualEndTime(value) {
 function buildFlagItems(readinessReasons) {
     const flags = [];
     const reasons = readinessReasons || [];
-    if (reasons.includes('Blocked: Attribution')) {
+    if (reasons.includes('Visit not assigned to an Opportunity')) {
         flags.push({
             key: 'attribution',
             iconName: 'utility:lock',
-            title: 'Blocked: Attribution'
+            title: 'Visit not assigned to an Opportunity'
         });
     }
-    if (reasons.includes('Blocked: No Amount')) {
+    if (reasons.includes('Missing quote amount')) {
         flags.push({
             key: 'no-amount',
             iconName: 'utility:ban',
-            title: 'Quoted amount missing'
+            title: 'Missing quote amount'
         });
     }
-    if (reasons.includes('Review: Possible Extra Work')) {
+    if (reasons.includes('Invoice reference needs review')) {
         flags.push({
             key: 'review',
             iconName: 'utility:note',
-            title: 'Review: Possible Extra Work'
+            title: 'Invoice reference needs review'
         });
     }
-    if (reasons.includes('Under-Invoiced')) {
+    if (reasons.includes('Flagged by Accounting')) {
+        flags.push({
+            key: 'flagged',
+            iconName: 'utility:priority',
+            title: 'Flagged by Accounting'
+        });
+    }
+    if (reasons.includes('Balance Remaining')) {
         flags.push({
             key: 'under',
             iconName: 'utility:warning',
-            title: 'Under-Invoiced'
+            title: 'Balance Remaining'
         });
     }
     return flags;
@@ -1054,22 +1053,24 @@ export default class BillingControlCenterBilling extends LightningElement {
                 };
                 })
             );
-            const visibleAppointmentCount = countAppointments(rows);
+            const visibleOpportunityCount = countAppointments(rows);
             const definition = KPI_CONFIG.find(
                 tile => normalizeConfigKey(tile.developerKey) === normalizeConfigKey(section.categoryKey)
             );
             const kpiCount = definition ? this.metrics[definition.countKey] : undefined;
-            const listCount = visibleAppointmentCount;
+            const listCount = visibleOpportunityCount;
             const showCountCaption =
                 listCount !== undefined && kpiCount !== undefined && listCount !== kpiCount;
             const countCaption = showCountCaption
-                ? `${listCount} in list · ${kpiCount} still to bill (KPI)`
+                ? `${listCount} Opportunities in list · ${kpiCount} Opportunities (KPI)`
                 : undefined;
 
             return {
                 categoryKey: section.categoryKey,
                 categoryLabel: section.categoryLabel,
-                titleWithCount: `${section.categoryLabel} (${visibleAppointmentCount})`,
+                titleWithCount: `${section.categoryLabel} (${visibleOpportunityCount} ${
+                    visibleOpportunityCount === 1 ? 'Opportunity' : 'Opportunities'
+                })`,
                 filteredRows: rows,
                 isEmpty: rows.length === 0,
                 sortedBy: categorySort.sortedBy,
@@ -1080,7 +1081,7 @@ export default class BillingControlCenterBilling extends LightningElement {
                     categorySort.sortDirection,
                     this.columnWidths
                 ),
-                visibleAppointmentCount,
+                visibleOpportunityCount,
                 kpiCount,
                 listCount,
                 showCountCaption,
@@ -1506,6 +1507,7 @@ export default class BillingControlCenterBilling extends LightningElement {
                     variant: 'success'
                 })
             );
+            await this.loadData(true);
         } catch (error) {
             this.errorMessage = this.reduceError(error);
         }

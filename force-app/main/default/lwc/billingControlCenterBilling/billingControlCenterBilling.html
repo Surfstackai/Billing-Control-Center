@@ -222,7 +222,7 @@
                                                                     <template if:true={column.isReasons}>
                                                                         <div class="grouped-diary-cell grouped-diary-cell--truncate" title={row.reasonDisplay}>
                                                                             <template if:true={row.showReviewBanner}>
-                                                                                <span class="slds-badge slds-theme_warning slds-m-bottom_xx-small">Review: Possible Extra Work</span>
+                                                                                <span class="slds-badge slds-theme_warning slds-m-bottom_xx-small">Needs Review</span>
                                                                             </template>
                                                                             <span class="grouped-diary-table__single-text">{row.reasonDisplay}</span>
                                                                         </div>
@@ -412,7 +412,7 @@
                                                                 <td class="evidence-tree" colspan="20">
                                                                     <template if:true={row.showReviewBanner}>
                                                                         <div class="slds-notify slds-notify_alert slds-theme_alert-texture slds-m-bottom_small" role="status">
-                                                                            Completed work contains notes or parts that may not be represented by the quoted amount. Review before invoicing.
+                                                                            Accounting needs to review this Opportunity. {row.reasonDisplay}
                                                                         </div>
                                                                     </template>
                                                                     <template for:each={row.workOrders} for:item="workOrder">

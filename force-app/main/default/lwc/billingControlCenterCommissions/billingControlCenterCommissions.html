@@ -3,7 +3,10 @@
         <div class="hero">
             <div class="hero__intro">
                 <h1 class="hero__title">Commissions</h1>
-                <p class="hero__subtitle">Accrued uses close date. Payable uses payable date. Paid uses paid date. Rate is manual. Amount is rate times invoiced total. No splits or installments.</p>
+                <p class="hero__subtitle">
+                    Invoiced total is the customer invoice sum used to calculate commission.
+                    Accrued is paid-in-full jobs due to the salesperson by month end. Paid is a salesperson payout.
+                </p>
             </div>
             <div class="hero__controls">
                 <c-billing-control-center-date-filter
@@ -48,75 +51,113 @@
         <template for:each={visibleSections} for:item="section">
             <section key={section.categoryKey} class="slds-p-around_medium">
                 <h2>{section.titleWithCount}</h2>
+                <p class="section-legend">
+                    Accrued commissions are customer-paid-in-full jobs. Open invoices stay on Receivables until they are paid.
+                </p>
                 <template if:true={section.isEmpty}>
                     <p class="bucket-empty">No commissions in this section for the current date window.</p>
                 </template>
                 <template if:false={section.isEmpty}>
-                    <table class="slds-table slds-table_bordered slds-table_cell-buffer">
-                        <thead>
-                            <tr>
-                                <th scope="col"></th>
-                                <th scope="col">Salesperson</th>
-                                <th scope="col">Quote #</th>
-                                <th scope="col">Opportunity</th>
-                                <th scope="col">Account</th>
-                                <th scope="col">Job Amount</th>
-                                <th scope="col">Invoiced</th>
-                                <th scope="col">Rate</th>
-                                <th scope="col">Commission</th>
-                                <th scope="col">Status</th>
-                                <th scope="col">Payable Date</th>
-                                <th scope="col">Paid Date</th>
-                                <th scope="col">Paid Amount</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <template for:each={section.rows} for:item="row">
-                                <tr key={row.commissionId}>
-                                    <td>
-                                        <lightning-input
-                                            type="checkbox"
-                                            variant="label-hidden"
-                                            label="Select"
-                                            data-id={row.commissionId}
-                                            checked={row.isSelected}
-                                            onchange={handleRowSelect}>
-                                        </lightning-input>
-                                    </td>
-                                    <td>{row.salespersonName}</td>
-                                    <td>{row.quoteNumber}</td>
-                                    <td>
-                                        <button class="slds-button slds-button_reset slds-text-link" type="button" data-id={row.opportunityId} onclick={handleOpenOpportunity}>
-                                            {row.opportunityName}
-                                        </button>
-                                    </td>
-                                    <td>{row.accountName}</td>
-                                    <td>
-                                        <lightning-formatted-number value={row.jobAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                    </td>
-                                    <td>
-                                        <lightning-formatted-number value={row.invoicedTotal} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                    </td>
-                                    <td>
-                                        <lightning-formatted-number value={row.commissionRate}></lightning-formatted-number>
-                                    </td>
-                                    <td>
-                                        <lightning-formatted-number value={row.commissionAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                    </td>
-                                    <td>{row.status}</td>
-                                    <td>
-                                        <lightning-formatted-date-time value={row.payableDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
-                                    </td>
-                                    <td>
-                                        <lightning-formatted-date-time value={row.paidDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
-                                    </td>
-                                    <td>
-                                        <lightning-formatted-number value={row.paidAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
-                                    </td>
-                                </tr>
+                    <template for:each={section.salespersonGroups} for:item="group">
+                        <article key={group.key} class={group.cardClass}>
+                            <button
+                                class="salesperson-card__toggle"
+                                type="button"
+                                data-key={group.key}
+                                aria-expanded={group.ariaExpanded}
+                                onclick={handleToggleSalesperson}>
+                                <span class="salesperson-card__identity">
+                                    <lightning-icon
+                                        icon-name={group.expandIcon}
+                                        size="xx-small"
+                                        alternative-text={group.expandAltText}>
+                                    </lightning-icon>
+                                    <span class="salesperson-card__name">{group.salespersonName}</span>
+                                </span>
+                                <span class="salesperson-card__metrics">
+                                    <span>
+                                        <lightning-formatted-number value={group.commissionTotal} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                        commission
+                                    </span>
+                                    <span class="salesperson-card__count">{group.jobCount} jobs</span>
+                                </span>
+                            </button>
+                            <template if:true={group.isExpanded}>
+                                <div class="salesperson-card__body">
+                                    <div class="slds-scrollable_x">
+                                        <table class="slds-table slds-table_bordered slds-table_cell-buffer">
+                                            <thead>
+                                                <tr>
+                                                    <th scope="col"></th>
+                                                    <th scope="col">Quote #</th>
+                                                    <th scope="col">Opportunity</th>
+                                                    <th scope="col">Account</th>
+                                                    <th scope="col">Job Amount</th>
+                                                    <th scope="col" title="Sum of customer invoices on the Opportunity. Used as the commission basis. Not a payout.">Invoiced total</th>
+                                                    <th scope="col" title="Receipts posted against those invoices.">Customer paid</th>
+                                                    <th scope="col">Rate</th>
+                                                    <th scope="col">Commission</th>
+                                                    <th scope="col">Status</th>
+                                                    <th scope="col">Payable Date</th>
+                                                    <th scope="col" title="Date the salesperson was paid with Pay Commission.">Salesperson paid date</th>
+                                                    <th scope="col" title="Amount paid to the salesperson.">Salesperson paid</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <template for:each={group.rows} for:item="row">
+                                                    <tr key={row.commissionId}>
+                                                        <td>
+                                                            <lightning-input
+                                                                type="checkbox"
+                                                                variant="label-hidden"
+                                                                label="Select"
+                                                                data-id={row.commissionId}
+                                                                checked={row.isSelected}
+                                                                onchange={handleRowSelect}>
+                                                            </lightning-input>
+                                                        </td>
+                                                        <td>{row.quoteNumber}</td>
+                                                        <td>
+                                                            <button class="slds-button slds-button_reset slds-text-link" type="button" data-id={row.opportunityId} onclick={handleOpenOpportunity}>
+                                                                {row.opportunityName}
+                                                            </button>
+                                                        </td>
+                                                        <td>{row.accountName}</td>
+                                                        <td>
+                                                            <lightning-formatted-number value={row.jobAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                        </td>
+                                                        <td>
+                                                            <lightning-formatted-number value={row.invoicedTotal} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                        </td>
+                                                        <td>
+                                                            <lightning-formatted-number value={row.customerPaidTotal} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                            <div class="customer-status">{row.customerStatusLabel}</div>
+                                                        </td>
+                                                        <td>
+                                                            <lightning-formatted-number value={row.commissionRate}></lightning-formatted-number>
+                                                        </td>
+                                                        <td>
+                                                            <lightning-formatted-number value={row.commissionAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                        </td>
+                                                        <td>{row.status}</td>
+                                                        <td>
+                                                            <lightning-formatted-date-time value={row.payableDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                        </td>
+                                                        <td>
+                                                            <lightning-formatted-date-time value={row.paidDate} year="numeric" month="numeric" day="numeric"></lightning-formatted-date-time>
+                                                        </td>
+                                                        <td>
+                                                            <lightning-formatted-number value={row.paidAmount} format-style="currency" currency-code="USD" maximum-fraction-digits="2"></lightning-formatted-number>
+                                                        </td>
+                                                    </tr>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
                             </template>
-                        </tbody>
-                    </table>
+                        </article>
+                    </template>
                 </template>
             </section>
         </template>

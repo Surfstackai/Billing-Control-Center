@@ -1399,36 +1399,24 @@ public without sharing class WorkOrderLedgerService {
     }
 
     private static String buildUnattributedAttentionReason(List<String> appointmentLabels) {
-        List<String> labels = new List<String>();
+        Integer count = 0;
         if (appointmentLabels != null) {
             for (String label : appointmentLabels) {
                 if (String.isNotBlank(label)) {
-                    labels.add(label);
+                    count++;
                 }
             }
         }
-        if (labels.isEmpty()) {
-            return 'This Work Order has more than one Opportunity. Assign each completed visit to the correct Opportunity.';
+        if (count == 0) {
+            return 'Service appointments need Opportunity assignment. Select the correct Opportunity for each visit below.';
         }
-        labels.sort();
-        if (labels.size() == 1) {
-            return clip(
-                'This Work Order has more than one Opportunity. Assign completed visit '
-                    + labels[0]
-                    + ' to the correct Opportunity.'
-            );
-        }
-        String prefix = 'This Work Order has more than one Opportunity. Assign these completed visits to the correct Opportunity: ';
-        List<String> included = new List<String>(labels);
-        Integer omitted = 0;
-        String result = prefix + String.join(included, ', ') + '.';
-        while (result.length() > 255 && !included.isEmpty()) {
-            included.remove(included.size() - 1);
-            omitted++;
-            String more = omitted == 0 ? '' : ' +' + omitted + ' more';
-            result = prefix + String.join(included, ', ') + more + '.';
-        }
-        return clip(result);
+        String noun = count == 1 ? 'service appointment needs' : 'service appointments need';
+        return clip(
+            String.valueOf(count)
+                + ' '
+                + noun
+                + ' Opportunity assignment. Select the correct Opportunity for each visit below.'
+        );
     }
 
     private static String formatDatetime(Datetime value) {

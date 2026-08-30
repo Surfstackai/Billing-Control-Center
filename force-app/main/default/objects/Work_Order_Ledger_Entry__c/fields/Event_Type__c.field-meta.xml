@@ -91,6 +91,11 @@
             <label>ACCOUNTING_NOTE</label>
         </value>
         <value>
+            <fullName>BILLING_REVIEW_FLAG</fullName>
+            <default>false</default>
+            <label>BILLING_REVIEW_FLAG</label>
+        </value>
+        <value>
             <fullName>INVOICE_CREATED</fullName>
             <default>false</default>
             <label>INVOICE_CREATED</label>

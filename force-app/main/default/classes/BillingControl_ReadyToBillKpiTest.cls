@@ -70,22 +70,27 @@ private class BillingControl_ReadyToBillKpiTest {
             BillingControl_Invoicing.getBillableServiceAppointmentGroups();
         Test.stopTest();
 
-        Integer expectedBalanceReady = earlierThisWeek == null ? 2 : 3;
-        System.assertEquals(expectedBalanceReady, metrics.balancesReadyCount, 'Quoted Opportunities with unbilled visits are Balances Ready.');
-        System.assertEquals(1, metrics.blockedCount, 'Null Amount Opportunity is Blocked.');
-        System.assertEquals(expectedBalanceReady + 1, metrics.readyToBill, 'Unique Opportunities across readiness reasons.');
+        Integer expectedReadyToBill = earlierThisWeek == null ? 3 : 4;
+        System.assertEquals(
+            expectedReadyToBill,
+            metrics.balancesReadyCount,
+            'Quoted and missing-amount Opportunities with unbilled visits are Ready to Bill.'
+        );
+        System.assertEquals(1, metrics.needsReviewCount, 'Null Amount Opportunity is Needs Review.');
+        System.assertEquals(expectedReadyToBill, metrics.readyToBill, 'Unique Opportunities across readiness reasons.');
 
         Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sectionByKey =
             new Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper>();
         for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
             sectionByKey.put(section.categoryKey, section);
         }
-        System.assertEquals(5, sections.size());
+        System.assertEquals(4, sections.size());
+        System.assertEquals(false, sectionByKey.containsKey('BLOCKED'));
         System.assertEquals(
-            expectedBalanceReady,
+            expectedReadyToBill,
             sectionByKey.get('BALANCES_READY').opportunityRows.size()
         );
-        System.assertEquals(1, sectionByKey.get('BLOCKED').opportunityRows.size());
+        System.assertEquals(1, sectionByKey.get('NEEDS_REVIEW').opportunityRows.size());
         System.assertEquals(true, collectOpportunityIds(sectionByKey.get('BALANCES_READY')).contains(opportunityToday.Id));
         System.assertEquals(1, countMatches(sectionByKey.get('BALANCES_READY'), opportunityToday.Id));
     }

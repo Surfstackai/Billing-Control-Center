@@ -9,12 +9,26 @@ import setInvoiceAmount from '@salesforce/apex/BillingControl_ReceivablesWorklis
 import {
     MIN_COLUMN_WIDTH,
     RECEIVABLES_COLUMN_WIDTHS_KEY,
-    columnWidthStyle,
     loadColumnWidths,
     saveColumnWidths
 } from 'c/billingControlCenterColumnResize';
 import { compareAccountGroup, decorateAccountGroups } from 'c/billingControlCenterAccountGroup';
 import { resolveDateRange } from 'c/billingControlCenterDateFilter';
+
+const DEFAULT_RECEIVABLE_COLUMN_WIDTHS = {
+    select: 64,
+    invoice: 118,
+    salesperson: 156,
+    account: 340,
+    type: 110,
+    invoiceDate: 120,
+    dueDate: 120,
+    days: 76,
+    amount: 128,
+    paid: 120,
+    balance: 128,
+    status: 96
+};
 
 const CURRENCY_FORMATTER = new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -66,6 +80,15 @@ const KPI_CONFIG = [
         title: 'Deposits Outstanding',
         icon: 'utility:money',
         hint: 'Open deposit invoices.'
+    },
+    {
+        key: 'allReceivables',
+        developerKey: 'ALL_RECEIVABLES',
+        countKey: 'allReceivablesCount',
+        amountKey: 'allReceivables',
+        title: 'All Receivables',
+        icon: 'utility:list',
+        hint: 'Every invoice in the worklist. Matches the rows in both views when this filter is selected.'
     }
 ];
 
@@ -76,14 +99,15 @@ const CATEGORY_KEYS = {
     NEEDS_AMOUNT: 'NEEDS_AMOUNT',
     DEPOSITS_OUTSTANDING: 'DEPOSITS_OUTSTANDING',
     COMMISSION_EARNED: 'COMMISSION_EARNED',
-    COMMISSION_PAYABLE: 'COMMISSION_PAYABLE'
+    COMMISSION_PAYABLE: 'COMMISSION_PAYABLE',
+    ALL_RECEIVABLES: 'ALL_RECEIVABLES'
 };
 
 const VIEW_SALESPERSON = 'salesperson';
-const VIEW_ALL = 'all';
+const VIEW_INVOICE = 'invoice';
 const DEFAULT_HERO_TITLE = 'Receivables';
 const DEFAULT_HERO_SUBTITLE =
-    'Collect by salesperson. Status filters the invoice list; open AR is not hidden by due-date window.';
+    'Outstanding invoices to collect. Paid-in-full jobs move to Accrued commissions. This tab has no commission payouts.';
 const DEFAULT_TABLE_TITLE = 'Outstanding AR';
 const DEFAULT_REFRESH_LABEL = 'Refresh';
 const DEFAULT_POST_RECEIPT_LABEL = 'Post Receipt';
@@ -93,7 +117,8 @@ const STATUS_CHIP_LABELS = {
     OVERDUE: 'Overdue',
     PARTIALLY_PAID: 'Partially Paid',
     NEEDS_AMOUNT: 'Needs Amount',
-    DEPOSITS_OUTSTANDING: 'Deposits'
+    DEPOSITS_OUTSTANDING: 'Deposits',
+    ALL_RECEIVABLES: 'All Receivables'
 };
 const DEFAULT_DATE_FILTER = resolveDateRange('This Month');
 const KPI_CATEGORY_BY_KEY = {
@@ -108,14 +133,17 @@ const KPI_CATEGORY_BY_KEY = {
     needsAmount: CATEGORY_KEYS.NEEDS_AMOUNT,
     NEEDS_AMOUNT: CATEGORY_KEYS.NEEDS_AMOUNT,
     depositsOutstanding: CATEGORY_KEYS.DEPOSITS_OUTSTANDING,
-    DEPOSITS_OUTSTANDING: CATEGORY_KEYS.DEPOSITS_OUTSTANDING
+    DEPOSITS_OUTSTANDING: CATEGORY_KEYS.DEPOSITS_OUTSTANDING,
+    allReceivables: CATEGORY_KEYS.ALL_RECEIVABLES,
+    ALL_RECEIVABLES: CATEGORY_KEYS.ALL_RECEIVABLES
 };
 const SECTION_DISPLAY_ORDER = [
     CATEGORY_KEYS.OUTSTANDING_AR,
     CATEGORY_KEYS.OVERDUE,
     CATEGORY_KEYS.PARTIALLY_PAID,
     CATEGORY_KEYS.NEEDS_AMOUNT,
-    CATEGORY_KEYS.DEPOSITS_OUTSTANDING
+    CATEGORY_KEYS.DEPOSITS_OUTSTANDING,
+    CATEGORY_KEYS.ALL_RECEIVABLES
 ];
 const receivablesRuntimeCache = new Map();
 
@@ -162,6 +190,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     @api useExternalToolbar = false;
 
     metrics = {};
+    worklistInvoices = [];
     invoiceSections = [];
     commissionSections = [];
     selectedRows = [];
@@ -169,7 +198,6 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     searchKey = '';
     viewMode = VIEW_SALESPERSON;
     statusFilter = CATEGORY_KEYS.OUTSTANDING_AR;
-    salespersonStatusByOwner = {};
     selectedKpiKey = 'outstandingAr';
     activeAccordionSections = [];
     isMetricsLoading = true;
@@ -259,16 +287,12 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     get receivableColumnStyles() {
-        return {
-            salesperson: columnWidthStyle(this.columnWidths.salesperson),
-            account: columnWidthStyle(this.columnWidths.account),
-            opportunities: columnWidthStyle(this.columnWidths.opportunities),
-            invoiceAmount: columnWidthStyle(this.columnWidths.invoiceAmount),
-            commissionAmount: columnWidthStyle(this.columnWidths.commissionAmount),
-            commissionPaid: columnWidthStyle(this.columnWidths.commissionPaid),
-            outstandingCommission: columnWidthStyle(this.columnWidths.outstandingCommission),
-            ledger: columnWidthStyle(this.columnWidths.ledger)
-        };
+        const styles = {};
+        Object.keys(DEFAULT_RECEIVABLE_COLUMN_WIDTHS).forEach(key => {
+            const width = Number(this.columnWidths[key]) || DEFAULT_RECEIVABLE_COLUMN_WIDTHS[key];
+            styles[key] = `width:${width}px;min-width:${width}px;`;
+        });
+        return styles;
     }
 
     get isLoading() {
@@ -304,19 +328,23 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     get isSalespersonView() {
-        return this.viewMode !== VIEW_ALL;
+        return this.viewMode !== VIEW_INVOICE;
     }
 
-    get isAllReceivablesView() {
-        return this.viewMode === VIEW_ALL;
+    get isInvoiceView() {
+        return this.viewMode === VIEW_INVOICE;
     }
 
-    get salespersonViewVariant() {
-        return this.isSalespersonView ? 'brand' : 'neutral';
+    get salespersonViewButtonClass() {
+        return `view-by__option${this.isSalespersonView ? ' view-by__option_selected' : ''}`;
     }
 
-    get allReceivablesViewVariant() {
-        return this.isAllReceivablesView ? 'brand' : 'neutral';
+    get invoiceViewButtonClass() {
+        return `view-by__option${this.isInvoiceView ? ' view-by__option_selected' : ''}`;
+    }
+
+    get viewSwitchKnobClass() {
+        return `view-by__knob${this.isSalespersonView ? ' view-by__knob_left' : ' view-by__knob_right'}`;
     }
 
     get statusFilterLabel() {
@@ -344,7 +372,9 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                 title:
                     definition.developerKey === CATEGORY_KEYS.DEPOSITS_OUTSTANDING
                         ? 'Deposits'
-                        : definition.title,
+                        : definition.developerKey === CATEGORY_KEYS.ALL_RECEIVABLES
+                          ? 'All'
+                          : definition.title,
                 metricText: tile.metricText,
                 countText: tile.countText,
                 className: isSelected
@@ -413,35 +443,23 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     get visibleInvoiceCount() {
-        if (this.isAllReceivablesView) {
+        if (this.isInvoiceView) {
             return this.filteredStatusInvoices.length;
         }
         return this.salespersonGroups.reduce(
-            (total, group) =>
-                total +
-                group.opportunityGroups.reduce(
-                    (groupTotal, opportunityGroup) =>
-                        groupTotal + (opportunityGroup.invoices || []).length,
-                    0
-                ),
+            (total, group) => total + (group.invoices || []).length,
             0
         );
     }
 
-    get allReceivablesOpportunityGroups() {
-        return this.groupInvoicesByOpportunity(this.filteredStatusInvoices);
-    }
-
-    get allReceivablesEmpty() {
-        return this.allReceivablesOpportunityGroups.length === 0;
+    get invoiceViewEmpty() {
+        return this.filteredStatusInvoices.length === 0;
     }
 
     get salespersonGroups() {
         const outstandingIds = this.invoiceIdsForCategory(CATEGORY_KEYS.OUTSTANDING_AR);
         const overdueIds = this.invoiceIdsForCategory(CATEGORY_KEYS.OVERDUE);
         const partialIds = this.invoiceIdsForCategory(CATEGORY_KEYS.PARTIALLY_PAID);
-        const needsIds = this.invoiceIdsForCategory(CATEGORY_KEYS.NEEDS_AMOUNT);
-        const depositIds = this.invoiceIdsForCategory(CATEGORY_KEYS.DEPOSITS_OUTSTANDING);
         const expandedKeys = new Set(this.expandedRows);
         const selectedKeys = new Set(this.selectedRows);
         const byOwner = new Map();
@@ -464,9 +482,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                 const ownerMatch = invoice =>
                     (invoice.ownerId || 'unassigned') === (group.ownerId || 'unassigned');
                 const all = group.invoices;
-                const statusKey =
-                    this.salespersonStatusByOwner[group.key] || this.statusFilter;
-                const decorated = this.invoicesForCategory(statusKey)
+                const decorated = this.invoicesForCategory(this.statusFilter)
                     .filter(ownerMatch)
                     .map(invoice => this.decorateInvoice(invoice));
                 const childKeys = decorated.map(invoice => invoice.key);
@@ -477,14 +493,9 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                     ...group,
                     outstandingAr: this.sumBalances(all, outstandingIds),
                     overdue: this.sumBalances(all, overdueIds),
-                    invoiceCount: all.length,
+                    invoiceCount: decorated.length,
                     partiallyPaid: this.sumBalances(all, partialIds),
                     partiallyPaidCount: all.filter(invoice => partialIds.has(invoice.invoiceId)).length,
-                    needsAmountCount: all.filter(invoice => needsIds.has(invoice.invoiceId)).length,
-                    depositsOutstanding: this.sumBalances(all, depositIds),
-                    depositsOutstandingCount: all.filter(invoice =>
-                        depositIds.has(invoice.invoiceId)
-                    ).length,
                     isExpanded,
                     ariaExpanded: isExpanded ? 'true' : 'false',
                     isSelected,
@@ -495,13 +506,12 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
                         ? 'salesperson-card salesperson-card_expanded'
                         : 'salesperson-card',
                     tableLabel: 'Invoices for ' + group.ownerName,
-                    opportunityGroups: this.groupInvoicesByOpportunity(decorated),
+                    invoices: decorated,
                     invoiceCountInStatus: decorated.length,
                     hasInvoicesInStripStatus: this.invoicesForCategory(this.statusFilter).some(
                         ownerMatch
                     ),
-                    isEmpty: decorated.length === 0,
-                    statusChips: this.buildStatusChips(group.key)
+                    isEmpty: decorated.length === 0
                 };
             })
             .sort((left, right) => (right.outstandingAr || 0) - (left.outstandingAr || 0))
@@ -513,35 +523,14 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     get uniqueSearchInvoices() {
-        const byId = new Map();
-        (this.invoiceSections || []).forEach(section => {
-            (section.invoices || []).forEach(invoice => {
-                if (!invoice.invoiceId || byId.has(invoice.invoiceId)) {
-                    return;
-                }
-                if (!this.invoiceMatchesSearch(invoice)) {
-                    return;
-                }
-                byId.set(invoice.invoiceId, invoice);
-            });
-        });
-        return Array.from(byId.values());
+        return (this.worklistInvoices || []).filter(invoice => this.invoiceMatchesSearch(invoice));
     }
 
     get allCanonicalInvoices() {
-        const byId = new Map();
-        (this.invoiceSections || []).forEach(section => {
-            (section.invoices || []).forEach(invoice => {
-                if (!invoice.invoiceId || byId.has(invoice.invoiceId)) {
-                    return;
-                }
-                byId.set(invoice.invoiceId, {
-                    ...invoice,
-                    key: 'inv-' + invoice.invoiceId
-                });
-            });
-        });
-        return Array.from(byId.values());
+        return (this.worklistInvoices || []).map(invoice => ({
+            ...invoice,
+            key: 'inv-' + invoice.invoiceId
+        }));
     }
 
     get selectedInvoiceOpportunities() {
@@ -590,10 +579,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         }
 
         const group = this.salespersonGroups.find(item => item.key === rowKey);
-        const childKeys = [];
-        (group?.opportunityGroups || []).forEach(opportunityGroup => {
-            (opportunityGroup.invoices || []).forEach(invoice => childKeys.push(invoice.key));
-        });
+        const childKeys = (group?.invoices || []).map(invoice => invoice.key);
         const nextSelection = new Set(this.selectedRows);
 
         if (event.target.checked) {
@@ -654,6 +640,22 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
             }
         });
 
+        window.open(url, '_blank');
+    }
+
+    async handleOpenAccount(event) {
+        const accountId = event.currentTarget.dataset.id;
+        if (!accountId) {
+            return;
+        }
+        const url = await this[NavigationMixin.GenerateUrl]({
+            type: 'standard__recordPage',
+            attributes: {
+                recordId: accountId,
+                objectApiName: 'Account',
+                actionName: 'view'
+            }
+        });
         window.open(url, '_blank');
     }
 
@@ -753,32 +755,13 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
 
     handleViewChange(event) {
         const view = event.currentTarget?.dataset?.view;
-        if (view === VIEW_ALL || view === VIEW_SALESPERSON) {
+        if (view === VIEW_INVOICE || view === VIEW_SALESPERSON) {
             this.viewMode = view;
         }
     }
 
     handleSearchChange(event) {
         this.searchKey = event.target.value || '';
-    }
-
-    handleGroupStatusClick(event) {
-        const status = event.currentTarget?.dataset?.status;
-        const ownerKey = event.currentTarget?.dataset?.key;
-        const normalized =
-            KPI_CATEGORY_BY_KEY[status] ||
-            KPI_CATEGORY_BY_KEY[normalizeConfigKey(status)] ||
-            normalizeConfigKey(status);
-        if (!ownerKey || !normalized || !SECTION_DISPLAY_ORDER.includes(normalized)) {
-            return;
-        }
-        this.salespersonStatusByOwner = {
-            ...this.salespersonStatusByOwner,
-            [ownerKey]: normalized
-        };
-        if (!this.expandedRows.includes(ownerKey)) {
-            this.setExpandedRows([...this.expandedRows, ownerKey]);
-        }
     }
 
     applyStatusFilter(statusKey) {
@@ -792,7 +775,6 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this.statusFilter = normalized;
         const kpi = KPI_CONFIG.find(definition => definition.developerKey === normalized);
         this.selectedKpiKey = kpi?.key || normalized;
-        this.salespersonStatusByOwner = {};
     }
 
     handleStatusStripClick(event) {
@@ -998,14 +980,36 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         });
     }
 
-    normalizeInvoiceSections(sections) {
-        return (sections || []).map((section, sectionIndex) => {
-            const categoryKey = section.categoryKey || `INVOICE_CATEGORY_${sectionIndex}`;
-            const invoices = (section.rows || []).map((invoice, invoiceIndex) => ({
+    normalizeWorklistInvoices(data) {
+        const sourceRows = data?.invoices || [];
+        if (sourceRows.length) {
+            return this.mapInvoiceRows(sourceRows);
+        }
+        const byId = new Map();
+        this.normalizeInvoiceSections(data?.invoiceSections || []).forEach(section => {
+            (section.invoices || []).forEach(invoice => {
+                if (invoice.invoiceId && !byId.has(invoice.invoiceId)) {
+                    byId.set(invoice.invoiceId, invoice);
+                }
+            });
+        });
+        return Array.from(byId.values());
+    }
+
+    mapInvoiceRows(rows) {
+        return (rows || [])
+            .filter(invoice => invoice?.invoiceId)
+            .map((invoice, invoiceIndex) => ({
                 ...invoice,
                 key: 'inv-' + (invoice.invoiceId || invoiceIndex),
                 payments: invoice.payments || []
             }));
+    }
+
+    normalizeInvoiceSections(sections) {
+        return (sections || []).map((section, sectionIndex) => {
+            const categoryKey = section.categoryKey || `INVOICE_CATEGORY_${sectionIndex}`;
+            const invoices = this.mapInvoiceRows(section.rows || []);
             return {
                 ...section,
                 categoryKey,
@@ -1020,8 +1024,12 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     invoicesForCategory(categoryKey) {
-        const section = (this.invoiceSections || []).find(item => item.categoryKey === categoryKey);
-        return (section?.invoices || []).filter(invoice => this.invoiceMatchesSearch(invoice));
+        const uniqueInvoices = this.uniqueSearchInvoices;
+        if (categoryKey === CATEGORY_KEYS.ALL_RECEIVABLES) {
+            return uniqueInvoices;
+        }
+        const idSet = this.invoiceIdsForCategory(categoryKey);
+        return uniqueInvoices.filter(invoice => idSet.has(invoice.invoiceId));
     }
 
     invoiceIdsForCategory(categoryKey) {
@@ -1060,61 +1068,41 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     decorateInvoice(invoice) {
         const key = 'inv-' + invoice.invoiceId;
         const isExpanded = this.expandedRows.includes(key);
+        const attributed = invoice.attributedOpportunityNarratives || [];
+        const additionalNarratives = attributed.filter(
+            narrative => narrative.opportunityId && narrative.opportunityId !== invoice.opportunityId
+        );
+        const hasAdditionalNarratives = additionalNarratives.length > 0;
+        const governingDescription = (invoice.opportunityDescription || '').trim();
+        const narrativeBlocks = hasAdditionalNarratives
+            ? attributed.map(narrative => {
+                  const description = (narrative.description || '').trim();
+                  return {
+                      key: key + '-narr-' + narrative.opportunityId,
+                      opportunityName: narrative.opportunityName || 'Opportunity',
+                      description,
+                      showEmpty: !description
+                  };
+              })
+            : [];
         return {
             ...invoice,
             key,
             isExpanded,
             isSelected: this.selectedRows.includes(key),
             expandIcon: isExpanded ? 'utility:chevrondown' : 'utility:chevronright',
-            expandAltText: isExpanded ? 'Collapse payment history' : 'Expand payment history',
+            expandAltText: isExpanded ? 'Collapse invoice context' : 'Expand invoice context',
             hasPayments: (invoice.payments || []).length > 0,
-            paymentRowKey: key + '-payments',
-            paymentHeaderKey: key + '-payment-head'
+            paymentRowKey: key + '-detail',
+            hasAdditionalNarratives,
+            narrativeBlocks,
+            showGoverningDescription: !hasAdditionalNarratives && Boolean(governingDescription),
+            showGoverningEmpty: !hasAdditionalNarratives && !governingDescription,
+            governingDescription,
+            ownerDisplayName: invoice.ownerName || 'Unassigned',
+            quoteDisplay: invoice.quoteNumber || '',
+            identityQuoteLine: [invoice.opportunityName, invoice.quoteNumber].filter(Boolean).join(' · ')
         };
-    }
-
-    buildStatusChips(ownerKey) {
-        const selectedStatus = this.salespersonStatusByOwner[ownerKey] || this.statusFilter;
-        return SECTION_DISPLAY_ORDER.map(status => ({
-            key: ownerKey + '-chip-' + status,
-            status,
-            label: STATUS_CHIP_LABELS[status] || status,
-            className:
-                status === selectedStatus ? 'status-chip status-chip_selected' : 'status-chip',
-            ariaSelected: status === selectedStatus ? 'true' : 'false'
-        }));
-    }
-
-    groupInvoicesByOpportunity(invoices) {
-        const groups = [];
-        const groupById = new Map();
-        (invoices || []).forEach(invoice => {
-            const opportunityId = invoice.opportunityId || 'none';
-            if (!groupById.has(opportunityId)) {
-                const metaParts = [
-                    invoice.accountName,
-                    invoice.quoteNumber ? 'Quote ' + invoice.quoteNumber : null
-                ].filter(Boolean);
-                const group = {
-                    key: 'opp-' + opportunityId,
-                    headerKey: 'opp-header-' + opportunityId,
-                    opportunityId: invoice.opportunityId,
-                    opportunityName: invoice.opportunityName || 'Untitled opportunity',
-                    quoteNumber: invoice.quoteNumber,
-                    accountName: invoice.accountName,
-                    billingStatus: invoice.billingStatus,
-                    invoicedTotal: invoice.opportunityInvoiced,
-                    paidTotal: invoice.opportunityPaid,
-                    outstanding: invoice.opportunityOutstanding,
-                    metaText: metaParts.join(' · '),
-                    invoices: []
-                };
-                groupById.set(opportunityId, group);
-                groups.push(group);
-            }
-            groupById.get(opportunityId).invoices.push(invoice);
-        });
-        return groups;
     }
 
     findSalespersonByKey(rowKey) {
@@ -1157,7 +1145,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
     }
 
     async loadData(forceRefresh = false) {
-        const hasExistingSections = (this.commissionSections || []).length > 0;
+        const hasExistingSections = (this.invoiceSections || []).length > 0 || (this.worklistInvoices || []).length > 0;
         if (hasExistingSections) {
             this.isRefreshing = true;
             this.isMetricsLoading = false;
@@ -1190,6 +1178,7 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         } catch (error) {
             this.providerWarnings = [];
             this.metrics = {};
+            this.worklistInvoices = [];
             this.invoiceSections = [];
             this.commissionSections = [];
             this.errorMessage = this.reduceError(error);
@@ -1206,8 +1195,9 @@ export default class BillingControlCenterCommission extends NavigationMixin(Ligh
         this.providerWarnings = data?.warnings || [];
         (data?.warnings || []).forEach(warning => console.warn(warning));
         this.metrics = data?.metrics || {};
+        this.worklistInvoices = this.normalizeWorklistInvoices(data);
         this.invoiceSections = this.normalizeInvoiceSections(data?.invoiceSections || []);
-        this.commissionSections = this.normalizeSections(data?.commissionSections || []);
+        this.commissionSections = [];
         this.reconcileActiveState();
         const hasExpandedOwner = this.expandedRows.some(key => String(key).startsWith('sp-'));
         const firstOwner = this.salespersonGroups[0];
