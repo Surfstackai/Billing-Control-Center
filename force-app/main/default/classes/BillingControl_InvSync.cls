@@ -21,18 +21,39 @@ public with sharing class BillingControl_InvSync {
         public List<ServiceAppointment> appointments;
     }
 
+    @AuraEnabled
+    public static BillingControl_Invoicing.InvSyncResultWrapper syncExistingInvoiceNumbers(
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter,
+        String opportunityOwnerId
+    ) {
+        if (Test.isRunningTest()) {
+            return executeInvSyncNow(dateFilter, opportunityOwnerId);
+        }
+        Id jobId = Database.executeBatch(new BillingControl_InvSyncBatch(dateFilter, opportunityOwnerId), 40);
+        BillingControl_Invoicing.InvSyncResultWrapper result = new BillingControl_Invoicing.InvSyncResultWrapper();
+        result.invoicesCreated = 0;
+        result.serviceAppointmentsUpdated = 0;
+        result.skippedCount = 0;
+        result.queued = true;
+        result.jobId = jobId;
+        result.warnings = new List<String>{
+            'INV-Sync started. Refresh Invoicing and Receivables when it finishes.'
+        };
+        return result;
+    }
+
     public static BillingControl_Invoicing.InvSyncResultWrapper executeInvSyncNow(
-        BillingControl_DataProvider.BillingDateFilterDTO dateFilter,
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter,
         String opportunityOwnerId
     ) {
         return processInvSyncAppointments(queryInvSyncCandidateAppointments(dateFilter), opportunityOwnerId);
     }
 
     public static List<ServiceAppointment> queryInvSyncCandidateAppointments(
-        BillingControl_DataProvider.BillingDateFilterDTO dateFilter
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter
     ) {
-        BillingControl_DataProvider.DateRangeDTO range =
-            BillingControl_DataProvider.resolveDateRangeForInvSync(dateFilter);
+        BillingControl_BillingFilters.DateRangeDTO range =
+            BillingControl_BillingFilters.resolveDateRangeForInvSync(dateFilter);
         if (range == null || range.startDate == null || range.endDate == null) {
             return new List<ServiceAppointment>();
         }
@@ -112,7 +133,7 @@ public with sharing class BillingControl_InvSync {
         Map<Id, Id> workOrderIdByAppointmentId = BillingControl_Attribution.resolveWorkOrderIdsForAppointments(appointments);
         Map<Id, WorkOrder> workOrderById = BillingControl_Invoicing.queryWorkOrdersById(new Set<Id>(workOrderIdByAppointmentId.values()));
         Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId =
-            BillingControl_Invoicing.queryJunctionsByWorkOrderId(new Set<Id>(workOrderIdByAppointmentId.values()));
+            BillingControl_Attribution.queryJunctionsByWorkOrderId(new Set<Id>(workOrderIdByAppointmentId.values()));
 
         Map<Id, Id> opportunityIdByAppointmentId = new Map<Id, Id>();
         Map<Id, List<BillingControl_InvoiceNumberParser.ParsedToken>> tokensByAppointmentId =

@@ -2,7 +2,6 @@
 private class BillingControl_ReceivablesWorklistTest {
     @IsTest
     static void openArIgnoresInvoiceDateWindow() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Last Year Invoice Opp', 2500);
 
         Invoice__c lastYearInvoice = buildInvoice(
@@ -37,7 +36,6 @@ private class BillingControl_ReceivablesWorklistTest {
 
     @IsTest
     static void needsAmountAndSetInvoiceAmount() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Needs Amount Opp', 1800);
         Invoice__c pendingInvoice = buildInvoice(fixture, 'INV-PENDING', null, 'Draft', 'Balance', Date.today());
         insert pendingInvoice;
@@ -59,7 +57,6 @@ private class BillingControl_ReceivablesWorklistTest {
 
     @IsTest
     static void overdueInvoiceAppearsOncePerSectionAndInOverlappingSections() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Overlap Opp', 2500);
         Opportunity opportunityRecord = [
             SELECT Id, Description
@@ -125,7 +122,6 @@ private class BillingControl_ReceivablesWorklistTest {
 
     @IsTest
     static void invoiceWithoutOpportunityIsUnassignedInWorklist() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Unassigned Invoice Account');
         insert accountRecord;
         Invoice__c unassignedInvoice = new Invoice__c(
@@ -164,7 +160,6 @@ private class BillingControl_ReceivablesWorklistTest {
 
     @IsTest
     static void paidInvoiceLeavesReceivablesForAccruedCommissions() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Paid Canonical Opp', 900);
         Invoice__c paidInvoice = buildInvoice(fixture, 'INV-PAID-CANON', 900, 'Paid', 'Balance', Date.today());
         paidInvoice.Amount_Paid__c = 900;
@@ -183,7 +178,6 @@ private class BillingControl_ReceivablesWorklistTest {
 
     @IsTest
     static void depositPaidInFullDoesNotPayTheJob() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Deposit Plus Balance Opp', 5000);
         insert new Opportunity_WorkOrder__c(Opportunity__c = fixture.opportunityId, Work_Order__c = fixture.workOrderId);
         insert new Commission__c(
@@ -249,7 +243,6 @@ private class BillingControl_ReceivablesWorklistTest {
 
     @IsTest
     static void depositOnlyPaidStaysPartiallyPaidUntilQuoteIsCovered() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Deposit Only Opp', 5000);
         insert new Commission__c(
             Opportunity__c = fixture.opportunityId,
@@ -292,7 +285,6 @@ private class BillingControl_ReceivablesWorklistTest {
 
     @IsTest
     static void getInvoiceForReceiptRejectsVoidAndWrongOpportunity() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Receipt Guard Opp', 900);
         Fixture otherFixture = createFixture('Other Receipt Opp', 400);
         Invoice__c voidInvoice = buildInvoice(fixture, 'INV-VOID', 900, 'Void', 'Balance', Date.today());
@@ -320,7 +312,6 @@ private class BillingControl_ReceivablesWorklistTest {
 
     @IsTest
     static void threePartialPaymentsLeaveCommissionAccruedUntilPaidInFull() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createFixture('Three Partial Opp', 5000);
         insert new Commission__c(
             Opportunity__c = fixture.opportunityId,

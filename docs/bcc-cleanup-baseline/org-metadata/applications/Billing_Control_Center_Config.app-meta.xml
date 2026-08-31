@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CustomApplication xmlns="http://soap.sforce.com/2006/04/metadata">
+    <brand>
+        <headerColor>#0D6F4F</headerColor>
+        <shouldOverrideOrgTheme>false</shouldOverrideOrgTheme>
+    </brand>
+    <description>Administrative configuration app for Billing Control Center metadata objects.</description>
+    <formFactors>Large</formFactors>
+    <isNavAutoTempTabsDisabled>false</isNavAutoTempTabsDisabled>
+    <isNavPersonalizationDisabled>false</isNavPersonalizationDisabled>
+    <isNavTabPersistenceDisabled>false</isNavTabPersistenceDisabled>
+    <isOmniPinnedViewEnabled>false</isOmniPinnedViewEnabled>
+    <label>Billing Control Center Config</label>
+    <navType>Standard</navType>
+    <tabs>Billing_Center_Tab_Config__c</tabs>
+    <tabs>Billing_Center_Dataset_Config__c</tabs>
+    <tabs>Billing_Center_Global_Setting__c</tabs>
+    <tabs>Billing_Center_Recalc_Log__c</tabs>
+    <tabs>Billing_Center_KPI_Snapshot__c</tabs>
+    <uiType>Lightning</uiType>
+</CustomApplication>

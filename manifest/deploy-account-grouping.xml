@@ -4,7 +4,6 @@
         <members>billingControlCenterAccountGroup</members>
         <members>billingControlCenterBilling</members>
         <members>billingControlCenterCommission</members>
-        <members>billingControlCenterOpportunityOrders</members>
         <members>billingControlCenterOrders</members>
         <members>billingControlCenterStyles</members>
         <name>LightningComponentBundle</name>

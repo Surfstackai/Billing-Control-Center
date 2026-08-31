@@ -20,10 +20,7 @@
         <members>billingControlCenterCommission</members>
         <members>billingControlCenterOrders</members>
         <members>billingControlCenterStyles</members>
-        <members>billingControlCenterCompleteBillingModal</members>
-        <members>billingControlCenterOpportunityTable</members>
         <members>billingControlCenterPostReceiptModal</members>
-        <members>billingControlCenterOpportunityOrders</members>
         <name>LightningComponentBundle</name>
     </types>
     <types>

@@ -87,27 +87,6 @@ public with sharing class BillingControl_Invoicing {
         return OUTSTANDING_RECEIVABLE;
     }
 
-    @AuraEnabled(cacheable=true)
-    public static List<OpportunityWrapper> getReadyForBillingOpportunities() {
-        return buildOpportunityWrappers([
-            SELECT Id,
-                Name,
-                Account.Name,
-                StageName,
-                Amount,
-                CloseDate,
-                OwnerId,
-                Owner.Name,
-                Billing_Status__c,
-                Amount_Paid__c,
-                Ready_for_Billing_Date__c
-            FROM Opportunity
-            WHERE Billing_Status__c = :READY_FOR_BILLING
-            AND Ready_for_Billing_Date__c >= LAST_N_DAYS:2
-            ORDER BY CloseDate ASC NULLS LAST, Name ASC
-        ]);
-    }
-
     @AuraEnabled
     public static List<OpportunityWrapper> getAwaitingBillingOpportunities() {
         return buildOpportunityWrappers([
@@ -151,37 +130,6 @@ public with sharing class BillingControl_Invoicing {
     }
 
     @AuraEnabled(cacheable=true)
-    public static OpportunityBillingMetricsWrapper getOpportunityBillingMetrics() {
-        OpportunityBillingMetricsWrapper metrics = new OpportunityBillingMetricsWrapper();
-
-        AggregateResult[] readyForBillingResults = [
-            SELECT COUNT(Id) opportunityCount, SUM(Amount) totalAmount
-            FROM Opportunity
-            WHERE Billing_Status__c = :READY_FOR_BILLING
-            AND Ready_for_Billing_Date__c >= LAST_N_DAYS:2
-        ];
-        metrics.readyForBillingLast2Days = extractInteger(readyForBillingResults, 'opportunityCount');
-        metrics.totalUnbilledRevenue = extractDecimal(readyForBillingResults, 'totalAmount');
-
-        AggregateResult[] awaitedBillingResults = [
-            SELECT COUNT(Id) opportunityCount
-            FROM Opportunity
-            WHERE Billing_Status__c = :READY_FOR_BILLING
-            AND Ready_for_Billing_Date__c < LAST_N_DAYS:2
-        ];
-        metrics.awaitedBilling = extractInteger(awaitedBillingResults, 'opportunityCount');
-
-        AggregateResult[] outstandingReceivableResults = [
-            SELECT COUNT(Id) opportunityCount
-            FROM Opportunity
-            WHERE Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
-        ];
-        metrics.outstandingReceivables = extractInteger(outstandingReceivableResults, 'opportunityCount');
-
-        return metrics;
-    }
-
-    @AuraEnabled(cacheable=true)
     public static BillingControlMetricsWrapper getServiceAppointmentBillingMetrics() {
         return getServiceAppointmentBillingMetricsWithRefresh(null);
     }
@@ -193,7 +141,7 @@ public with sharing class BillingControl_Invoicing {
 
     public static BillingControlMetricsWrapper getServiceAppointmentBillingMetricsWithRefresh(
         Long refreshToken,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         // refreshToken intentionally unused in server logic; it exists to vary cache keys on demand.
         Long ignoredRefreshToken = refreshToken;
@@ -239,7 +187,7 @@ public with sharing class BillingControl_Invoicing {
 
     public static List<ServiceAppointmentKpiCategoryWrapper> getBillableServiceAppointmentGroupsWithRefresh(
         Long refreshToken,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         Long ignoredRefreshToken = refreshToken;
         return groupsFromRuntime(BillingControl_BillingReadiness.load(filterContext));
@@ -642,13 +590,13 @@ public with sharing class BillingControl_Invoicing {
         filterEligibleInvoicingAppointments(null);
         filterEligibleInvoicingAppointments(new List<ServiceAppointment>());
         isOutstandingReceivableStatus(null);
-        BillingControl_DataProvider.BillingFilterDTO inFilter = new BillingControl_DataProvider.BillingFilterDTO();
+        BillingControl_BillingFilters.BillingFilterDTO inFilter = new BillingControl_BillingFilters.BillingFilterDTO();
         inFilter.operator = 'IN';
         inFilter.value = 'Alpha;Beta';
         evaluateFilter('Alpha', inFilter);
         inFilter.operator = 'NOT IN';
         evaluateFilter('Gamma', inFilter);
-        BillingControl_DataProvider.BillingFilterDTO literalFilter = new BillingControl_DataProvider.BillingFilterDTO();
+        BillingControl_BillingFilters.BillingFilterDTO literalFilter = new BillingControl_BillingFilters.BillingFilterDTO();
         literalFilter.operator = 'EQUALS';
         literalFilter.valueType = 'DATE LITERAL';
         for (String literalValue : new List<String>{
@@ -673,47 +621,23 @@ public with sharing class BillingControl_Invoicing {
     }
 
     @AuraEnabled
-    public static CompleteBillingResultWrapper completeServiceAppointmentBilling(
-        List<Id> serviceAppointmentIds,
-        Map<String, String> invoiceNumberByOpportunityId
-    ) {
-        return BillingControl_CompleteBilling.completeServiceAppointmentBilling(
-            serviceAppointmentIds,
-            invoiceNumberByOpportunityId
-        );
-    }
-
-    @AuraEnabled
     public static InvSyncResultWrapper syncExistingInvoiceNumbers(
-        BillingControl_DataProvider.BillingDateFilterDTO dateFilter,
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter,
         String opportunityOwnerId
     ) {
-        if (Test.isRunningTest()) {
-            return executeInvSyncNow(dateFilter, opportunityOwnerId);
-        }
-        Id jobId = Database.executeBatch(new BillingControl_InvSyncBatch(dateFilter, opportunityOwnerId), 40);
-        InvSyncResultWrapper result = new InvSyncResultWrapper();
-        result.invoicesCreated = 0;
-        result.serviceAppointmentsUpdated = 0;
-        result.skippedCount = 0;
-        result.queued = true;
-        result.jobId = jobId;
-        result.warnings = new List<String>{
-            'INV-Sync started. Refresh Invoicing and Receivables when it finishes.'
-        };
-        return result;
+        return BillingControl_InvSync.syncExistingInvoiceNumbers(dateFilter, opportunityOwnerId);
     }
 
     @TestVisible
     private static InvSyncResultWrapper executeInvSyncNow(
-        BillingControl_DataProvider.BillingDateFilterDTO dateFilter,
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter,
         String opportunityOwnerId
     ) {
         return BillingControl_InvSync.executeInvSyncNow(dateFilter, opportunityOwnerId);
     }
 
     public static List<ServiceAppointment> queryInvSyncCandidateAppointments(
-        BillingControl_DataProvider.BillingDateFilterDTO dateFilter
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter
     ) {
         return BillingControl_InvSync.queryInvSyncCandidateAppointments(dateFilter);
     }
@@ -760,9 +684,8 @@ public with sharing class BillingControl_Invoicing {
             WHERE Billing_Status__c IN :OUTSTANDING_RECEIVABLE_BILLING_STATUSES
             OR Billing_Status__c = :PARTIALLY_PAID
         ]) {
-            Decimal amount = opportunityRecord.Amount != null ? opportunityRecord.Amount : 0;
             Decimal amountPaid = (Decimal) opportunityRecord.get('Amount_Paid__c');
-            outstandingArTotal += amount - (amountPaid != null ? amountPaid : 0);
+            outstandingArTotal += BillingControl_InvoiceMath.remaining(opportunityRecord.Amount, amountPaid);
         }
         metrics.outstandingAr = outstandingArTotal;
 
@@ -780,8 +703,8 @@ public with sharing class BillingControl_Invoicing {
     }
 
     public static CommissionMetricsWrapper getCommissionMetrics(
-        BillingControl_DataProvider.BillingFilterContextDTO invoicesFilterContext,
-        BillingControl_DataProvider.BillingFilterContextDTO commissionsFilterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO invoicesFilterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO commissionsFilterContext
     ) {
         return BillingControl_Receivables.getCommissionMetrics(invoicesFilterContext, commissionsFilterContext);
     }
@@ -793,8 +716,8 @@ public with sharing class BillingControl_Invoicing {
 
     public static List<CommissionKpiCategoryWrapper> getCommissionData(
         String subtabType,
-        BillingControl_DataProvider.BillingFilterContextDTO invoicesFilterContext,
-        BillingControl_DataProvider.BillingFilterContextDTO commissionsFilterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO invoicesFilterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO commissionsFilterContext
     ) {
         return BillingControl_Receivables.getCommissionData(subtabType, invoicesFilterContext, commissionsFilterContext);
     }
@@ -829,13 +752,13 @@ public with sharing class BillingControl_Invoicing {
     }
 
     private static List<ServiceAppointmentRowWrapper> buildBillableServiceAppointmentRows(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         return buildBillableServiceAppointmentRows(filterContext, true);
     }
 
     private static List<ServiceAppointmentRowWrapper> buildBillableServiceAppointmentRows(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         Boolean applyRowCap
     ) {
         List<ServiceAppointment> readyToInvoiceAppointments = queryEligibleInvoicingAppointments(filterContext, null);
@@ -915,7 +838,7 @@ public with sharing class BillingControl_Invoicing {
 
     private static List<ServiceAppointmentRowWrapper> filterBillableServiceAppointmentRows(
         List<ServiceAppointmentRowWrapper> rows,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         List<ServiceAppointmentRowWrapper> filteredRows = new List<ServiceAppointmentRowWrapper>();
         for (ServiceAppointmentRowWrapper row : rows) {
@@ -928,9 +851,9 @@ public with sharing class BillingControl_Invoicing {
 
     private static Boolean matchesBillableServiceAppointmentFilters(
         ServiceAppointmentRowWrapper row,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+        for (BillingControl_BillingFilters.BillingFilterDTO filterRecord : filterContext.filters) {
             String fieldKey = normalizeFilterValue(filterRecord.objectApiName) + '.' + normalizeFilterValue(filterRecord.fieldApiName);
             if (isLegacyInvoicingEligibilityFilter(fieldKey)) {
                 continue;
@@ -971,7 +894,7 @@ public with sharing class BillingControl_Invoicing {
 
     private static Object normalizeInvoicedAmountFilterValue(
         Decimal invoicedAmount,
-        BillingControl_DataProvider.BillingFilterDTO filterRecord
+        BillingControl_BillingFilters.BillingFilterDTO filterRecord
     ) {
         String operatorValue = normalizeFilterValue(filterRecord != null ? filterRecord.operator : null);
         if (invoicedAmount == null && operatorValue != 'IS NULL' && operatorValue != 'IS NOT NULL') {
@@ -988,7 +911,7 @@ public with sharing class BillingControl_Invoicing {
     }
 
     private static List<ServiceAppointment> queryEligibleInvoicingAppointments(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         Integer rowLimit
     ) {
         if (cachedEligibleInvoicingAppointments == null) {
@@ -1007,7 +930,7 @@ public with sharing class BillingControl_Invoicing {
     }
 
     private static List<ServiceAppointment> queryCompletedAppointmentsForEligibleWorkOrders(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         Datetime rangeStart = extractActualEndBound(filterContext, true);
         Datetime rangeEnd = extractActualEndBound(filterContext, false);
@@ -1094,13 +1017,13 @@ public with sharing class BillingControl_Invoicing {
     }
 
     private static Datetime extractActualEndBound(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         Boolean isStartBound
     ) {
         if (filterContext == null || filterContext.filters == null) {
             return null;
         }
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+        for (BillingControl_BillingFilters.BillingFilterDTO filterRecord : filterContext.filters) {
             String fieldKey = normalizeFilterValue(filterRecord.objectApiName)
                 + '.'
                 + normalizeFilterValue(filterRecord.fieldApiName);
@@ -1178,7 +1101,7 @@ public with sharing class BillingControl_Invoicing {
 
     private static Boolean evaluateDateTimeFilter(
         Datetime fieldValue,
-        BillingControl_DataProvider.BillingFilterDTO filterRecord
+        BillingControl_BillingFilters.BillingFilterDTO filterRecord
     ) {
         String operatorValue = normalizeFilterValue(filterRecord != null ? filterRecord.operator : null);
         if (operatorValue == 'IS NULL') {
@@ -1199,7 +1122,7 @@ public with sharing class BillingControl_Invoicing {
     }
 
     public static void addRuntimeWarning(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         String warning
     ) {
         if (filterContext == null || String.isBlank(warning)) {
@@ -1234,27 +1157,7 @@ public with sharing class BillingControl_Invoicing {
     }
 
     public static Map<Id, List<Opportunity_WorkOrder__c>> queryJunctionsByWorkOrderId(Set<Id> workOrderIds) {
-        Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = new Map<Id, List<Opportunity_WorkOrder__c>>();
-        if (workOrderIds == null) {
-            return junctionsByWorkOrderId;
-        }
-        for (Id workOrderId : workOrderIds) {
-            junctionsByWorkOrderId.put(workOrderId, new List<Opportunity_WorkOrder__c>());
-        }
-        if (workOrderIds.isEmpty()) {
-            return junctionsByWorkOrderId;
-        }
-        for (Opportunity_WorkOrder__c junctionRecord : [
-            SELECT Id, Work_Order__c, Opportunity__c, Opportunity__r.Name, Opportunity__r.Amount, Opportunity__r.Billing_Status__c
-            FROM Opportunity_WorkOrder__c
-            WHERE Work_Order__c IN :workOrderIds
-        ]) {
-            List<Opportunity_WorkOrder__c> junctions = junctionsByWorkOrderId.get(junctionRecord.Work_Order__c);
-            if (junctions != null) {
-                junctions.add(junctionRecord);
-            }
-        }
-        return junctionsByWorkOrderId;
+        return BillingControl_Attribution.queryJunctionsByWorkOrderId(workOrderIds);
     }
 
     private static Map<Id, Opportunity> queryOpportunitiesForAttribution(
@@ -1400,7 +1303,7 @@ public with sharing class BillingControl_Invoicing {
         return amountByAppointmentId;
     }
 
-    public static Boolean evaluateFilter(Object fieldValue, BillingControl_DataProvider.BillingFilterDTO filterRecord) {
+    public static Boolean evaluateFilter(Object fieldValue, BillingControl_BillingFilters.BillingFilterDTO filterRecord) {
         String operatorValue = normalizeFilterValue(filterRecord.operator);
         if (operatorValue == 'IS NULL') {
             return fieldValue == null;
@@ -1446,7 +1349,7 @@ public with sharing class BillingControl_Invoicing {
         return compareStringValue(String.valueOf(fieldValue), filterRecord, operatorValue);
     }
 
-    public static Boolean evaluateDateFilter(Date fieldValue, BillingControl_DataProvider.BillingFilterDTO filterRecord) {
+    public static Boolean evaluateDateFilter(Date fieldValue, BillingControl_BillingFilters.BillingFilterDTO filterRecord) {
         String operatorValue = normalizeFilterValue(filterRecord.operator);
         if (operatorValue == 'IS NULL') {
             return fieldValue == null;
@@ -1468,7 +1371,7 @@ public with sharing class BillingControl_Invoicing {
         return compareComparable(fieldDayNumber, comparisonDayNumber, operatorValue);
     }
 
-    private static Boolean compareStringValue(String fieldValue, BillingControl_DataProvider.BillingFilterDTO filterRecord, String operatorValue) {
+    private static Boolean compareStringValue(String fieldValue, BillingControl_BillingFilters.BillingFilterDTO filterRecord, String operatorValue) {
         String normalizedFieldValue = normalizeFilterValue(fieldValue);
         List<String> comparisonValues = splitFilterValues(filterRecord.value);
         if (operatorValue == 'EQUALS') {
@@ -1530,7 +1433,7 @@ public with sharing class BillingControl_Invoicing {
         return false;
     }
 
-    private static Datetime resolveDatetimeFilterValue(BillingControl_DataProvider.BillingFilterDTO filterRecord) {
+    private static Datetime resolveDatetimeFilterValue(BillingControl_BillingFilters.BillingFilterDTO filterRecord) {
         if (normalizeFilterValue(filterRecord.valueType) == 'DATE LITERAL') {
             Date literalDate = resolveDateLiteralValue(filterRecord.value);
             return literalDate == null ? null : Datetime.newInstance(literalDate, Time.newInstance(0, 0, 0, 0));
@@ -1542,7 +1445,7 @@ public with sharing class BillingControl_Invoicing {
         }
     }
 
-    private static Date resolveDateFilterValue(BillingControl_DataProvider.BillingFilterDTO filterRecord) {
+    private static Date resolveDateFilterValue(BillingControl_BillingFilters.BillingFilterDTO filterRecord) {
         if (normalizeFilterValue(filterRecord.valueType) == 'DATE LITERAL') {
             return resolveDateLiteralValue(filterRecord.value);
         }
@@ -1553,7 +1456,7 @@ public with sharing class BillingControl_Invoicing {
         }
     }
 
-    private static Decimal resolveDecimalFilterValue(BillingControl_DataProvider.BillingFilterDTO filterRecord) {
+    private static Decimal resolveDecimalFilterValue(BillingControl_BillingFilters.BillingFilterDTO filterRecord) {
         try {
             return Decimal.valueOf(filterRecord.value);
         } catch (Exception ex) {
@@ -1722,8 +1625,8 @@ public with sharing class BillingControl_Invoicing {
             wrapper.ownerName = opportunityRecord.Owner != null ? opportunityRecord.Owner.Name : null;
             wrapper.billingStatus = (String) opportunityRecord.get('Billing_Status__c');
             Decimal amountPaid = (Decimal) opportunityRecord.get('Amount_Paid__c');
-            wrapper.amountPaid = amountPaid != null ? amountPaid : 0;
-            wrapper.balanceDue = (wrapper.amount != null ? wrapper.amount : 0) - wrapper.amountPaid;
+            wrapper.amountPaid = BillingControl_InvoiceMath.paid(amountPaid);
+            wrapper.balanceDue = BillingControl_InvoiceMath.remaining(wrapper.amount, wrapper.amountPaid);
             Datetime readyForBillingDatetime = (Datetime) opportunityRecord.get('Ready_for_Billing_Date__c');
             wrapper.readyForBillingDate = readyForBillingDatetime != null ? readyForBillingDatetime.date() : null;
             wrapper.workOrders = workOrdersByOpportunityId.containsKey(opportunityRecord.Id)
@@ -1784,13 +1687,6 @@ public with sharing class BillingControl_Invoicing {
         @AuraEnabled public String subject;
         @AuraEnabled public String priority;
         @AuraEnabled public String workTypeName;
-    }
-
-    public class OpportunityBillingMetricsWrapper {
-        @AuraEnabled public Integer readyForBillingLast2Days;
-        @AuraEnabled public Integer awaitedBilling;
-        @AuraEnabled public Integer outstandingReceivables;
-        @AuraEnabled public Decimal totalUnbilledRevenue;
     }
 
     public class BillingControlMetricsWrapper {

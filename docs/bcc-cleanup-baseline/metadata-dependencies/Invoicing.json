@@ -1,0 +1,180 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_DataProvider",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_DataProviderTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_WorkOrderLedger",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvSyncBatch",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_ReadyToBillKpiTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_CompleteBilling",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvSync",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvoicingTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_Receivables",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvoiceService",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvoiceServiceTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_BillingReadiness",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_ReceivablesWorklistTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvSyncRedesignTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "billingControlCenterOpportunityOrders",
+        "MetadataComponentType": "LightningComponentBundle",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "billingControlCenterCompleteBillingModal",
+        "MetadataComponentType": "LightningComponentBundle",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "billingControlCenterBilling",
+        "MetadataComponentType": "LightningComponentBundle",
+        "RefMetadataComponentName": "BillingControl_Invoicing",
+        "RefMetadataComponentType": "ApexClass"
+      }
+    ],
+    "totalSize": 17,
+    "done": true
+  },
+  "warnings": []
+}

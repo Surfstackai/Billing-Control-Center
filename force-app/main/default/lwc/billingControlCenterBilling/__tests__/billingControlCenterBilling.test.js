@@ -20,7 +20,7 @@ jest.mock(
     { virtual: true }
 );
 jest.mock(
-    '@salesforce/apex/BillingControl_Invoicing.syncExistingInvoiceNumbers',
+    '@salesforce/apex/BillingControl_InvSync.syncExistingInvoiceNumbers',
     () => ({ default: jest.fn() }),
     { virtual: true }
 );

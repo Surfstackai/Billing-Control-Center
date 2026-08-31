@@ -26,12 +26,9 @@
         <members>billingControlCenterActionBar</members>
         <members>billingControlCenterBilling</members>
         <members>billingControlCenterCommission</members>
-        <members>billingControlCenterCompleteBillingModal</members>
         <members>billingControlCenterDateFilter</members>
         <members>billingControlCenterDiagnostics</members>
         <members>billingControlCenterKpiGrid</members>
-        <members>billingControlCenterOpportunityOrders</members>
-        <members>billingControlCenterOpportunityTable</members>
         <members>billingControlCenterOrders</members>
         <members>billingControlCenterPostReceiptModal</members>
         <members>billingControlCenterShell</members>
@@ -50,7 +47,6 @@
         <members>Billing_Control_Center_Shell_Tab</members>
         <members>Commission</members>
         <members>Orders</members>
-        <members>Orders2</members>
         <name>FlexiPage</name>
     </types>
     <types>

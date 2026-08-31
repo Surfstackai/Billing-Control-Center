@@ -1,0 +1,154 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "CronTrigger",
+          "url": "/services/data/v67.0/sobjects/CronTrigger/08eQj00000jgxZdIAI"
+        },
+        "Id": "08eQj00000jgxZdIAI",
+        "CronJobDetail": {
+          "attributes": {
+            "type": "CronJobDetail",
+            "url": "/services/data/v67.0/sobjects/CronJobDetail/08aQj00000jg7nxIAA"
+          },
+          "Name": "MciDashboardUpdateJobType",
+          "JobType": "%"
+        },
+        "State": "WAITING",
+        "NextFireTime": "2026-08-31T07:30:00.000+0000",
+        "TimesTriggered": 502
+      },
+      {
+        "attributes": {
+          "type": "CronTrigger",
+          "url": "/services/data/v67.0/sobjects/CronTrigger/08e5Y00001U0QzYQAV"
+        },
+        "Id": "08e5Y00001U0QzYQAV",
+        "CronJobDetail": {
+          "attributes": {
+            "type": "CronJobDetail",
+            "url": "/services/data/v67.0/sobjects/CronJobDetail/08a5Y00001TDyTrQAL"
+          },
+          "Name": "Metalytics Data Loader Job for Org : 00D5Y000001bOdp",
+          "JobType": "K"
+        },
+        "State": "WAITING",
+        "NextFireTime": "2026-08-31T09:43:00.000+0000",
+        "TimesTriggered": 1881
+      },
+      {
+        "attributes": {
+          "type": "CronTrigger",
+          "url": "/services/data/v67.0/sobjects/CronTrigger/08eQj00001LW3cZIAT"
+        },
+        "Id": "08eQj00001LW3cZIAT",
+        "CronJobDetail": {
+          "attributes": {
+            "type": "CronJobDetail",
+            "url": "/services/data/v67.0/sobjects/CronJobDetail/08aQj00001LUjXrIAL"
+          },
+          "Name": "Maintenance_Plan_Send_Notification_Before_90_Days-2",
+          "JobType": "6"
+        },
+        "State": "WAITING",
+        "NextFireTime": "2026-08-31T12:00:00.000+0000",
+        "TimesTriggered": 7
+      },
+      {
+        "attributes": {
+          "type": "CronTrigger",
+          "url": "/services/data/v67.0/sobjects/CronTrigger/08eQj00001JOjWoIAL"
+        },
+        "Id": "08eQj00001JOjWoIAL",
+        "CronJobDetail": {
+          "attributes": {
+            "type": "CronJobDetail",
+            "url": "/services/data/v67.0/sobjects/CronJobDetail/08aQj00001JNOscIAH"
+          },
+          "Name": "9eef8cb6-f19b-c1d6-476a-dfae7320cfd8",
+          "JobType": "A"
+        },
+        "State": "WAITING",
+        "NextFireTime": "2026-08-31T12:00:00.000+0000",
+        "TimesTriggered": 37
+      },
+      {
+        "attributes": {
+          "type": "CronTrigger",
+          "url": "/services/data/v67.0/sobjects/CronTrigger/08eQj00001KM3jIIAT"
+        },
+        "Id": "08eQj00001KM3jIIAT",
+        "CronJobDetail": {
+          "attributes": {
+            "type": "CronJobDetail",
+            "url": "/services/data/v67.0/sobjects/CronJobDetail/08aQj00001KKj9wIAD"
+          },
+          "Name": "84c269b1-68f6-5234-68e2-238b137429d9",
+          "JobType": "A"
+        },
+        "State": "WAITING",
+        "NextFireTime": "2026-09-01T12:00:00.000+0000",
+        "TimesTriggered": 4
+      },
+      {
+        "attributes": {
+          "type": "CronTrigger",
+          "url": "/services/data/v67.0/sobjects/CronTrigger/08eQj00001KMEhxIAH"
+        },
+        "Id": "08eQj00001KMEhxIAH",
+        "CronJobDetail": {
+          "attributes": {
+            "type": "CronJobDetail",
+            "url": "/services/data/v67.0/sobjects/CronJobDetail/08aQj00001KKu5NIAT"
+          },
+          "Name": "6bae5813-2df9-c4cf-2801-1cf174ca0e88",
+          "JobType": "A"
+        },
+        "State": "WAITING",
+        "NextFireTime": "2026-09-01T12:00:00.000+0000",
+        "TimesTriggered": 4
+      },
+      {
+        "attributes": {
+          "type": "CronTrigger",
+          "url": "/services/data/v67.0/sobjects/CronTrigger/08eQj00000c9sRbIAI"
+        },
+        "Id": "08eQj00000c9sRbIAI",
+        "CronJobDetail": {
+          "attributes": {
+            "type": "CronJobDetail",
+            "url": "/services/data/v67.0/sobjects/CronJobDetail/08aQj00000c991UIAQ"
+          },
+          "Name": "ReportType Edge Data Loader Job for Org : 00D5Y000001bOdp",
+          "JobType": "T"
+        },
+        "State": "WAITING",
+        "NextFireTime": "2026-09-01T16:27:00.000+0000",
+        "TimesTriggered": 82
+      },
+      {
+        "attributes": {
+          "type": "CronTrigger",
+          "url": "/services/data/v67.0/sobjects/CronTrigger/08eQj00000c9sRaIAI"
+        },
+        "Id": "08eQj00000c9sRaIAI",
+        "CronJobDetail": {
+          "attributes": {
+            "type": "CronJobDetail",
+            "url": "/services/data/v67.0/sobjects/CronJobDetail/08aQj00000c991TIAQ"
+          },
+          "Name": "SRT Semantic Graph Edge Update Job for Org : 00D5Y000001bOdp",
+          "JobType": "X"
+        },
+        "State": "WAITING",
+        "NextFireTime": "2026-10-16T18:09:45.000+0000",
+        "TimesTriggered": 5
+      }
+    ],
+    "totalSize": 8,
+    "done": true
+  },
+  "warnings": []
+}

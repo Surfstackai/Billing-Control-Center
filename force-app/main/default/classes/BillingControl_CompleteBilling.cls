@@ -163,7 +163,7 @@ public with sharing class BillingControl_CompleteBilling {
         }
 
         Set<Id> workOrderIds = new Set<Id>(workOrderIdByAppointmentId.values());
-        Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = BillingControl_Invoicing.queryJunctionsByWorkOrderId(workOrderIds);
+        Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = BillingControl_Attribution.queryJunctionsByWorkOrderId(workOrderIds);
         for (ServiceAppointment appointmentRecord : appointmentsToBill) {
             Id workOrderId = workOrderIdByAppointmentId.get(appointmentRecord.Id);
             Id opportunityId = BillingControl_Attribution.resolveAttributedOpportunityId(

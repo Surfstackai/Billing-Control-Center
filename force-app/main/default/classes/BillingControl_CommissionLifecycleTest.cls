@@ -2,7 +2,6 @@
 private class BillingControl_CommissionLifecycleTest {
     @IsTest
     static void payableUsesInvoicedTotalAndPayRequiresPayable() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Commission Lifecycle Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Commission Lifecycle Type', 1);
@@ -92,7 +91,6 @@ private class BillingControl_CommissionLifecycleTest {
 
     @IsTest
     static void dateFilterUsesPaidDateNotCloseDate() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Paid Date Filter Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Paid Date Filter Type', 1);
@@ -152,7 +150,6 @@ private class BillingControl_CommissionLifecycleTest {
 
     @IsTest
     static void ensureAccruedAndManualRateUseInvoicedTotal() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Manual Rate Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Manual Rate Type', 1);

@@ -64,6 +64,27 @@ public inherited sharing class BillingControl_InvoiceMath {
         }
     }
 
+    public static Decimal paid(Decimal paidAmount) {
+        return paidAmount == null ? 0 : paidAmount;
+    }
+
+    /**
+     * Read-side remaining given a total and payments. Null total is treated as 0.
+     * Does not replace {@link #recalculate} write semantics (null Total_Amount__c keeps null Balance_Due__c).
+     */
+    public static Decimal remaining(Decimal totalAmount, Decimal paidAmount) {
+        Decimal total = totalAmount == null ? 0 : totalAmount;
+        return total - paid(paidAmount);
+    }
+
+    public static Decimal remainingToInvoice(Decimal opportunityAmount, Decimal invoicedTotal) {
+        if (opportunityAmount == null) {
+            return 0;
+        }
+        Decimal remaining = opportunityAmount - (invoicedTotal == null ? 0 : invoicedTotal);
+        return remaining < 0 ? 0 : remaining.setScale(2, RoundingMode.HALF_UP);
+    }
+
     private static Decimal coalesceDecimal(Decimal value) {
         return value == null ? 0 : value;
     }

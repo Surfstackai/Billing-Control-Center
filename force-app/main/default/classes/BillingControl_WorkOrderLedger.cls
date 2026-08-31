@@ -32,6 +32,13 @@ public with sharing class BillingControl_WorkOrderLedger {
         BUCKET_IN_PROGRESS => 'In Progress'
     };
 
+    private static final String ORDERS_TAB_KEY = 'ORDERS';
+    private static final String ORDERS_DATASET_KEY = 'ORDERS_WORK_ORDERS';
+    private static final Set<String> ORDERS_SUPPORTED_HANDLER_KEYS = new Set<String>{
+        'BILLINGCONTROL_WORKORDERLEDGER.GETKPIS',
+        'BILLINGCONTROL_WORKORDERLEDGER.GETBUCKETWORKORDERS'
+    };
+
     private static final Map<String, String> EVENT_LABELS = new Map<String, String>{
         WorkOrderLedgerService.EVENT_WORK_ORDER_CREATED => 'Work Order Created',
         WorkOrderLedgerService.EVENT_WORK_ORDER_STATUS_CHANGED => 'Work Order Status Changed',
@@ -52,6 +59,152 @@ public with sharing class BillingControl_WorkOrderLedger {
     public class RuntimeBundle {
         public BillingControl_Orders.KpiWrapper kpis;
         public List<BillingControl_Orders.BucketSectionWrapper> sections;
+    }
+
+    public class OrdersRuntimeDataDTO {
+        @AuraEnabled public BillingControl_Orders.KpiWrapper kpis;
+        @AuraEnabled public List<BillingControl_Orders.BucketSectionWrapper> bucketSections;
+        @AuraEnabled public BillingControl_BillingFilters.BillingFilterContextDTO filterContext;
+        @AuraEnabled public List<String> warnings = new List<String>();
+    }
+
+    public static OrdersRuntimeDataDTO getOrdersRuntimeData(
+        Long refreshToken,
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter,
+        String opportunityOwnerId
+    ) {
+        OrdersRuntimeDataDTO result = new OrdersRuntimeDataDTO();
+        BillingControl_ConfigService.TabConfigDTO tabConfig = BillingControl_ConfigService.getTabConfig(ORDERS_TAB_KEY);
+        BillingControl_ConfigService.DatasetConfigDTO datasetConfig =
+            BillingControl_BillingFilters.findDataset(tabConfig, ORDERS_DATASET_KEY);
+        result.filterContext = BillingControl_BillingFilters.buildFilterContext(tabConfig, datasetConfig, result.warnings);
+        BillingControl_BillingFilters.DateRangeDTO dateWindow = BillingControl_BillingFilters.resolveDateRange(
+            BillingControl_BillingFilters.defaultThisYearDateFilter(dateFilter),
+            result.warnings
+        );
+        BillingControl_BillingFilters.applyOpportunityOwnerFilterToContext(result.filterContext, opportunityOwnerId);
+
+        if (BillingControl_BillingFilters.isDatasetConfiguredForHandlers(
+            datasetConfig,
+            ORDERS_DATASET_KEY,
+            ORDERS_SUPPORTED_HANDLER_KEYS,
+            result.warnings
+        )) {
+            loadOrdersRuntimeData(refreshToken, result, dateWindow);
+            return result;
+        }
+
+        result.warnings.add('Work Order Ledger dataset missing or invalid.');
+        result.warnings.add('Legacy fallback disabled.');
+        initializeEmptyOrdersRuntimeData(result);
+        return result;
+    }
+
+    @AuraEnabled
+    public static OrdersRuntimeDataDTO getOrdersRuntimeData(
+        Long refreshToken,
+        String filterKey,
+        String startDate,
+        String endDate,
+        String opportunityOwnerId
+    ) {
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter =
+            new BillingControl_BillingFilters.BillingDateFilterDTO();
+        dateFilter.filterKey = filterKey;
+        dateFilter.startDate = startDate;
+        dateFilter.endDate = endDate;
+        return getOrdersRuntimeData(refreshToken, dateFilter, opportunityOwnerId);
+    }
+
+    public static OrdersRuntimeDataDTO getOrdersRuntimeData(Long refreshToken, BillingControl_BillingFilters.BillingDateFilterDTO dateFilter) {
+        return getOrdersRuntimeData(refreshToken, dateFilter, null);
+    }
+
+    public static OrdersRuntimeDataDTO getOrdersRuntimeData(Long refreshToken) {
+        return getOrdersRuntimeData(refreshToken, null, null);
+    }
+
+    private static void loadOrdersRuntimeData(
+        Long refreshToken,
+        OrdersRuntimeDataDTO result,
+        BillingControl_BillingFilters.DateRangeDTO dateWindow
+    ) {
+        try {
+            RuntimeBundle runtime = getRuntime(refreshToken, result.filterContext, dateWindow);
+            result.kpis = runtime.kpis;
+            result.bucketSections = runtime.sections;
+            appendOrdersRuntimeWarnings(result.warnings, result.filterContext);
+            if (countOrderRows(result.bucketSections) == 0) {
+                result.warnings.add('No Work Order Ledger records found.');
+            }
+        } catch (Exception ex) {
+            result.warnings.add('Work Order Ledger dataset missing or invalid.');
+            result.warnings.add('Legacy fallback disabled.');
+            result.warnings.add('Work Order Ledger filter application failed. ' + ex.getMessage());
+            initializeEmptyOrdersRuntimeData(result);
+        }
+    }
+
+    private static void appendOrdersRuntimeWarnings(
+        List<String> warnings,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
+    ) {
+        if (warnings == null || filterContext == null || filterContext.runtimeWarnings == null) {
+            return;
+        }
+        for (String warning : filterContext.runtimeWarnings) {
+            if (String.isNotBlank(warning) && !warnings.contains(warning)) {
+                warnings.add(warning);
+            }
+        }
+    }
+
+    private static void initializeEmptyOrdersRuntimeData(OrdersRuntimeDataDTO result) {
+        result.kpis = new BillingControl_Orders.KpiWrapper();
+        result.kpis.unscheduledRevenue = 0;
+        result.kpis.unscheduledCount = 0;
+        result.kpis.scheduledRevenue = 0;
+        result.kpis.scheduledCount = 0;
+        result.kpis.scheduledTodayRevenue = 0;
+        result.kpis.scheduledTodayCount = 0;
+        result.kpis.completedThisWeekRevenue = 0;
+        result.kpis.completedThisWeekCount = 0;
+        result.kpis.completedThisMonthRevenue = 0;
+        result.kpis.completedThisMonthCount = 0;
+        result.kpis.noOpportunityRevenue = 0;
+        result.kpis.noOpportunityCount = 0;
+        result.kpis.noServiceAppointmentRevenue = 0;
+        result.kpis.noServiceAppointmentCount = 0;
+        result.kpis.multipleOpportunitiesRevenue = 0;
+        result.kpis.multipleOpportunitiesCount = 0;
+        result.kpis.relatedWorkRevenue = 0;
+        result.kpis.relatedWorkCount = 0;
+        result.kpis.completedTodayRevenue = 0;
+        result.kpis.completedTodayCount = 0;
+        result.kpis.inProgressRevenue = 0;
+        result.kpis.inProgressCount = 0;
+        result.kpis.completedNotBilledRevenue = 0;
+        result.kpis.completedNotBilledCount = 0;
+        result.bucketSections = new List<BillingControl_Orders.BucketSectionWrapper>{
+            new BillingControl_Orders.BucketSectionWrapper('READY_TO_SCHEDULE', 'Ready to Schedule', new List<BillingControl_Orders.WorkOrderRowWrapper>()),
+            new BillingControl_Orders.BucketSectionWrapper(
+                'SCHEDULED_APPOINTMENTS',
+                'Scheduled Appointments',
+                new List<BillingControl_Orders.WorkOrderRowWrapper>()
+            ),
+            new BillingControl_Orders.BucketSectionWrapper('IN_PROGRESS', 'In Progress', new List<BillingControl_Orders.WorkOrderRowWrapper>())
+        };
+    }
+
+    private static Integer countOrderRows(List<BillingControl_Orders.BucketSectionWrapper> sections) {
+        Integer rowCount = 0;
+        if (sections == null) {
+            return rowCount;
+        }
+        for (BillingControl_Orders.BucketSectionWrapper sectionRecord : sections) {
+            rowCount += sectionRecord != null && sectionRecord.rows != null ? sectionRecord.rows.size() : 0;
+        }
+        return rowCount;
     }
 
 
@@ -159,7 +312,7 @@ public with sharing class BillingControl_WorkOrderLedger {
 
     public static BillingControl_Orders.KpiWrapper getKpis(
         Long refreshToken,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         return getRuntime(refreshToken, filterContext).kpis;
     }
@@ -175,22 +328,22 @@ public with sharing class BillingControl_WorkOrderLedger {
 
     public static List<BillingControl_Orders.BucketSectionWrapper> getBucketWorkOrders(
         Long refreshToken,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         return getRuntime(refreshToken, filterContext).sections;
     }
 
     public static RuntimeBundle getRuntime(
         Long refreshToken,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         return getRuntime(refreshToken, filterContext, null);
     }
 
     public static RuntimeBundle getRuntime(
         Long refreshToken,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
-        BillingControl_DataProvider.DateRangeDTO dateWindow
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.DateRangeDTO dateWindow
     ) {
         DateTimeRange dateRange = toDateTimeRange(dateWindow);
         Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>> rowsByBucket =
@@ -214,7 +367,7 @@ public with sharing class BillingControl_WorkOrderLedger {
      */
     public static LedgerDetailWrapper getWorkOrderLedgerDetail(
         Id ledgerId,
-        BillingControl_DataProvider.DateRangeDTO dateWindow
+        BillingControl_BillingFilters.DateRangeDTO dateWindow
     ) {
         DateTimeRange detailRange = toDateTimeRange(dateWindow);
         LedgerDetailWrapper detail = new LedgerDetailWrapper();
@@ -654,7 +807,7 @@ public with sharing class BillingControl_WorkOrderLedger {
 
     private static List<BillingControl_Orders.BucketSectionWrapper> buildSections(
         Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>> rowsByBucket,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         List<BillingControl_Orders.BucketSectionWrapper> sections = new List<BillingControl_Orders.BucketSectionWrapper>();
         for (String bucketKey : BUCKET_QUERY_ORDER) {
@@ -722,7 +875,7 @@ public with sharing class BillingControl_WorkOrderLedger {
     }
 
     private static Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>> loadRowsByBucket(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         DateTimeRange dateRange
     ) {
         Map<String, List<BillingControl_Orders.WorkOrderRowWrapper>> rowsByBucket =
@@ -805,7 +958,7 @@ public with sharing class BillingControl_WorkOrderLedger {
     }
 
     private static List<Work_Order_Ledger__c> queryLedgers(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         Set<Id> includedWorkOrderIds
     ) {
         Id opportunityOwnerId = extractOpportunityOwnerId(filterContext);
@@ -846,7 +999,7 @@ public with sharing class BillingControl_WorkOrderLedger {
         return queryLimitOverride == null ? LEDGER_QUERY_LIMIT : queryLimitOverride;
     }
 
-    private static DateTimeRange toDateTimeRange(BillingControl_DataProvider.DateRangeDTO dateWindow) {
+    private static DateTimeRange toDateTimeRange(BillingControl_BillingFilters.DateRangeDTO dateWindow) {
         DateTimeRange dateRange = new DateTimeRange();
         if (dateWindow == null || dateWindow.startDate == null || dateWindow.endDate == null) {
             return dateRange;
@@ -925,7 +1078,7 @@ public with sharing class BillingControl_WorkOrderLedger {
 
     private static OperationalBucketSets queryOperationalBucketSets(
         DateTimeRange dateRange,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         OperationalBucketSets bucketSets = new OperationalBucketSets();
         queryBucketInto(
@@ -955,7 +1108,7 @@ public with sharing class BillingControl_WorkOrderLedger {
     private static void queryBucketInto(
         String bucketKey,
         DateTimeRange dateRange,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         Map<Id, List<ServiceAppointment>> byWorkOrderId,
         Set<Id> workOrderIds
     ) {
@@ -1073,12 +1226,12 @@ public with sharing class BillingControl_WorkOrderLedger {
     }
 
     private static Id extractOpportunityOwnerId(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         if (filterContext == null || filterContext.filters == null) {
             return null;
         }
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+        for (BillingControl_BillingFilters.BillingFilterDTO filterRecord : filterContext.filters) {
             String fieldKey = normalizeKey(filterRecord.objectApiName) + '.' + normalizeKey(filterRecord.fieldApiName);
             if (isOpportunityOwnerFilter(fieldKey) && normalizeKey(filterRecord.operator) == 'EQUALS') {
                 return tryParseId(filterRecord.value);
@@ -1203,57 +1356,11 @@ public with sharing class BillingControl_WorkOrderLedger {
     }
 
     private static Map<Id, List<Opportunity_WorkOrder__c>> queryListJunctionsByWorkOrderId(Set<Id> workOrderIds) {
-        return queryJunctionsByWorkOrderId(
-            workOrderIds,
-            new List<String>{
-                'Work_Order__c',
-                'Opportunity__c',
-                'Opportunity__r.Name',
-                'Opportunity__r.Quote_Number__c',
-                'Opportunity__r.Amount',
-                'Opportunity__r.OwnerId',
-                'Opportunity__r.Owner.Name'
-            }
-        );
+        return BillingControl_Attribution.queryJunctionsByWorkOrderId(workOrderIds);
     }
 
     private static Map<Id, List<Opportunity_WorkOrder__c>> queryJunctionsByWorkOrderId(Set<Id> workOrderIds) {
-        return queryJunctionsByWorkOrderId(
-            workOrderIds,
-            new List<String>{
-                'Work_Order__c',
-                'Opportunity__c',
-                'Opportunity__r.Name',
-                'Opportunity__r.Quote_Number__c',
-                'Opportunity__r.Amount',
-                'Opportunity__r.StageName',
-                'Opportunity__r.Billing_Status__c',
-                'Opportunity__r.OwnerId',
-                'Opportunity__r.Owner.Name'
-            }
-        );
-    }
-
-    private static Map<Id, List<Opportunity_WorkOrder__c>> queryJunctionsByWorkOrderId(
-        Set<Id> workOrderIds,
-        List<String> selectFields
-    ) {
-        Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = new Map<Id, List<Opportunity_WorkOrder__c>>();
-        for (Id workOrderId : workOrderIds) {
-            junctionsByWorkOrderId.put(workOrderId, new List<Opportunity_WorkOrder__c>());
-        }
-        if (workOrderIds.isEmpty()) {
-            return junctionsByWorkOrderId;
-        }
-        String soql =
-            'SELECT ' + String.join(selectFields, ', ')
-            + ' FROM Opportunity_WorkOrder__c'
-            + ' WHERE Work_Order__c IN :workOrderIds'
-            + ' AND Opportunity__c != NULL';
-        for (Opportunity_WorkOrder__c junctionRecord : Database.query(soql)) {
-            junctionsByWorkOrderId.get(junctionRecord.Work_Order__c).add(junctionRecord);
-        }
-        return junctionsByWorkOrderId;
+        return BillingControl_Attribution.queryJunctionsByWorkOrderId(workOrderIds);
     }
 
     /**
@@ -1727,7 +1834,7 @@ public with sharing class BillingControl_WorkOrderLedger {
     }
 
     private static void addRuntimeWarning(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         String warning
     ) {
         if (filterContext == null || String.isBlank(warning)) {

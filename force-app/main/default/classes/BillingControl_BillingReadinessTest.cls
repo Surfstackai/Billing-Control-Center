@@ -2,7 +2,6 @@
 private class BillingControl_BillingReadinessTest {
     @IsTest
     static void groupsCompletedVisitsOntoOneOpportunityRow() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Readiness Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Readiness Type', 1);
@@ -51,7 +50,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void depositDueAppearsWithoutCompletedVisits() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Deposit Due Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Deposit Type', 1);
@@ -115,7 +113,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void readyToBillIncludesFullyInvoicedQuoteWithUnbilledVisit() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createVisitFixture('Fully Invoiced Extra Visit', 10000);
         ServiceAppointment billedVisit = completedAppointment(
             fixture.workOrderId,
@@ -151,7 +148,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void readyToBillAbsentWhenAllAttributedVisitsAreBilled() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createVisitFixture('All Visits Billed At Quote', 5000);
         ServiceAppointment billedVisit = completedAppointment(
             fixture.workOrderId,
@@ -173,7 +169,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void balanceRemainingRequiresAllAttributedVisitsBilledBelowQuote() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture billedFixture = createVisitFixture('Balance Remaining Opp', 10000);
         ServiceAppointment billedVisit = completedAppointment(
             billedFixture.workOrderId,
@@ -214,7 +209,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void missingAmountAndInvalidInvoiceNumberAreNeedsReview() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Review Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Review Type', 1);
@@ -277,7 +271,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void unresolvedMultiOpportunityAttributionIsNeedsReview() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Attribution Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Attribution Type', 1);
@@ -320,7 +313,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void ordinaryNotesDoNotCreateNeedsReview() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture descriptionFixture = createVisitFixture('Description Only Opp', 2000);
         ServiceAppointment descriptionVisit = completedAppointment(
             descriptionFixture.workOrderId,
@@ -377,7 +369,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void denyListInvoiceTextIsNeedsReview() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createVisitFixture('Deny List Opp', 1500);
         ServiceAppointment appointmentRecord = completedAppointment(
             fixture.workOrderId,
@@ -402,7 +393,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void flagAppointmentForReviewWritesBillingReviewFlag() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createVisitFixture('Flag Opp', 1000);
         ServiceAppointment appointmentRecord = completedAppointment(
             fixture.workOrderId,
@@ -436,7 +426,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void ordinaryAccountingNoteDoesNotTriggerNeedsReview() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createVisitFixture('Ordinary Note Opp', 1800);
         ServiceAppointment appointmentRecord = completedAppointment(
             fixture.workOrderId,
@@ -472,7 +461,6 @@ private class BillingControl_BillingReadinessTest {
 
     @IsTest
     static void legacyAccountingNoteFlagPrefixStillTriggersNeedsReview() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Fixture fixture = createVisitFixture('Legacy Flag Opp', 1900);
         ServiceAppointment appointmentRecord = completedAppointment(
             fixture.workOrderId,
@@ -500,6 +488,100 @@ private class BillingControl_BillingReadinessTest {
         );
         System.assertEquals(true, row.readinessReasons.contains(BillingControl_BillingReadiness.REASON_FLAGGED_BY_ACCOUNTING));
         System.assertEquals(true, visitIsFlagged(row, appointmentRecord.Id));
+    }
+
+    @IsTest
+    static void readinessSectionsCountUniqueOpportunities() {
+        Account accountRecord = new Account(Name = 'Ready To Bill KPI Account');
+        insert accountRecord;
+        WorkType workTypeRecord = TestDataFactory.createWorkType('Ready To Bill KPI Type', 1);
+
+        Opportunity opportunityToday = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'KPI Today Opp', 10000);
+        Opportunity opportunityThisWeek = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'KPI Week Opp', 5000);
+        Opportunity opportunityOlder = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'KPI Older Opp', 2000);
+        Opportunity opportunityNoAmount = insertOpportunity(accountRecord.Id, workTypeRecord.Id, 'KPI Null Amount Opp', null);
+
+        List<WorkOrder> workOrders = new List<WorkOrder>();
+        for (Integer indexValue = 0; indexValue < 6; indexValue++) {
+            workOrders.add(new WorkOrder(
+                Subject = 'KPI WO ' + indexValue,
+                Status = 'New',
+                AccountId = accountRecord.Id,
+                WorkTypeId = workTypeRecord.Id
+            ));
+        }
+        insert workOrders;
+
+        Date todayDate = Date.today();
+        Date weekStart = todayDate.toStartOfWeek();
+        Date earlierThisWeek = weekStart < todayDate ? weekStart : null;
+        Date lastWeek = weekStart.addDays(-1);
+        Datetime todayEnd = Datetime.newInstance(todayDate, Time.newInstance(14, 0, 0, 0));
+        Datetime lastWeekEnd = Datetime.newInstance(lastWeek, Time.newInstance(14, 0, 0, 0));
+
+        List<ServiceAppointment> appointments = new List<ServiceAppointment>{
+            completedAppointmentWithWindow(workOrders[0].Id, opportunityToday.Id, todayEnd.addHours(-2), todayEnd, 'KPI Today SA 1'),
+            completedAppointmentWithWindow(workOrders[1].Id, opportunityToday.Id, todayEnd.addHours(-1), todayEnd, 'KPI Today SA 2'),
+            completedAppointmentWithWindow(workOrders[2].Id, opportunityToday.Id, todayEnd.addMinutes(-30), todayEnd, 'KPI Today SA 3'),
+            completedAppointmentWithWindow(
+                workOrders[3].Id,
+                opportunityNoAmount.Id,
+                todayEnd.addHours(-3),
+                todayEnd,
+                'KPI Today Null Amount SA'
+            ),
+            completedAppointmentWithWindow(
+                workOrders[4].Id,
+                opportunityOlder.Id,
+                lastWeekEnd.addHours(-1),
+                lastWeekEnd,
+                'KPI Older SA'
+            )
+        };
+        if (earlierThisWeek != null) {
+            Datetime weekEndTime = Datetime.newInstance(earlierThisWeek, Time.newInstance(11, 0, 0, 0));
+            appointments.add(
+                completedAppointmentWithWindow(
+                    workOrders[5].Id,
+                    opportunityThisWeek.Id,
+                    weekEndTime.addHours(-1),
+                    weekEndTime,
+                    'KPI Earlier This Week SA'
+                )
+            );
+        }
+        insert appointments;
+
+        Test.startTest();
+        BillingControl_Invoicing.BillingControlMetricsWrapper metrics =
+            BillingControl_Invoicing.getServiceAppointmentBillingMetrics();
+        List<BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sections =
+            BillingControl_Invoicing.getBillableServiceAppointmentGroups();
+        Test.stopTest();
+
+        Integer expectedReadyToBill = earlierThisWeek == null ? 3 : 4;
+        System.assertEquals(
+            expectedReadyToBill,
+            metrics.balancesReadyCount,
+            'Quoted and missing-amount Opportunities with unbilled visits are Ready to Bill.'
+        );
+        System.assertEquals(1, metrics.needsReviewCount, 'Null Amount Opportunity is Needs Review.');
+        System.assertEquals(expectedReadyToBill, metrics.readyToBill, 'Unique Opportunities across readiness reasons.');
+
+        Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper> sectionByKey =
+            new Map<String, BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper>();
+        for (BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section : sections) {
+            sectionByKey.put(section.categoryKey, section);
+        }
+        System.assertEquals(4, sections.size());
+        System.assertEquals(false, sectionByKey.containsKey('BLOCKED'));
+        System.assertEquals(
+            expectedReadyToBill,
+            sectionByKey.get('BALANCES_READY').opportunityRows.size()
+        );
+        System.assertEquals(1, sectionByKey.get('NEEDS_REVIEW').opportunityRows.size());
+        System.assertEquals(true, collectKpiOpportunityIds(sectionByKey.get('BALANCES_READY')).contains(opportunityToday.Id));
+        System.assertEquals(1, countKpiMatches(sectionByKey.get('BALANCES_READY'), opportunityToday.Id));
     }
 
     private static BillingControl_BillingReadiness.OpportunityRow firstRow(
@@ -601,6 +683,50 @@ private class BillingControl_BillingReadinessTest {
             Subject = subject,
             Opportunity__c = opportunityId
         );
+    }
+
+    private static ServiceAppointment completedAppointmentWithWindow(
+        Id workOrderId,
+        Id opportunityId,
+        Datetime startTime,
+        Datetime endTime,
+        String subject
+    ) {
+        return new ServiceAppointment(
+            ParentRecordId = workOrderId,
+            Status = 'Completed',
+            SchedStartTime = startTime,
+            SchedEndTime = endTime,
+            ActualEndTime = endTime,
+            Subject = subject,
+            Opportunity__c = opportunityId
+        );
+    }
+
+    private static Integer countKpiMatches(
+        BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section,
+        Id opportunityId
+    ) {
+        Integer matchCount = 0;
+        for (Id rowOpportunityId : collectKpiOpportunityIds(section)) {
+            if (rowOpportunityId == opportunityId) {
+                matchCount++;
+            }
+        }
+        return matchCount;
+    }
+
+    private static Set<Id> collectKpiOpportunityIds(
+        BillingControl_Invoicing.ServiceAppointmentKpiCategoryWrapper section
+    ) {
+        Set<Id> opportunityIds = new Set<Id>();
+        if (section == null || section.opportunityRows == null) {
+            return opportunityIds;
+        }
+        for (BillingControl_BillingReadiness.OpportunityRow row : section.opportunityRows) {
+            opportunityIds.add(row.opportunityId);
+        }
+        return opportunityIds;
     }
 
     private static Fixture createVisitFixture(String name, Decimal amount) {

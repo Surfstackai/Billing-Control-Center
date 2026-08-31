@@ -2,7 +2,6 @@
 private class BillingControl_WorkOrderLedgerTest {
     @IsTest
     static void compactListUsesWorkOrderGrainWithoutOrders() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Tab Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Tab Type', 1);
@@ -195,7 +194,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void visitAmountSplitsPitCleaningOpportunityAcrossWorkOrders() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Pit Cleaning Visit Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Pit Cleaning', 1);
@@ -246,7 +244,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void dateFilterUsesCompletedServiceDate() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Date Filter Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Date Filter Type', 1);
@@ -304,7 +301,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void dateFilterExpandsOpportunityWorkAndHonorsOwner() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Expand Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Expand Type', 1);
@@ -425,8 +421,8 @@ private class BillingControl_WorkOrderLedgerTest {
         );
 
         Date todayDate = Date.today();
-        BillingControl_DataProvider.BillingFilterContextDTO ownerContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_BillingFilters.BillingFilterContextDTO ownerContext =
+            new BillingControl_BillingFilters.BillingFilterContextDTO();
         ownerContext.filters.add(
             buildEqualsFilter('OPPORTUNITY_OWNER', 'Opportunity', 'OwnerId', UserInfo.getUserId())
         );
@@ -523,7 +519,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void ledgerDetailLoadsOnDemandForOneLedger() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         List<User> otherUsers = [
             SELECT Id, Name
             FROM User
@@ -685,7 +680,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void accountOwnerStaysLiveWithoutLedgerSync() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         List<User> otherUsers = [
             SELECT Id, Name, FirstName, LastName
             FROM User
@@ -744,7 +738,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void operationalBucketsExcludeInvoicedAndCompleted() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Classify Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Classify Type', 1);
@@ -809,7 +802,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void validationCountsAreAvailableForDiagnostics() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Validation Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Validation Type', 1);
@@ -837,7 +829,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void dateFilterIncludesWoliParentScheduledInRange() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger WOLI Date Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger WOLI Date Type', 1);
@@ -864,7 +855,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void dateFilterSchedStartOnlyDoesNotRequireActualEnd() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger SchedStart Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger SchedStart Type', 1);
@@ -889,7 +879,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void dateFilterReadyUsesEarliestStartAndScheduledUsesSchedStart() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Bucket Date Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Bucket Date Type', 1);
@@ -959,7 +948,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void thisMonthExcludesReadyWorkWithJanuaryEarliestStart() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Month Filter Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Month Filter Type', 1);
@@ -1009,7 +997,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void explicitMonthBoundsExcludeReadyWorkOutsideTheWindowEvenWithoutFilterKey() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Explicit Bounds Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Explicit Bounds Type', 1);
@@ -1034,15 +1021,15 @@ private class BillingControl_WorkOrderLedgerTest {
         insert new Opportunity_WorkOrder__c(Work_Order__c = workOrderRecord.Id, Opportunity__c = opportunityRecord.Id);
         WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ workOrderRecord.Id });
 
-        BillingControl_DataProvider.BillingDateFilterDTO augustWithoutKey =
-            new BillingControl_DataProvider.BillingDateFilterDTO();
+        BillingControl_BillingFilters.BillingDateFilterDTO augustWithoutKey =
+            new BillingControl_BillingFilters.BillingDateFilterDTO();
         augustWithoutKey.filterKey = null;
         augustWithoutKey.startDate = String.valueOf(Date.newInstance(year, 8, 1));
         augustWithoutKey.endDate = String.valueOf(Date.newInstance(year, 8, 31));
 
         Test.startTest();
-        BillingControl_DataProvider.DateRangeDTO augustWindow =
-            BillingControl_DataProvider.resolveDateRangeForInvSync(augustWithoutKey);
+        BillingControl_BillingFilters.DateRangeDTO augustWindow =
+            BillingControl_BillingFilters.resolveDateRangeForInvSync(augustWithoutKey);
         BillingControl_WorkOrderLedger.RuntimeBundle augustRuntime =
             BillingControl_WorkOrderLedger.getRuntime(68L, null, augustWindow);
         BillingControl_WorkOrderLedger.RuntimeBundle yearRuntime =
@@ -1065,7 +1052,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void dateFilterExcludesClosedWorkOrderAppointments() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         String closedStatus = firstClosedWorkOrderStatus();
         System.assertNotEquals(null, closedStatus, 'Need a configured closed Work Order status.');
 
@@ -1094,7 +1080,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void bucketQueriesUseOwnedDateFieldsAndExclusiveMembership() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Exclusive Bucket Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Exclusive Bucket Type', 1);
@@ -1260,7 +1245,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void bucketQueryLimitWarnsWhenTruncated() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Limit Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Limit Type', 1);
@@ -1277,8 +1261,8 @@ private class BillingControl_WorkOrderLedgerTest {
         };
         WorkOrderLedgerService.backfillWorkOrders(new Set<Id>{ firstWorkOrder.Id, secondWorkOrder.Id });
 
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext =
+            new BillingControl_BillingFilters.BillingFilterContextDTO();
         BillingControl_WorkOrderLedger.queryLimitOverride = 1;
         try {
             Test.startTest();
@@ -1299,7 +1283,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void ordersRuntimePresetsChangeBucketMembership() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Ledger Preset Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Ledger Preset Type', 1);
@@ -1375,7 +1358,6 @@ private class BillingControl_WorkOrderLedgerTest {
      */
     @IsTest
     static void billingHistoryDoesNotHideOpenAppointments() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Golden Shape Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Golden Shape Type', 1);
@@ -1513,7 +1495,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void kpiRevenueCountsOnlyUnbilledAppointments() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Partial Billing Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Partial Billing Type', 1);
@@ -1576,7 +1557,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void workOrderWithoutOpportunityReportsNoValueNotZero() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'No Opportunity Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('No Opportunity Type', 1);
@@ -1617,7 +1597,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void fullyBilledWorkOrderStaysVisibleButOutOfKpis() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Invoiced Only Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Invoiced Only Type', 1);
@@ -1667,7 +1646,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void ledgerDetailWindowLimitsAppointmentsToRange() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Detail Window Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Detail Window Type', 1);
@@ -1768,7 +1746,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void opportunityJunctionsDoNotChangeBucketMembership() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Attribution Isolation Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Attribution Isolation Type', 1);
@@ -1817,7 +1794,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void assignServiceAppointmentOpportunitiesStampsBlankEligibleVisits() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Assign SA Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Assign SA Type', 1);
@@ -1906,7 +1882,6 @@ private class BillingControl_WorkOrderLedgerTest {
 
     @IsTest
     static void assignServiceAppointmentOpportunitiesReportsConflictsAndRejectsInvalidRows() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Assign Conflict Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Assign Conflict Type', 1);
@@ -2189,32 +2164,32 @@ private class BillingControl_WorkOrderLedgerTest {
         return null;
     }
 
-    private static BillingControl_DataProvider.DateRangeDTO dateWindow(Date startDate, Date endDate) {
-        return new BillingControl_DataProvider.DateRangeDTO(startDate, endDate);
+    private static BillingControl_BillingFilters.DateRangeDTO dateWindow(Date startDate, Date endDate) {
+        return new BillingControl_BillingFilters.DateRangeDTO(startDate, endDate);
     }
 
-    private static BillingControl_DataProvider.DateRangeDTO thisYearWindow(Date todayDate) {
+    private static BillingControl_BillingFilters.DateRangeDTO thisYearWindow(Date todayDate) {
         return dateWindow(
             Date.newInstance(todayDate.year(), 1, 1),
             Date.newInstance(todayDate.year(), 12, 31)
         );
     }
 
-    private static BillingControl_DataProvider.DateRangeDTO lastYearWindow(Date todayDate) {
+    private static BillingControl_BillingFilters.DateRangeDTO lastYearWindow(Date todayDate) {
         return dateWindow(
             Date.newInstance(todayDate.year() - 1, 1, 1),
             Date.newInstance(todayDate.year() - 1, 12, 31)
         );
     }
 
-    private static BillingControl_DataProvider.BillingFilterDTO buildEqualsFilter(
+    private static BillingControl_BillingFilters.BillingFilterDTO buildEqualsFilter(
         String developerKey,
         String objectApiName,
         String fieldApiName,
         String value
     ) {
-        BillingControl_DataProvider.BillingFilterDTO filterRecord =
-            new BillingControl_DataProvider.BillingFilterDTO();
+        BillingControl_BillingFilters.BillingFilterDTO filterRecord =
+            new BillingControl_BillingFilters.BillingFilterDTO();
         filterRecord.developerKey = developerKey;
         filterRecord.objectApiName = objectApiName;
         filterRecord.fieldApiName = fieldApiName;

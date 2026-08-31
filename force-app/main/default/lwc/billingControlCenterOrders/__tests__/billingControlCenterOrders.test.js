@@ -1,11 +1,11 @@
 import { createElement } from 'lwc';
 import BillingControlCenterOrders from 'c/billingControlCenterOrders';
 import { resolveDateRange } from 'c/billingControlCenterDateFilter';
-import getOrdersRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getOrdersRuntimeData';
+import getOrdersRuntimeData from '@salesforce/apex/BillingControl_WorkOrderLedger.getOrdersRuntimeData';
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
 
 jest.mock(
-    '@salesforce/apex/BillingControl_DataProvider.getOrdersRuntimeData',
+    '@salesforce/apex/BillingControl_WorkOrderLedger.getOrdersRuntimeData',
     () => ({ default: jest.fn() }),
     { virtual: true }
 );

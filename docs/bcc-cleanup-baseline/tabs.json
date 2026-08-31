@@ -1,0 +1,60 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "TabDefinition",
+          "url": "/services/data/v67.0/sobjects/TabDefinition/0KDQj000018bXG1OAM"
+        },
+        "Name": "Billing_Control",
+        "Label": "Invoicing",
+        "DurableId": "0KDQj000018bXG1OAM",
+        "IsCustom": true
+      },
+      {
+        "attributes": {
+          "type": "TabDefinition",
+          "url": "/services/data/v67.0/sobjects/TabDefinition/0KDQj00001EKHwCOAX"
+        },
+        "Name": "Billing_Control_Center",
+        "Label": "Billing Control Center",
+        "DurableId": "0KDQj00001EKHwCOAX",
+        "IsCustom": true
+      },
+      {
+        "attributes": {
+          "type": "TabDefinition",
+          "url": "/services/data/v67.0/sobjects/TabDefinition/0KDQj000018bXMTOA2"
+        },
+        "Name": "Commission",
+        "Label": "Receivables",
+        "DurableId": "0KDQj000018bXMTOA2",
+        "IsCustom": true
+      },
+      {
+        "attributes": {
+          "type": "TabDefinition",
+          "url": "/services/data/v67.0/sobjects/TabDefinition/0KDQj000018bXKrOAM"
+        },
+        "Name": "Orders",
+        "Label": "Orders",
+        "DurableId": "0KDQj000018bXKrOAM",
+        "IsCustom": true
+      },
+      {
+        "attributes": {
+          "type": "TabDefinition",
+          "url": "/services/data/v67.0/sobjects/TabDefinition/0KDQj00001HqGMaOAN"
+        },
+        "Name": "Work_Order_Ledger__c",
+        "Label": "Work Order Ledgers",
+        "DurableId": "0KDQj00001HqGMaOAN",
+        "IsCustom": true
+      }
+    ],
+    "totalSize": 5,
+    "done": true
+  },
+  "warnings": []
+}

@@ -11,7 +11,6 @@
         <members>BillingControl_InvoicingTest</members>
         <members>BillingControl_WorkOrderLedgerTest</members>
         <members>BillingControl_DataProviderTest</members>
-        <members>BillingControl_ReadyToBillKpiTest</members>
         <members>WorkOrderLedgerServiceTest</members>
         <name>ApexClass</name>
     </types>

@@ -1,0 +1,50 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_Invoicing",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Receivables",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvoicingTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Receivables",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_ReceivablesWorklistTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_Receivables",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "billingControlCenterPostReceiptModal",
+        "MetadataComponentType": "LightningComponentBundle",
+        "RefMetadataComponentName": "BillingControl_Receivables",
+        "RefMetadataComponentType": "ApexClass"
+      }
+    ],
+    "totalSize": 4,
+    "done": true
+  },
+  "warnings": []
+}

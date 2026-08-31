@@ -1,10 +1,10 @@
 import { createElement } from 'lwc';
 import WorkOrderLedgerRelatedWork from 'c/workOrderLedgerRelatedWork';
-import getWorkOrderLedgerDetail from '@salesforce/apex/BillingControl_DataProvider.getWorkOrderLedgerDetail';
+import getWorkOrderLedgerDetail from '@salesforce/apex/BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail';
 import assignServiceAppointmentOpportunities from '@salesforce/apex/BillingControl_WorkOrderLedger.assignServiceAppointmentOpportunities';
 
 jest.mock(
-    '@salesforce/apex/BillingControl_DataProvider.getWorkOrderLedgerDetail',
+    '@salesforce/apex/BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail',
     () => ({ default: jest.fn() }),
     { virtual: true }
 );

@@ -19,11 +19,6 @@ jest.mock(
     { virtual: true }
 );
 jest.mock(
-    '@salesforce/apex/BillingControl_Invoicing.updateCommissionPaid',
-    () => ({ default: jest.fn() }),
-    { virtual: true }
-);
-jest.mock(
     '@salesforce/customPermission/Billing_Control_Center_Admin_Access',
     () => ({ default: false }),
     { virtual: true }

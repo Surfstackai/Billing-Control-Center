@@ -8,7 +8,6 @@
         <members>BillingControl_DataProvider</members>
         <members>BillingControl_Invoicing</members>
         <members>BillingControl_InvoicingTest</members>
-        <members>BillingControl_ReadyToBillKpiTest</members>
         <members>BillingControl_ReceivablesWorklist</members>
         <members>BillingControl_ReceivablesWorklistTest</members>
         <members>BillingControl_WorkOrderLedger</members>

@@ -1,6 +1,6 @@
 /**
  * Shared Work Order parent and Opportunity attribution for billing and ledger read models.
- * Callers keep their own junction queries and eligibility rules.
+ * Eligibility rules stay with callers.
  */
 public inherited sharing class BillingControl_Attribution {
     public static Id resolveAttributedOpportunityId(
@@ -78,5 +78,53 @@ public inherited sharing class BillingControl_Attribution {
             }
         }
         return workOrderIdByParentId;
+    }
+
+    public static Map<Id, List<Opportunity_WorkOrder__c>> queryJunctionsByWorkOrderId(Set<Id> workOrderIds) {
+        return queryJunctionsByWorkOrderId(
+            workOrderIds,
+            new List<String>{
+                'Work_Order__c',
+                'Opportunity__c',
+                'Opportunity__r.Name',
+                'Opportunity__r.Quote_Number__c',
+                'Opportunity__r.Amount',
+                'Opportunity__r.StageName',
+                'Opportunity__r.Billing_Status__c',
+                'Opportunity__r.OwnerId',
+                'Opportunity__r.Owner.Name'
+            }
+        );
+    }
+
+    public static Map<Id, List<Opportunity_WorkOrder__c>> queryJunctionsByWorkOrderId(
+        Set<Id> workOrderIds,
+        List<String> selectFields
+    ) {
+        Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId = new Map<Id, List<Opportunity_WorkOrder__c>>();
+        if (workOrderIds == null) {
+            return junctionsByWorkOrderId;
+        }
+        for (Id workOrderId : workOrderIds) {
+            junctionsByWorkOrderId.put(workOrderId, new List<Opportunity_WorkOrder__c>());
+        }
+        if (workOrderIds.isEmpty()) {
+            return junctionsByWorkOrderId;
+        }
+        List<String> fields = selectFields == null || selectFields.isEmpty()
+            ? new List<String>{ 'Work_Order__c', 'Opportunity__c' }
+            : selectFields;
+        String soql =
+            'SELECT ' + String.join(fields, ', ')
+            + ' FROM Opportunity_WorkOrder__c'
+            + ' WHERE Work_Order__c IN :workOrderIds'
+            + ' AND Opportunity__c != NULL';
+        for (Opportunity_WorkOrder__c junctionRecord : Database.query(soql)) {
+            List<Opportunity_WorkOrder__c> junctions = junctionsByWorkOrderId.get(junctionRecord.Work_Order__c);
+            if (junctions != null) {
+                junctions.add(junctionRecord);
+            }
+        }
+        return junctionsByWorkOrderId;
     }
 }

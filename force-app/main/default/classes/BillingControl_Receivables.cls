@@ -98,8 +98,8 @@ public with sharing class BillingControl_Receivables {
         BillingControl_Invoicing.PostReceiptInputWrapper input
     ) {
         Decimal invoiceAmount = invoiceRecord.Total_Amount__c != null ? invoiceRecord.Total_Amount__c : 0;
-        Decimal previouslyPaid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
-        Decimal balanceDue = invoiceAmount - previouslyPaid;
+        Decimal previouslyPaid = BillingControl_InvoiceMath.paid(invoiceRecord.Amount_Paid__c);
+        Decimal balanceDue = BillingControl_InvoiceMath.remaining(invoiceAmount, previouslyPaid);
 
         if (invoiceAmount <= 0) {
             throw new AuraHandledException(
@@ -152,15 +152,17 @@ public with sharing class BillingControl_Receivables {
         }
 
         BillingControl_Invoicing.PaymentReceiptResultWrapper result = new BillingControl_Invoicing.PaymentReceiptResultWrapper();
-        result.totalPaid = refreshedInvoice.Amount_Paid__c != null ? refreshedInvoice.Amount_Paid__c : 0;
-        result.balanceDue = refreshedInvoice.Balance_Due__c != null ? refreshedInvoice.Balance_Due__c : 0;
+        result.totalPaid = BillingControl_InvoiceMath.paid(refreshedInvoice.Amount_Paid__c);
+        result.balanceDue = refreshedInvoice.Balance_Due__c != null
+            ? refreshedInvoice.Balance_Due__c
+            : BillingControl_InvoiceMath.remaining(refreshedInvoice.Total_Amount__c, refreshedInvoice.Amount_Paid__c);
         result.billingStatus = nextStatus;
         return result;
     }
 
     public static BillingControl_Invoicing.CommissionMetricsWrapper getCommissionMetrics(
-        BillingControl_DataProvider.BillingFilterContextDTO invoicesFilterContext,
-        BillingControl_DataProvider.BillingFilterContextDTO commissionsFilterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO invoicesFilterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO commissionsFilterContext
     ) {
         BillingControl_Invoicing.CommissionMetricsWrapper metrics = new BillingControl_Invoicing.CommissionMetricsWrapper();
         metrics.unbilledRevenue = 0;
@@ -174,10 +176,8 @@ public with sharing class BillingControl_Receivables {
             Decimal invoicedAmount = revenueAggregateRow.get('totalInvoiced') != null
                 ? (Decimal) revenueAggregateRow.get('totalInvoiced')
                 : 0;
-            Decimal receivedAmount = revenueAggregateRow.get('totalReceived') != null
-                ? (Decimal) revenueAggregateRow.get('totalReceived')
-                : 0;
-            Decimal outstandingAmount = invoicedAmount - receivedAmount;
+            Decimal receivedAmount = BillingControl_InvoiceMath.paid((Decimal) revenueAggregateRow.get('totalReceived'));
+            Decimal outstandingAmount = BillingControl_InvoiceMath.remaining(invoicedAmount, receivedAmount);
             if (outstandingAmount <= 0) {
                 continue;
             }
@@ -247,8 +247,8 @@ public with sharing class BillingControl_Receivables {
 
     public static List<BillingControl_Invoicing.CommissionKpiCategoryWrapper> getCommissionData(
         String subtabType,
-        BillingControl_DataProvider.BillingFilterContextDTO invoicesFilterContext,
-        BillingControl_DataProvider.BillingFilterContextDTO commissionsFilterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO invoicesFilterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO commissionsFilterContext
     ) {
         List<BillingControl_Invoicing.CommissionKpiCategoryWrapper> sections = new List<BillingControl_Invoicing.CommissionKpiCategoryWrapper>{
             new BillingControl_Invoicing.CommissionKpiCategoryWrapper(
@@ -346,7 +346,7 @@ public with sharing class BillingControl_Receivables {
     }
 
     public static List<ReceivableOrderSummary> queryReceivableOrderSummaries(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         List<Invoice__c> outstandingReceivableInvoices = Database.query(
             'SELECT Id,'
@@ -381,7 +381,7 @@ public with sharing class BillingControl_Receivables {
     }
 
     public static List<Commission__c> queryOrderLinkedReceivableCommissionRecords(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         List<Commission__c> commissionRecords = Database.query(
             'SELECT Id,'
@@ -425,7 +425,7 @@ public with sharing class BillingControl_Receivables {
 
     public static List<Commission__c> filterReceivablesCommissionRecords(
         List<Commission__c> commissionRecords,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         List<Commission__c> filtered = new List<Commission__c>();
         for (Commission__c commissionRecord : commissionRecords) {
@@ -438,13 +438,13 @@ public with sharing class BillingControl_Receivables {
 
     public static Boolean matchesReceivablesCommissionFilters(
         Commission__c commissionRecord,
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         if (filterContext == null || filterContext.filters == null || filterContext.filters.isEmpty()) {
             return true;
         }
 
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+        for (BillingControl_BillingFilters.BillingFilterDTO filterRecord : filterContext.filters) {
             String fieldKey = BillingControl_Invoicing.normalizeFilterValue(filterRecord.objectApiName) + '.' + BillingControl_Invoicing.normalizeFilterValue(filterRecord.fieldApiName);
             Object fieldValue;
 
@@ -486,11 +486,11 @@ public with sharing class BillingControl_Receivables {
                 continue;
             }
 
-            Decimal invoicedAmount = BillingControl_Invoicing.coalesceDecimal(invoiceRecord.Total_Amount__c);
-            Decimal receivedAmount = BillingControl_Invoicing.coalesceDecimal(invoiceRecord.Amount_Paid__c);
+            Decimal invoicedAmount = BillingControl_InvoiceMath.remaining(invoiceRecord.Total_Amount__c, 0);
+            Decimal receivedAmount = BillingControl_InvoiceMath.paid(invoiceRecord.Amount_Paid__c);
             Decimal outstandingAmount = invoiceRecord.Balance_Due__c != null
-                ? BillingControl_Invoicing.coalesceDecimal(invoiceRecord.Balance_Due__c)
-                : invoicedAmount - receivedAmount;
+                ? invoiceRecord.Balance_Due__c
+                : BillingControl_InvoiceMath.remaining(invoiceRecord.Total_Amount__c, invoiceRecord.Amount_Paid__c);
             if (outstandingAmount <= 0) {
                 continue;
             }
@@ -568,12 +568,14 @@ public with sharing class BillingControl_Receivables {
             opportunity.amountPaid = BillingControl_Invoicing.coalesceDecimal(invoiceSummary.amountPaid);
             opportunity.balanceDue = BillingControl_Invoicing.coalesceDecimal(invoiceSummary.balanceDue);
         } else {
-            opportunity.amount = linkedOpportunity != null ? BillingControl_Invoicing.coalesceDecimal(linkedOpportunity.Amount) : 0;
+            opportunity.amount = linkedOpportunity != null
+                ? BillingControl_InvoiceMath.remaining(linkedOpportunity.Amount, 0)
+                : 0;
             Decimal amountPaid = linkedOpportunity != null
                 ? (Decimal) linkedOpportunity.get('Amount_Paid__c')
                 : null;
-            opportunity.amountPaid = amountPaid != null ? amountPaid : 0;
-            opportunity.balanceDue = opportunity.amount - opportunity.amountPaid;
+            opportunity.amountPaid = BillingControl_InvoiceMath.paid(amountPaid);
+            opportunity.balanceDue = BillingControl_InvoiceMath.remaining(opportunity.amount, opportunity.amountPaid);
         }
         opportunity.billingStatus = linkedOpportunity != null ? linkedOpportunity.Billing_Status__c : null;
         opportunity.closeDate = linkedOpportunity != null ? linkedOpportunity.CloseDate : null;
@@ -847,11 +849,11 @@ public with sharing class BillingControl_Receivables {
             throw new AuraHandledException('Receipts cannot be recorded against a void invoice.');
         }
         Decimal invoiceAmount = invoiceRecord.Total_Amount__c != null ? invoiceRecord.Total_Amount__c : 0;
-        Decimal previouslyPaid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
+        Decimal previouslyPaid = BillingControl_InvoiceMath.paid(invoiceRecord.Amount_Paid__c);
         if (invoiceAmount <= 0) {
             throw new AuraHandledException('Set the invoice amount before recording a receipt.');
         }
-        if (invoiceAmount - previouslyPaid <= 0 || invoiceRecord.Status__c == INVOICE_STATUS_PAID) {
+        if (BillingControl_InvoiceMath.remaining(invoiceAmount, previouslyPaid) <= 0 || invoiceRecord.Status__c == INVOICE_STATUS_PAID) {
             throw new AuraHandledException('This invoice has no remaining balance.');
         }
         return invoiceRecord;
@@ -881,8 +883,8 @@ public with sharing class BillingControl_Receivables {
         List<Invoice__c> receivableInvoices = new List<Invoice__c>();
         for (Invoice__c invoiceRecord : openInvoices) {
             Decimal invoiceAmount = invoiceRecord.Total_Amount__c != null ? invoiceRecord.Total_Amount__c : 0;
-            Decimal previouslyPaid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
-            if (invoiceAmount - previouslyPaid > 0) {
+            Decimal previouslyPaid = BillingControl_InvoiceMath.paid(invoiceRecord.Amount_Paid__c);
+            if (BillingControl_InvoiceMath.remaining(invoiceAmount, previouslyPaid) > 0) {
                 receivableInvoices.add(invoiceRecord);
             }
         }
@@ -967,7 +969,7 @@ public with sharing class BillingControl_Receivables {
     }
 
     public static String buildReceivableInvoicesWhereClause(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         List<String> clauses = new List<String>{
             'Opportunity__c != NULL',
@@ -975,13 +977,13 @@ public with sharing class BillingControl_Receivables {
             'Balance_Due__c > 0'
         };
         clauses.addAll(
-            BillingControl_DataProvider.buildQueryFilterClauses(filterContext, getReceivableInvoiceFilterFieldMappings())
+            BillingControl_BillingFilters.buildQueryFilterClauses(filterContext, getReceivableInvoiceFilterFieldMappings())
         );
         return ' WHERE ' + String.join(clauses, ' AND ');
     }
 
     public static String buildCommissionWhereClause(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         Boolean onlyEarned,
         Boolean onlyPayable
     ) {
@@ -1003,34 +1005,34 @@ public with sharing class BillingControl_Receivables {
             );
         }
         clauses.addAll(
-            BillingControl_DataProvider.buildQueryFilterClauses(filterContext, getCommissionFilterFieldMappings())
+            BillingControl_BillingFilters.buildQueryFilterClauses(filterContext, getCommissionFilterFieldMappings())
         );
         return ' WHERE ' + String.join(clauses, ' AND ');
     }
 
     public static String buildCommissionPrefilterWhereClause(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         List<String> clauses = new List<String>{ 'Opportunity__c != NULL' };
         if (filterContext != null && filterContext.filters != null) {
-            for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+            for (BillingControl_BillingFilters.BillingFilterDTO filterRecord : filterContext.filters) {
                 String fieldKey = BillingControl_Invoicing.normalizeFilterValue(filterRecord.objectApiName) + '.' + BillingControl_Invoicing.normalizeFilterValue(filterRecord.fieldApiName);
                 if (fieldKey != 'ORDER.EFFECTIVEDATE' && fieldKey != 'OPPORTUNITY.CLOSEDATE') {
                     continue;
                 }
-                BillingControl_DataProvider.BillingFilterContextDTO singleFilterContext =
-                    new BillingControl_DataProvider.BillingFilterContextDTO();
+                BillingControl_BillingFilters.BillingFilterContextDTO singleFilterContext =
+                    new BillingControl_BillingFilters.BillingFilterContextDTO();
                 singleFilterContext.filters.add(filterRecord);
-                List<String> queryClauses = BillingControl_DataProvider.buildQueryFilterClauses(
+                List<String> queryClauses = BillingControl_BillingFilters.buildQueryFilterClauses(
                     singleFilterContext,
-                    new Map<String, BillingControl_DataProvider.FilterFieldDescriptor>{
-                        'ORDER.EFFECTIVEDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                    new Map<String, BillingControl_BillingFilters.FilterFieldDescriptor>{
+                        'ORDER.EFFECTIVEDATE' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                             'Opportunity__r.CloseDate',
-                            BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
+                            BillingControl_BillingFilters.FILTER_DATA_TYPE_DATE
                         ),
-                        'OPPORTUNITY.CLOSEDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                        'OPPORTUNITY.CLOSEDATE' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                             'Opportunity__r.CloseDate',
-                            BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
+                            BillingControl_BillingFilters.FILTER_DATA_TYPE_DATE
                         )
                     }
                 );
@@ -1040,48 +1042,48 @@ public with sharing class BillingControl_Receivables {
         return ' WHERE ' + String.join(clauses, ' AND ');
     }
 
-    public static Map<String, BillingControl_DataProvider.FilterFieldDescriptor> getReceivableInvoiceFilterFieldMappings() {
-        return new Map<String, BillingControl_DataProvider.FilterFieldDescriptor>{
-            'ORDER.RECEIVED_AMOUNT__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
+    public static Map<String, BillingControl_BillingFilters.FilterFieldDescriptor> getReceivableInvoiceFilterFieldMappings() {
+        return new Map<String, BillingControl_BillingFilters.FilterFieldDescriptor>{
+            'ORDER.RECEIVED_AMOUNT__C' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Amount_Paid__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_DECIMAL
             ),
-            'ORDER.OUTSTANDING_AMOUNT__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
+            'ORDER.OUTSTANDING_AMOUNT__C' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Balance_Due__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_DECIMAL
             ),
-            'ORDER.EFFECTIVEDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
+            'ORDER.EFFECTIVEDATE' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Invoice_Date__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_DATE
             ),
-            'INVOICE__C.INVOICE_DATE__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
+            'INVOICE__C.INVOICE_DATE__C' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Invoice_Date__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_DATE
             ),
-            'OPPORTUNITY.OWNERID' => new BillingControl_DataProvider.FilterFieldDescriptor(
+            'OPPORTUNITY.OWNERID' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Opportunity__r.OwnerId',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_ID
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_ID
             )
         };
     }
 
-    public static Map<String, BillingControl_DataProvider.FilterFieldDescriptor> getCommissionFilterFieldMappings() {
-        return new Map<String, BillingControl_DataProvider.FilterFieldDescriptor>{
-            'ORDER.EFFECTIVEDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
+    public static Map<String, BillingControl_BillingFilters.FilterFieldDescriptor> getCommissionFilterFieldMappings() {
+        return new Map<String, BillingControl_BillingFilters.FilterFieldDescriptor>{
+            'ORDER.EFFECTIVEDATE' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Opportunity__r.CloseDate',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_DATE
             ),
-            'OPPORTUNITY.CLOSEDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
+            'OPPORTUNITY.CLOSEDATE' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Opportunity__r.CloseDate',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_DATE
             ),
-            'COMMISSION__C.COMMISSION_PAID__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
+            'COMMISSION__C.COMMISSION_PAID__C' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Commission_Paid__c',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_DECIMAL
             ),
-            'OPPORTUNITY.OWNERID' => new BillingControl_DataProvider.FilterFieldDescriptor(
+            'OPPORTUNITY.OWNERID' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                 'Opportunity__r.OwnerId',
-                BillingControl_DataProvider.FILTER_DATA_TYPE_ID
+                BillingControl_BillingFilters.FILTER_DATA_TYPE_ID
             )
         };
     }

@@ -196,7 +196,7 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
             row.invoiceDate = invoiceRecord.Invoice_Date__c;
             row.dueDate = invoiceRecord.Due_Date__c;
             row.totalAmount = invoiceRecord.Total_Amount__c;
-            row.amountPaid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
+            row.amountPaid = BillingControl_InvoiceMath.paid(invoiceRecord.Amount_Paid__c);
             row.balanceDue = invoiceRecord.Balance_Due__c;
             row.status = invoiceRecord.Status__c;
             row.opportunityId = invoiceRecord.Opportunity__c;
@@ -434,11 +434,10 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
         if (invoiceRecord.Total_Amount__c == null) {
             return 0;
         }
-        Decimal paid = invoiceRecord.Amount_Paid__c != null ? invoiceRecord.Amount_Paid__c : 0;
         if (invoiceRecord.Balance_Due__c != null) {
             return invoiceRecord.Balance_Due__c;
         }
-        return invoiceRecord.Total_Amount__c - paid;
+        return BillingControl_InvoiceMath.remaining(invoiceRecord.Total_Amount__c, invoiceRecord.Amount_Paid__c);
     }
 
     private static Decimal remainingBalance(InvoiceRow row) {
@@ -448,7 +447,6 @@ public inherited sharing class BillingControl_ReceivablesWorklist {
         if (row.balanceDue != null) {
             return row.balanceDue;
         }
-        Decimal paid = row.amountPaid != null ? row.amountPaid : 0;
-        return row.totalAmount - paid;
+        return BillingControl_InvoiceMath.remaining(row.totalAmount, row.amountPaid);
     }
 }

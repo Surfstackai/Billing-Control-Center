@@ -2,7 +2,6 @@
 private class BillingControl_MigrationServiceTest {
     @IsTest
     static void previewIsDryRunAndDoesNotVoidInvoices() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Migration Preview Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Migration Preview Type', 1);
@@ -38,7 +37,6 @@ private class BillingControl_MigrationServiceTest {
 
     @IsTest
     static void previewCountsUniqueJunctionsDepositsAndLeavesExecuteEmpty() {
-        WorkOrderLedgerAutomationControl.disableForTests();
         Account accountRecord = new Account(Name = 'Migration Review Account');
         insert accountRecord;
         WorkType workTypeRecord = TestDataFactory.createWorkType('Migration Review Type', 1);

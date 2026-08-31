@@ -137,7 +137,7 @@ public inherited sharing class BillingControl_BillingReadiness {
         public MetricsWrapper metrics = new MetricsWrapper();
     }
 
-    public static Runtime load(BillingControl_DataProvider.BillingFilterContextDTO filterContext) {
+    public static Runtime load(BillingControl_BillingFilters.BillingFilterContextDTO filterContext) {
         Runtime runtime = new Runtime();
         Id ownerId = extractOwnerId(filterContext);
         Datetime rangeStart = extractActualEndBound(filterContext, true);
@@ -154,7 +154,7 @@ public inherited sharing class BillingControl_BillingReadiness {
         workOrderIds.remove(null);
         Map<Id, WorkOrder> workOrderById = queryWorkOrders(workOrderIds);
         Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId =
-            BillingControl_Invoicing.queryJunctionsByWorkOrderId(workOrderIds);
+            BillingControl_Attribution.queryJunctionsByWorkOrderId(workOrderIds);
         Set<Id> billedAppointmentIds = BillingControl_BillingTruth.billedAppointmentIds(
             new Map<Id, ServiceAppointment>(completedAppointments).keySet()
         );
@@ -270,9 +270,9 @@ public inherited sharing class BillingControl_BillingReadiness {
     ) {
         Long ignoredRefreshToken = refreshToken;
         String ignoredFilterKey = filterKey;
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
-        filterContext.filters = new List<BillingControl_DataProvider.BillingFilterDTO>();
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext =
+            new BillingControl_BillingFilters.BillingFilterContextDTO();
+        filterContext.filters = new List<BillingControl_BillingFilters.BillingFilterDTO>();
         if (String.isNotBlank(startDate)) {
             filterContext.filters.add(
                 dateBoundFilter('Greater Or Equal', startDate + ' 00:00:00')
@@ -284,8 +284,8 @@ public inherited sharing class BillingControl_BillingReadiness {
             );
         }
         if (String.isNotBlank(opportunityOwnerId)) {
-            BillingControl_DataProvider.BillingFilterDTO ownerFilter =
-                new BillingControl_DataProvider.BillingFilterDTO();
+            BillingControl_BillingFilters.BillingFilterDTO ownerFilter =
+                new BillingControl_BillingFilters.BillingFilterDTO();
             ownerFilter.objectApiName = 'Opportunity';
             ownerFilter.fieldApiName = 'OwnerId';
             ownerFilter.operator = 'Equals';
@@ -342,12 +342,12 @@ public inherited sharing class BillingControl_BillingReadiness {
         WorkOrderLedgerService.persistEvents(new List<WorkOrderLedgerService.LedgerEvent>{ eventRecord });
     }
 
-    private static BillingControl_DataProvider.BillingFilterDTO dateBoundFilter(
+    private static BillingControl_BillingFilters.BillingFilterDTO dateBoundFilter(
         String operatorValue,
         String datetimeValue
     ) {
-        BillingControl_DataProvider.BillingFilterDTO filterRecord =
-            new BillingControl_DataProvider.BillingFilterDTO();
+        BillingControl_BillingFilters.BillingFilterDTO filterRecord =
+            new BillingControl_BillingFilters.BillingFilterDTO();
         filterRecord.objectApiName = 'ServiceAppointment';
         filterRecord.fieldApiName = 'ActualEndTime';
         filterRecord.operator = operatorValue;
@@ -355,18 +355,18 @@ public inherited sharing class BillingControl_BillingReadiness {
         return filterRecord;
     }
 
-    public static MetricsWrapper getMetrics(BillingControl_DataProvider.BillingFilterContextDTO filterContext) {
+    public static MetricsWrapper getMetrics(BillingControl_BillingFilters.BillingFilterContextDTO filterContext) {
         return load(filterContext).metrics;
     }
 
     public static List<OpportunityRow> getOpportunities(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         return load(filterContext).opportunities;
     }
 
     public static List<SectionWrapper> getSections(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext
     ) {
         return load(filterContext).sections;
     }
@@ -863,11 +863,11 @@ public inherited sharing class BillingControl_BillingReadiness {
             && String.isNotBlank(invoiceNumberText);
     }
 
-    private static Id extractOwnerId(BillingControl_DataProvider.BillingFilterContextDTO filterContext) {
+    private static Id extractOwnerId(BillingControl_BillingFilters.BillingFilterContextDTO filterContext) {
         if (filterContext == null || filterContext.filters == null) {
             return null;
         }
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+        for (BillingControl_BillingFilters.BillingFilterDTO filterRecord : filterContext.filters) {
             if (
                 filterRecord != null
                 && BillingControl_Invoicing.normalizeFilterValue(filterRecord.objectApiName) == 'OPPORTUNITY'
@@ -880,13 +880,13 @@ public inherited sharing class BillingControl_BillingReadiness {
     }
 
     private static Datetime extractActualEndBound(
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext,
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext,
         Boolean isStartBound
     ) {
         if (filterContext == null || filterContext.filters == null) {
             return null;
         }
-        for (BillingControl_DataProvider.BillingFilterDTO filterRecord : filterContext.filters) {
+        for (BillingControl_BillingFilters.BillingFilterDTO filterRecord : filterContext.filters) {
             String fieldKey = BillingControl_Invoicing.normalizeFilterValue(filterRecord.objectApiName)
                 + '.'
                 + BillingControl_Invoicing.normalizeFilterValue(filterRecord.fieldApiName);

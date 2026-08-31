@@ -8,7 +8,6 @@
         <members>Billing_Control_Center_Shell_Tab</members>
         <members>Commission</members>
         <members>Orders</members>
-        <members>Orders2</members>
         <name>FlexiPage</name>
     </types>
     <types>

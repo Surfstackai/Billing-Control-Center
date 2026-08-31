@@ -1,0 +1,191 @@
+{
+  "capturedAt": "2026-08-30T20:10:16Z",
+  "orgId": "00D5Y000001bOdpUAE",
+  "alias": "propump-production",
+  "username": "matt@surfstackai-propump.com",
+  "summary": {
+    "failRate": "0%",
+    "failing": 0,
+    "hostname": "https://propumpcorp1.my.salesforce.com",
+    "orgId": "00D5Y000001bOdpUAE",
+    "outcome": "Passed",
+    "passRate": "100%",
+    "passing": 164,
+    "skipped": 0,
+    "testRunId": "707Qj00002flWbS",
+    "testStartTime": "2026-08-30T20:10:16.000Z",
+    "testsRan": 164,
+    "userId": "005Qj00000gbBCPIA2",
+    "username": "matt@surfstackai-propump.com",
+    "commandTime": "143 ms",
+    "testExecutionTime": "238861 ms",
+    "testTotalTime": "248781 ms",
+    "orgWideCoverage": "46%",
+    "testRunCoverage": "87%"
+  },
+  "methodsByClass": {
+    "BillingControl_BillingReadinessTest": {
+      "pass": 12,
+      "fail": 0
+    },
+    "BillingControl_CommissionLifecycleTest": {
+      "pass": 3,
+      "fail": 0
+    },
+    "BillingControl_ConfigServiceTest": {
+      "pass": 3,
+      "fail": 0
+    },
+    "BillingControl_DataProviderTest": {
+      "pass": 25,
+      "fail": 0
+    },
+    "BillingControl_FoundationTest": {
+      "pass": 8,
+      "fail": 0
+    },
+    "BillingControl_InvSyncRedesignTest": {
+      "pass": 3,
+      "fail": 0
+    },
+    "BillingControl_InvoiceServiceTest": {
+      "pass": 7,
+      "fail": 0
+    },
+    "BillingControl_InvoicingTest": {
+      "pass": 47,
+      "fail": 0
+    },
+    "BillingControl_MigrationServiceTest": {
+      "pass": 2,
+      "fail": 0
+    },
+    "BillingControl_ReadyToBillKpiTest": {
+      "pass": 1,
+      "fail": 0
+    },
+    "BillingControl_ReceivablesWorklistTest": {
+      "pass": 9,
+      "fail": 0
+    },
+    "BillingControl_WorkOrderLedgerTest": {
+      "pass": 27,
+      "fail": 0
+    },
+    "WorkOrderLedgerServiceTest": {
+      "pass": 14,
+      "fail": 0
+    }
+  },
+  "coverage": [
+    {
+      "name": "BillingControl_Invoicing",
+      "coveredPercent": 82
+    },
+    {
+      "name": "BillingControl_Orders",
+      "coveredPercent": 89
+    },
+    {
+      "name": "BillingControl_ConfigService",
+      "coveredPercent": 95
+    },
+    {
+      "name": "BillingControl_DataProvider",
+      "coveredPercent": 83
+    },
+    {
+      "name": "BillingControl_WorkOrderLedger",
+      "coveredPercent": 90
+    },
+    {
+      "name": "WorkOrderLedgerBackfillBatch",
+      "coveredPercent": 97
+    },
+    {
+      "name": "WorkOrderLedgerAutomationControl",
+      "coveredPercent": 83
+    },
+    {
+      "name": "WorkOrderLedgerService",
+      "coveredPercent": 83
+    },
+    {
+      "name": "WorkOrderLedger",
+      "coveredPercent": 100
+    },
+    {
+      "name": "OpportunityWorkOrderLedger",
+      "coveredPercent": 100
+    },
+    {
+      "name": "WorkOrderLedgerResetBatch",
+      "coveredPercent": 100
+    },
+    {
+      "name": "BillingControl_InvSyncBatch",
+      "coveredPercent": 100
+    },
+    {
+      "name": "BillingControl_CompleteBilling",
+      "coveredPercent": 98
+    },
+    {
+      "name": "BillingControl_InvoiceRecordFactory",
+      "coveredPercent": 79
+    },
+    {
+      "name": "BillingControl_Attribution",
+      "coveredPercent": 94
+    },
+    {
+      "name": "BillingControl_InvSync",
+      "coveredPercent": 87
+    },
+    {
+      "name": "BillingControl_Receivables",
+      "coveredPercent": 89
+    },
+    {
+      "name": "BillingControl_InvoiceTypeBackfill",
+      "coveredPercent": 100
+    },
+    {
+      "name": "BillingControl_OpportunityFinancials",
+      "coveredPercent": 91
+    },
+    {
+      "name": "BillingControl_InvoiceNumberParser",
+      "coveredPercent": 99
+    },
+    {
+      "name": "BillingControl_BillingTruth",
+      "coveredPercent": 100
+    },
+    {
+      "name": "BillingControl_InvoiceMath",
+      "coveredPercent": 97
+    },
+    {
+      "name": "BillingControl_InvoiceService",
+      "coveredPercent": 86
+    },
+    {
+      "name": "BillingControl_BillingReadiness",
+      "coveredPercent": 95
+    },
+    {
+      "name": "BillingControl_ReceivablesWorklist",
+      "coveredPercent": 86
+    },
+    {
+      "name": "BillingControl_CommissionLifecycle",
+      "coveredPercent": 84
+    },
+    {
+      "name": "BillingControl_MigrationService",
+      "coveredPercent": 92
+    }
+  ],
+  "note": "Salesforce summary.testsRan is 164; tests array length is 161 (sum of 13 classes). Use 161 as method inventory."
+}

@@ -1,0 +1,130 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_Invoicing",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_DataProviderTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_WorkOrderLedger",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_WorkOrderLedgerTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvSyncBatch",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvSync",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvoicingTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_Receivables",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_BillingReadiness",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_InvSyncRedesignTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "billingControlCenterOrders",
+        "MetadataComponentType": "LightningComponentBundle",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "workOrderLedgerRelatedWork",
+        "MetadataComponentType": "LightningComponentBundle",
+        "RefMetadataComponentName": "BillingControl_DataProvider",
+        "RefMetadataComponentType": "ApexClass"
+      }
+    ],
+    "totalSize": 12,
+    "done": true
+  },
+  "warnings": []
+}

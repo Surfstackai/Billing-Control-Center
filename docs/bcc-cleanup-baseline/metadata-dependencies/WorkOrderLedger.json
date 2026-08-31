@@ -1,0 +1,60 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_Invoicing",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_WorkOrderLedger",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_DataProvider",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_WorkOrderLedger",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_WorkOrderLedgerTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_WorkOrderLedger",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_Receivables",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_WorkOrderLedger",
+        "RefMetadataComponentType": "ApexClass"
+      },
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "workOrderLedgerRelatedWork",
+        "MetadataComponentType": "LightningComponentBundle",
+        "RefMetadataComponentName": "BillingControl_WorkOrderLedger",
+        "RefMetadataComponentType": "ApexClass"
+      }
+    ],
+    "totalSize": 5,
+    "done": true
+  },
+  "warnings": []
+}

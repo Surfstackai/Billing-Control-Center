@@ -2,7 +2,7 @@ import { LightningElement, api } from 'lwc';
 import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Billing_Control_Center_Admin_Access';
 
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
-import getOrdersRuntimeData from '@salesforce/apex/BillingControl_DataProvider.getOrdersRuntimeData';
+import getOrdersRuntimeData from '@salesforce/apex/BillingControl_WorkOrderLedger.getOrdersRuntimeData';
 import {
     MIN_COLUMN_WIDTH,
     ORDERS_COLUMN_WIDTHS_KEY,

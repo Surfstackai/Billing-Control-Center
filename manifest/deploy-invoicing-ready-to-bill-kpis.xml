@@ -3,7 +3,6 @@
     <types>
         <members>BillingControl_DataProvider</members>
         <members>BillingControl_Invoicing</members>
-        <members>BillingControl_ReadyToBillKpiTest</members>
         <members>BillingControl_InvoicingTest</members>
         <name>ApexClass</name>
     </types>

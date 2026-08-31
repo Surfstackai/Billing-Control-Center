@@ -5,7 +5,7 @@ import hasBillingControlCenterAdminAccess from '@salesforce/customPermission/Bil
 import getTabConfig from '@salesforce/apex/BillingControl_ConfigService.getTabConfig';
 import getTabRuntime from '@salesforce/apex/BillingControl_BillingReadiness.getTabRuntime';
 import flagAppointmentForReview from '@salesforce/apex/BillingControl_BillingReadiness.flagAppointmentForReview';
-import syncExistingInvoiceNumbers from '@salesforce/apex/BillingControl_Invoicing.syncExistingInvoiceNumbers';
+import syncExistingInvoiceNumbers from '@salesforce/apex/BillingControl_InvSync.syncExistingInvoiceNumbers';
 import {
     MIN_COLUMN_WIDTH,
     INVOICING_COLUMN_WIDTHS_KEY,

@@ -1,0 +1,20 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "BillingControl_MigrationServiceTest",
+        "MetadataComponentType": "ApexClass",
+        "RefMetadataComponentName": "BillingControl_MigrationService",
+        "RefMetadataComponentType": "ApexClass"
+      }
+    ],
+    "totalSize": 1,
+    "done": true
+  },
+  "warnings": []
+}

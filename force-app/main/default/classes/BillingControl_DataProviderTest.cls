@@ -135,12 +135,12 @@ private class BillingControl_DataProviderTest {
     static void activeDatasetsDispatchWithoutDml() {
         Test.startTest();
         Integer dmlBefore = Limits.getDmlStatements();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
-            BillingControl_DataProvider.getOrdersRuntimeData(1L);
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO ordersData =
+            BillingControl_DataProvider.getOrdersRuntimeData(1L, 'This Year', null, null, null);
         BillingControl_DataProvider.InvoicingRuntimeDataDTO invoicingData =
-            BillingControl_DataProvider.getInvoicingRuntimeData(1L);
+            BillingControl_DataProvider.getInvoicingRuntimeData(1L, 'This Year', null, null, null);
         BillingControl_DataProvider.ReceivablesRuntimeDataDTO receivablesData =
-            BillingControl_DataProvider.getReceivablesRuntimeData();
+            BillingControl_DataProvider.getReceivablesRuntimeData(1L, null, null, null, null);
         Integer dmlAfter = Limits.getDmlStatements();
         Test.stopTest();
 
@@ -189,7 +189,7 @@ private class BillingControl_DataProviderTest {
         update ordersDataset;
 
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO ordersData =
             BillingControl_DataProvider.getOrdersRuntimeData(2L);
         Test.stopTest();
 
@@ -326,7 +326,7 @@ private class BillingControl_DataProviderTest {
         };
 
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO ordersData =
             BillingControl_DataProvider.getOrdersRuntimeData(12L);
         BillingControl_DataProvider.ReceivablesRuntimeDataDTO receivablesData =
             BillingControl_DataProvider.getReceivablesRuntimeData();
@@ -374,10 +374,10 @@ private class BillingControl_DataProviderTest {
             )
         };
 
-        BillingControl_DataProvider.BillingDateFilterDTO ordersDateFilter =
+        BillingControl_BillingFilters.BillingDateFilterDTO ordersDateFilter =
             buildDateFilter('Custom', formatDateValue(Date.today()), formatDateValue(Date.today()));
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO ordersData =
             BillingControl_DataProvider.getOrdersRuntimeData(31L, ordersDateFilter);
         BillingControl_DataProvider.InvoicingRuntimeDataDTO invoicingData =
             BillingControl_DataProvider.getInvoicingRuntimeData(31L);
@@ -405,11 +405,11 @@ private class BillingControl_DataProviderTest {
 
     @IsTest
     static void invalidCustomDateFilterWarnsSafely() {
-        BillingControl_DataProvider.BillingDateFilterDTO invalidDateFilter =
+        BillingControl_BillingFilters.BillingDateFilterDTO invalidDateFilter =
             buildDateFilter('Custom', String.valueOf(Date.today().addDays(5)), String.valueOf(Date.today()));
 
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO ordersData =
             BillingControl_DataProvider.getOrdersRuntimeData(32L, invalidDateFilter);
         Test.stopTest();
 
@@ -419,7 +419,7 @@ private class BillingControl_DataProviderTest {
     @IsTest
     static void lastYearDateFilterIsSupported() {
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO lastYearData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO lastYearData =
             BillingControl_DataProvider.getOrdersRuntimeData(33L, buildDateFilter('Last Year', null, null));
         Test.stopTest();
 
@@ -435,9 +435,13 @@ private class BillingControl_DataProviderTest {
     @IsTest
     static void ordersRuntimeDateFilterChangesKpis() {
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO thisYearData =
-            BillingControl_DataProvider.getOrdersRuntimeData(501L, buildDateFilter('This Year', null, null));
-        BillingControl_DataProvider.OrdersRuntimeDataDTO lastYearData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO thisYearData =
+            BillingControl_DataProvider.getOrdersRuntimeData(
+                501L,
+                buildDateFilter('This Year', null, null),
+                UserInfo.getUserId()
+            );
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO lastYearData =
             BillingControl_DataProvider.getOrdersRuntimeData(502L, buildDateFilter('Last Year', null, null));
         Test.stopTest();
 
@@ -456,11 +460,11 @@ private class BillingControl_DataProviderTest {
     @IsTest
     static void ordersRuntimeSupportsMonthQuarterAndCustomWindows() {
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO thisMonthData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO thisMonthData =
             BillingControl_DataProvider.getOrdersRuntimeData(503L, buildDateFilter('This Month', null, null));
-        BillingControl_DataProvider.OrdersRuntimeDataDTO thisQuarterData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO thisQuarterData =
             BillingControl_DataProvider.getOrdersRuntimeData(504L, buildDateFilter('This Quarter', null, null));
-        BillingControl_DataProvider.OrdersRuntimeDataDTO customData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO customData =
             BillingControl_DataProvider.getOrdersRuntimeData(
                 505L,
                 buildDateFilter('Custom', formatDateValue(Date.today()), formatDateValue(Date.today()))
@@ -500,10 +504,10 @@ private class BillingControl_DataProviderTest {
 
     @IsTest
     static void dateRangeAndQueryFilterHelpersCoverSupportedBranches() {
-        System.assertNotEquals(null, BillingControl_DataProvider.resolveDateRangeForInvSync(null));
+        System.assertNotEquals(null, BillingControl_BillingFilters.resolveDateRangeForInvSync(null));
         System.assertNotEquals(
             null,
-            BillingControl_DataProvider.resolveDateRangeForInvSync(new BillingControl_DataProvider.BillingDateFilterDTO())
+            BillingControl_BillingFilters.resolveDateRangeForInvSync(new BillingControl_BillingFilters.BillingDateFilterDTO())
         );
 
         for (String filterKey : new List<String>{
@@ -516,29 +520,29 @@ private class BillingControl_DataProviderTest {
             'Last Year',
             'Prior Year'
         }) {
-            BillingControl_DataProvider.DateRangeDTO range =
-                BillingControl_DataProvider.resolveDateRangeForInvSync(buildDateFilter(filterKey, null, null));
+            BillingControl_BillingFilters.DateRangeDTO range =
+                BillingControl_BillingFilters.resolveDateRangeForInvSync(buildDateFilter(filterKey, null, null));
             System.assertNotEquals(null, range, filterKey);
             System.assertNotEquals(null, range.startDate, filterKey);
             System.assertNotEquals(null, range.endDate, filterKey);
         }
 
-        BillingControl_DataProvider.DateRangeDTO customRange =
-            BillingControl_DataProvider.resolveDateRangeForInvSync(
+        BillingControl_BillingFilters.DateRangeDTO customRange =
+            BillingControl_BillingFilters.resolveDateRangeForInvSync(
                 buildDateFilter('Custom', formatDateValue(Date.today()), formatDateValue(Date.today()))
             );
         System.assertEquals(Date.today(), customRange.startDate);
         System.assertEquals(Date.today(), customRange.endDate);
 
-        BillingControl_DataProvider.DateRangeDTO explicitAugust =
-            BillingControl_DataProvider.resolveDateRangeForInvSync(
+        BillingControl_BillingFilters.DateRangeDTO explicitAugust =
+            BillingControl_BillingFilters.resolveDateRangeForInvSync(
                 buildDateFilter(null, '2026-08-01', '2026-08-31')
             );
         System.assertEquals(Date.newInstance(2026, 8, 1), explicitAugust.startDate);
         System.assertEquals(Date.newInstance(2026, 8, 31), explicitAugust.endDate);
 
-        BillingControl_DataProvider.BillingFilterContextDTO context =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_BillingFilters.BillingFilterContextDTO context =
+            new BillingControl_BillingFilters.BillingFilterContextDTO();
         context.filters.add(buildFilter('STR_EQ', 'Opportunity', 'StageName', 'Equals', 'Closed Won', 'Static', 10));
         context.filters.add(buildFilter('STR_NE', 'Opportunity', 'StageName', 'Not Equals', 'Prospecting', 'Static', 20));
         context.filters.add(buildFilter('STR_IN', 'Opportunity', 'StageName', 'In', 'Closed Won;Prospecting', 'Static', 30));
@@ -590,42 +594,42 @@ private class BillingControl_DataProviderTest {
             buildFilter('ID_EQ', 'Opportunity', 'OwnerId', 'Equals', String.valueOf(UserInfo.getUserId()), 'Static', 130)
         );
 
-        Map<String, BillingControl_DataProvider.FilterFieldDescriptor> mappings =
-            new Map<String, BillingControl_DataProvider.FilterFieldDescriptor>{
-                'OPPORTUNITY.STAGENAME' => new BillingControl_DataProvider.FilterFieldDescriptor(
+        Map<String, BillingControl_BillingFilters.FilterFieldDescriptor> mappings =
+            new Map<String, BillingControl_BillingFilters.FilterFieldDescriptor>{
+                'OPPORTUNITY.STAGENAME' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                     'Opportunity.StageName',
-                    BillingControl_DataProvider.FILTER_DATA_TYPE_STRING
+                    BillingControl_BillingFilters.FILTER_DATA_TYPE_STRING
                 ),
-                'WORK_ORDER_LEDGER__C.ATTENTION' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                'WORK_ORDER_LEDGER__C.ATTENTION' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                     'Attention_Required__c',
-                    BillingControl_DataProvider.FILTER_DATA_TYPE_BOOLEAN
+                    BillingControl_BillingFilters.FILTER_DATA_TYPE_BOOLEAN
                 ),
-                'INVOICE__C.INVOICE_DATE__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                'INVOICE__C.INVOICE_DATE__C' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                     'Invoice_Date__c',
-                    BillingControl_DataProvider.FILTER_DATA_TYPE_DATE
+                    BillingControl_BillingFilters.FILTER_DATA_TYPE_DATE
                 ),
-                'SERVICEAPPOINTMENT.ACTUALENDTIME' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                'SERVICEAPPOINTMENT.ACTUALENDTIME' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                     'ActualEndTime',
-                    BillingControl_DataProvider.FILTER_DATA_TYPE_DATETIME
+                    BillingControl_BillingFilters.FILTER_DATA_TYPE_DATETIME
                 ),
-                'COMMISSION__C.COMMISSION_PAID__C' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                'COMMISSION__C.COMMISSION_PAID__C' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                     'Commission_Paid__c',
-                    BillingControl_DataProvider.FILTER_DATA_TYPE_DECIMAL
+                    BillingControl_BillingFilters.FILTER_DATA_TYPE_DECIMAL
                 ),
-                'WORKORDER.CREATEDDATE' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                'WORKORDER.CREATEDDATE' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                     'Work_Order__r.CreatedDate',
-                    BillingControl_DataProvider.FILTER_DATA_TYPE_DATETIME
+                    BillingControl_BillingFilters.FILTER_DATA_TYPE_DATETIME
                 ),
-                'OPPORTUNITY.OWNERID' => new BillingControl_DataProvider.FilterFieldDescriptor(
+                'OPPORTUNITY.OWNERID' => new BillingControl_BillingFilters.FilterFieldDescriptor(
                     'Opportunity.OwnerId',
-                    BillingControl_DataProvider.FILTER_DATA_TYPE_ID
+                    BillingControl_BillingFilters.FILTER_DATA_TYPE_ID
                 )
             };
 
-        List<String> clauses = BillingControl_DataProvider.buildQueryFilterClauses(context, mappings);
+        List<String> clauses = BillingControl_BillingFilters.buildQueryFilterClauses(context, mappings);
         System.assert(clauses.size() >= 12, String.join(clauses, ' | '));
-        System.assertEquals(0, BillingControl_DataProvider.buildQueryFilterClauses(null, mappings).size());
-        System.assertEquals(0, BillingControl_DataProvider.buildQueryFilterClauses(context, null).size());
+        System.assertEquals(0, BillingControl_BillingFilters.buildQueryFilterClauses(null, mappings).size());
+        System.assertEquals(0, BillingControl_BillingFilters.buildQueryFilterClauses(context, null).size());
     }
 
     @IsTest
@@ -737,7 +741,7 @@ private class BillingControl_DataProviderTest {
         };
 
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO ordersData =
             BillingControl_DataProvider.getOrdersRuntimeData(77L);
         BillingControl_DataProvider.InvoicingRuntimeDataDTO invoicingData =
             BillingControl_DataProvider.getInvoicingRuntimeData(77L);
@@ -864,7 +868,7 @@ private class BillingControl_DataProviderTest {
         );
 
         Test.startTest();
-        BillingControl_DataProvider.OrdersRuntimeDataDTO ordersData =
+        BillingControl_WorkOrderLedger.OrdersRuntimeDataDTO ordersData =
             BillingControl_DataProvider.getOrdersRuntimeData(88L);
         Test.stopTest();
 
@@ -1233,8 +1237,8 @@ private class BillingControl_DataProviderTest {
 
     @IsTest
     static void directInvoicingFilterOverloadsSupportOrderEffectiveDate() {
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext =
+            new BillingControl_BillingFilters.BillingFilterContextDTO();
         filterContext.tabKey = 'INVOICING';
         filterContext.datasetKey = 'INVOICING_SERVICE_APPOINTMENTS';
         filterContext.filters.add(
@@ -1258,8 +1262,8 @@ private class BillingControl_DataProviderTest {
 
     @IsTest
     static void directInvoicingFiltersSupportNullInvoiceAndDateComparisons() {
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext =
+            new BillingControl_BillingFilters.BillingFilterContextDTO();
         filterContext.tabKey = 'INVOICING';
         filterContext.datasetKey = 'INVOICING_SERVICE_APPOINTMENTS';
         filterContext.filters.add(
@@ -1331,8 +1335,8 @@ private class BillingControl_DataProviderTest {
         }
         insert groupedOrders;
 
-        BillingControl_DataProvider.BillingFilterContextDTO filterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_BillingFilters.BillingFilterContextDTO filterContext =
+            new BillingControl_BillingFilters.BillingFilterContextDTO();
         filterContext.tabKey = 'INVOICING';
         filterContext.datasetKey = 'INVOICING_SERVICE_APPOINTMENTS';
         filterContext.filters.add(
@@ -1449,8 +1453,8 @@ private class BillingControl_DataProviderTest {
             'Provider Bulk Ready'
         );
 
-        BillingControl_DataProvider.BillingFilterContextDTO invoicingFilterContext =
-            new BillingControl_DataProvider.BillingFilterContextDTO();
+        BillingControl_BillingFilters.BillingFilterContextDTO invoicingFilterContext =
+            new BillingControl_BillingFilters.BillingFilterContextDTO();
         invoicingFilterContext.tabKey = 'INVOICING';
         invoicingFilterContext.datasetKey = 'INVOICING_SERVICE_APPOINTMENTS';
         invoicingFilterContext.filters.add(
@@ -1514,7 +1518,7 @@ private class BillingControl_DataProviderTest {
             'Provider Bulk Receivable'
         );
 
-        BillingControl_DataProvider.BillingDateFilterDTO dateFilter =
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter =
             buildDateFilter('Custom', formatDateValue(bulkEffectiveDate), formatDateValue(bulkEffectiveDate));
 
         Test.startTest();
@@ -1968,7 +1972,7 @@ private class BillingControl_DataProviderTest {
         return rowCount;
     }
 
-    private static BillingControl_DataProvider.BillingFilterDTO buildFilter(
+    private static BillingControl_BillingFilters.BillingFilterDTO buildFilter(
         String developerKey,
         String objectApiName,
         String fieldApiName,
@@ -1977,7 +1981,7 @@ private class BillingControl_DataProviderTest {
         String valueType,
         Decimal sequence
     ) {
-        BillingControl_DataProvider.BillingFilterDTO filterRecord = new BillingControl_DataProvider.BillingFilterDTO();
+        BillingControl_BillingFilters.BillingFilterDTO filterRecord = new BillingControl_BillingFilters.BillingFilterDTO();
         filterRecord.developerKey = developerKey;
         filterRecord.objectApiName = objectApiName;
         filterRecord.fieldApiName = fieldApiName;
@@ -1988,13 +1992,13 @@ private class BillingControl_DataProviderTest {
         return filterRecord;
     }
 
-    private static BillingControl_DataProvider.BillingDateFilterDTO buildDateFilter(
+    private static BillingControl_BillingFilters.BillingDateFilterDTO buildDateFilter(
         String filterKey,
         String startDate,
         String endDate
     ) {
-        BillingControl_DataProvider.BillingDateFilterDTO dateFilter =
-            new BillingControl_DataProvider.BillingDateFilterDTO();
+        BillingControl_BillingFilters.BillingDateFilterDTO dateFilter =
+            new BillingControl_BillingFilters.BillingDateFilterDTO();
         dateFilter.filterKey = filterKey;
         dateFilter.startDate = startDate;
         dateFilter.endDate = endDate;

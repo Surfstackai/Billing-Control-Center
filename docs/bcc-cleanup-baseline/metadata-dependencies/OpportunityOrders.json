@@ -1,0 +1,20 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "MetadataComponentDependency",
+          "url": "/services/data/v67.0/tooling/sobjects/MetadataComponentDependency/000000000000000AAA"
+        },
+        "MetadataComponentName": "Orders2",
+        "MetadataComponentType": "FlexiPage",
+        "RefMetadataComponentName": "billingControlCenterOpportunityOrders",
+        "RefMetadataComponentType": "LightningComponentBundle"
+      }
+    ],
+    "totalSize": 1,
+    "done": true
+  },
+  "warnings": []
+}

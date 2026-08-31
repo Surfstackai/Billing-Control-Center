@@ -404,16 +404,18 @@ public with sharing class BillingControl_InvoiceService {
         Set<Id> workOrderIds = new Set<Id>(workOrderIdByAppointmentId.values());
         Map<Id, Set<Id>> opportunityIdsByWorkOrderId = new Map<Id, Set<Id>>();
         if (!workOrderIds.isEmpty()) {
-            for (Opportunity_WorkOrder__c junctionRecord : [
-                SELECT Work_Order__c, Opportunity__c
-                FROM Opportunity_WorkOrder__c
-                WHERE Work_Order__c IN :workOrderIds
-                AND Opportunity__c != NULL
-            ]) {
-                if (!opportunityIdsByWorkOrderId.containsKey(junctionRecord.Work_Order__c)) {
-                    opportunityIdsByWorkOrderId.put(junctionRecord.Work_Order__c, new Set<Id>());
+            Map<Id, List<Opportunity_WorkOrder__c>> junctionsByWorkOrderId =
+                BillingControl_Attribution.queryJunctionsByWorkOrderId(workOrderIds);
+            for (Id workOrderId : junctionsByWorkOrderId.keySet()) {
+                Set<Id> opportunityIds = new Set<Id>();
+                for (Opportunity_WorkOrder__c junctionRecord : junctionsByWorkOrderId.get(workOrderId)) {
+                    if (junctionRecord.Opportunity__c != null) {
+                        opportunityIds.add(junctionRecord.Opportunity__c);
+                    }
                 }
-                opportunityIdsByWorkOrderId.get(junctionRecord.Work_Order__c).add(junctionRecord.Opportunity__c);
+                if (!opportunityIds.isEmpty()) {
+                    opportunityIdsByWorkOrderId.put(workOrderId, opportunityIds);
+                }
             }
         }
 
@@ -593,23 +595,24 @@ public with sharing class BillingControl_InvoiceService {
 
     private static Set<Id> opportunityIdsForWorkOrder(Id workOrderId) {
         Set<Id> opportunityIds = new Set<Id>();
-        for (Opportunity_WorkOrder__c junctionRecord : [
-            SELECT Opportunity__c
-            FROM Opportunity_WorkOrder__c
-            WHERE Work_Order__c = :workOrderId
-            AND Opportunity__c != NULL
-        ]) {
-            opportunityIds.add(junctionRecord.Opportunity__c);
+        if (workOrderId == null) {
+            return opportunityIds;
+        }
+        List<Opportunity_WorkOrder__c> junctions =
+            BillingControl_Attribution.queryJunctionsByWorkOrderId(new Set<Id>{ workOrderId }).get(workOrderId);
+        if (junctions == null) {
+            return opportunityIds;
+        }
+        for (Opportunity_WorkOrder__c junctionRecord : junctions) {
+            if (junctionRecord.Opportunity__c != null) {
+                opportunityIds.add(junctionRecord.Opportunity__c);
+            }
         }
         return opportunityIds;
     }
 
     private static Decimal remainingToInvoice(Decimal opportunityAmount, Decimal invoicedTotal) {
-        if (opportunityAmount == null) {
-            return 0;
-        }
-        Decimal remaining = opportunityAmount - (invoicedTotal == null ? 0 : invoicedTotal);
-        return remaining < 0 ? 0 : remaining.setScale(2, RoundingMode.HALF_UP);
+        return BillingControl_InvoiceMath.remainingToInvoice(opportunityAmount, invoicedTotal);
     }
 
     private static Decimal suggestedAmountForType(

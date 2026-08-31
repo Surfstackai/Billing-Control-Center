@@ -1,0 +1,30 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "AppMenuItem",
+          "url": "/services/data/v67.0/sobjects/AppMenuItem/0DSQj000000WrFhOAK"
+        },
+        "ApplicationId": "02uQj0000052MnxIAE",
+        "Name": "Billing_Control_Center",
+        "Label": "Billing Control Center",
+        "Type": "TabSet"
+      },
+      {
+        "attributes": {
+          "type": "AppMenuItem",
+          "url": "/services/data/v67.0/sobjects/AppMenuItem/0DSQj000000YieXOAS"
+        },
+        "ApplicationId": "02uQj000005QvkXIAS",
+        "Name": "Billing_Control_Center_Config",
+        "Label": "Billing Control Center Config",
+        "Type": "TabSet"
+      }
+    ],
+    "totalSize": 2,
+    "done": true
+  },
+  "warnings": []
+}

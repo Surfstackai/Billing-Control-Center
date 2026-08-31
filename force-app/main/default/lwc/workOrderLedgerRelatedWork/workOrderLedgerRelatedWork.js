@@ -1,6 +1,6 @@
 import { LightningElement, api } from 'lwc';
 import { ShowToastEvent } from 'lightning/platformShowToastEvent';
-import getWorkOrderLedgerDetail from '@salesforce/apex/BillingControl_DataProvider.getWorkOrderLedgerDetail';
+import getWorkOrderLedgerDetail from '@salesforce/apex/BillingControl_WorkOrderLedger.getWorkOrderLedgerDetail';
 import assignServiceAppointmentOpportunities from '@salesforce/apex/BillingControl_WorkOrderLedger.assignServiceAppointmentOpportunities';
 
 export default class WorkOrderLedgerRelatedWork extends LightningElement {

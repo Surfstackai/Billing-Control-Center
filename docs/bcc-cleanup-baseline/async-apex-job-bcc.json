@@ -1,0 +1,112 @@
+﻿{
+  "status": 0,
+  "result": {
+    "records": [
+      {
+        "attributes": {
+          "type": "AsyncApexJob",
+          "url": "/services/data/v67.0/sobjects/AsyncApexJob/707Qj00002flWbSIAU"
+        },
+        "ApexClass": {
+          "attributes": {
+            "type": "ApexClass",
+            "url": "/services/data/v67.0/sobjects/ApexClass/01pQj00000QeTxCIAV"
+          },
+          "Name": "BillingControl_BillingReadinessTest"
+        },
+        "Status": "Completed",
+        "JobType": "TestRequest",
+        "CreatedDate": "2026-08-30T20:10:16.000+0000",
+        "CompletedDate": null
+      },
+      {
+        "attributes": {
+          "type": "AsyncApexJob",
+          "url": "/services/data/v67.0/sobjects/AsyncApexJob/707Qj00002flOKTIA2"
+        },
+        "ApexClass": {
+          "attributes": {
+            "type": "ApexClass",
+            "url": "/services/data/v67.0/sobjects/ApexClass/01pQj00000QeTxCIAV"
+          },
+          "Name": "BillingControl_BillingReadinessTest"
+        },
+        "Status": "Completed",
+        "JobType": "TestRequest",
+        "CreatedDate": "2026-08-30T18:59:23.000+0000",
+        "CompletedDate": null
+      },
+      {
+        "attributes": {
+          "type": "AsyncApexJob",
+          "url": "/services/data/v67.0/sobjects/AsyncApexJob/707Qj00002fhYRFIA2"
+        },
+        "ApexClass": {
+          "attributes": {
+            "type": "ApexClass",
+            "url": "/services/data/v67.0/sobjects/ApexClass/01pQj00000QaXZZIA3"
+          },
+          "Name": "BillingControl_InvSyncBatch"
+        },
+        "Status": "Completed",
+        "JobType": "BatchApex",
+        "CreatedDate": "2026-08-29T21:33:34.000+0000",
+        "CompletedDate": "2026-08-29T21:33:45.000+0000"
+      },
+      {
+        "attributes": {
+          "type": "AsyncApexJob",
+          "url": "/services/data/v67.0/sobjects/AsyncApexJob/707Qj00002fg7m8IAA"
+        },
+        "ApexClass": {
+          "attributes": {
+            "type": "ApexClass",
+            "url": "/services/data/v67.0/sobjects/ApexClass/01pQj00000QeVKhIAN"
+          },
+          "Name": "BillingControl_InvSyncRedesignTest"
+        },
+        "Status": "Completed",
+        "JobType": "TestRequest",
+        "CreatedDate": "2026-08-29T14:04:13.000+0000",
+        "CompletedDate": null
+      },
+      {
+        "attributes": {
+          "type": "AsyncApexJob",
+          "url": "/services/data/v67.0/sobjects/AsyncApexJob/707Qj00002fLPTmIAO"
+        },
+        "ApexClass": {
+          "attributes": {
+            "type": "ApexClass",
+            "url": "/services/data/v67.0/sobjects/ApexClass/01pQj00000QaXZZIA3"
+          },
+          "Name": "BillingControl_InvSyncBatch"
+        },
+        "Status": "Completed",
+        "JobType": "BatchApex",
+        "CreatedDate": "2026-08-26T12:52:19.000+0000",
+        "CompletedDate": "2026-08-26T12:52:23.000+0000"
+      },
+      {
+        "attributes": {
+          "type": "AsyncApexJob",
+          "url": "/services/data/v67.0/sobjects/AsyncApexJob/707Qj00002fGl27IAC"
+        },
+        "ApexClass": {
+          "attributes": {
+            "type": "ApexClass",
+            "url": "/services/data/v67.0/sobjects/ApexClass/01pQj00000QaXZZIA3"
+          },
+          "Name": "BillingControl_InvSyncBatch"
+        },
+        "Status": "Completed",
+        "JobType": "BatchApex",
+        "CreatedDate": "2026-08-25T18:42:34.000+0000",
+        "CompletedDate": "2026-08-25T18:42:39.000+0000"
+      }
+    ],
+    "totalSize": 6,
+    "done": true
+  },
+  "warnings": []
+}
